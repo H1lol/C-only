@@ -1,0 +1,534 @@
+MOTION STUDIO — COMPLETE MOBILE UI/UX BUILD PROMPT (FIXED / FULL)
+Version: 2026.0.0-alpha aligned
+Status: Canonical UI specification — use this file as the single source of truth
+
+================================================================================
+ROLE
+================================================================================
+Design and implement the complete UI/UX for Motion Studio, a professional mobile
+motion-design, compositing, animation, VFX, and video-editing application.
+
+Motion Studio is NOT:
+- a prototype
+- a generic Flutter demo
+- a SaaS dashboard
+- a desktop UI squeezed onto a phone
+- a CapCut / InShot visual clone
+
+Build a coherent professional mobile editing environment.
+
+================================================================================
+DESIGN TARGET
+================================================================================
+Combine the accessibility of modern mobile editors with the depth and workflow
+quality associated with After Effects, DaVinci Resolve, Avid Media Composer,
+Nuke, Blender, Node Video, Alight Motion, and CapCut — while maintaining an
+ORIGINAL Motion Studio identity.
+
+References for accessibility only: CapCut, Alight Motion.
+References for professional density and workflow: After Effects, Resolve, Nuke.
+Do NOT copy any application pixel-for-pixel.
+
+================================================================================
+CORE DESIGN PRINCIPLES
+================================================================================
+- Professional, dense but understandable, fast, responsive, precise, cinematic,
+  technical, customizable.
+- Mobile-first: phones, foldables, tablets; portrait and landscape.
+- Default appearance: dark, After Effects–inspired professional editor aesthetic.
+- Near-black / charcoal surfaces, subtle borders, restrained depth, excellent
+  readability.
+- AVOID: excessive gradients, glassmorphism, giant cards, neon effects,
+  oversized icons, decorative UI, wasted space.
+- Do NOT include “My Space”.
+- Do NOT add a decorative blue belt (or any colored belt) underneath the preview.
+- Every pixel should have a purpose.
+- Dense when needed. Simple when possible. Fast always.
+
+================================================================================
+BRANDING
+================================================================================
+- Use the supplied Motion Studio logo (ic_motion_studio_logo / MS mark).
+- Primary placement: starter panel top-left, splash/loading where appropriate,
+  About page.
+- Keep branding subtle and professional — never loud marketing chrome.
+
+================================================================================
+COLOR / THEME SYSTEM
+================================================================================
+Default theme: Motion Dark
+Also support: Dark, Light, High Contrast, Custom.
+
+Customizable tokens:
+- background, panels, accent, text, secondary text
+- timeline, selection, keyframes, node colors, viewer overlays
+
+Themes must remain readable and usable.
+Never communicate important state through color alone.
+
+Accent: restrained violet/purple (brand), not neon.
+Surfaces: near-black charcoal (approx. #121214–#1A1A1E).
+Borders: subtle 1px, low contrast.
+
+================================================================================
+STARTER PANEL (HOME)
+================================================================================
+Premium home screen.
+
+Top-left: Motion Studio logo.
+Top-right: Settings.
+
+Primary actions:
+- New Project
+- Open Project
+- Import Media
+- Recent Projects
+
+Recent projects show:
+- thumbnail, name, resolution, frame rate, duration, last edited time
+
+Actions per project:
+- rename, duplicate, delete, archive, project information
+
+Empty state: clear CTA to create or import — no huge decorative illustrations.
+
+================================================================================
+NEW PROJECT
+================================================================================
+Controls:
+- Project name
+- Resolution presets: 1080x1920, 1920x1080, 1080x1080, 2160x3840, 3840x2160, Custom
+- Frame rate: 23.976, 24, 25, 29.97, 30, 50, 59.94, 60, Custom
+- Pixel aspect ratio
+- Duration
+- Background
+- Color space
+- Bit depth
+- Audio sample rate
+- Audio channels
+
+Advanced options: collapsible.
+
+================================================================================
+MAIN EDITOR — PRIMARY STRUCTURE
+================================================================================
+The editor is the heart of Motion Studio.
+
+Primary structure (top → bottom / adaptive):
+1. TOP TOOLBAR
+2. COMPOSITION VIEWER
+3. VIEWER CONTROLS
+4. TIMELINE
+5. TOOL RAIL + INSPECTOR / BROWSER AREA
+
+Adapt proportions dynamically to the device. The editor must dominate the screen.
+
+Workspace presets (rearrange panels, do not create separate apps):
+- Edit, Animation, Compositing, Color, Audio, 3D, Export, Nodes
+
+Remember project-specific UI state:
+- timeline zoom, panel layout, workspace, preview quality, viewer zoom,
+  last selected layer, last opened panels
+
+================================================================================
+TOP TOOLBAR
+================================================================================
+Compact controls:
+- Back
+- Project name
+- Save status (Saved / Unsaved / Saving…)
+- Undo
+- Redo
+- Preview quality
+- Snapping
+- Grid
+- Guides
+- Fullscreen
+- Render / Export
+
+Rarely used controls belong in expandable menus.
+
+================================================================================
+COMPOSITION VIEWER
+================================================================================
+The viewer is the visual center.
+
+Support:
+- zoom, pan, fit, actual pixels, fullscreen
+- safe areas, guides, grid, rulers
+- transparency checkerboard
+- playback
+
+Selection overlays (only when relevant):
+- bounding boxes, anchor point, transform handles, rotation handle, position guides
+
+Do NOT add a blue belt or decorative strip under the viewer.
+
+================================================================================
+VIEWER CONTROLS
+================================================================================
+Play / pause, previous frame, next frame, loop,
+current time, duration, FPS, zoom, fit, preview quality.
+
+================================================================================
+TIMELINE (FLAGSHIP FEATURE)
+================================================================================
+Make the timeline one of Motion Studio’s strongest features.
+
+Support:
+- multiple tracks
+- nested compositions
+- video clips, audio clips, image layers
+- adjustment layers, text layers, shape layers
+- nulls, cameras, lights, 3D layers
+- effects, masks, keyframes
+
+Editing:
+- pinch zoom
+- horizontal / vertical scrolling
+- snapping, markers
+- range selection, multi-selection
+- trimming, splitting
+- ripple, roll, slip, slide
+- retiming, time remapping
+
+LAYER ROW
+Each layer provides:
+- visibility, lock, solo, mute
+- layer icon, layer name
+- expand / collapse
+- keyframe indicator, parenting indicator
+- 3D indicator, effects indicator, mask indicator
+
+================================================================================
+KEYFRAMES & GRAPH EDITOR
+================================================================================
+Keyframes for:
+- position, scale, rotation, opacity, anchor point, color
+- effects, masks, audio parameters
+- 3D transforms, camera properties, light properties
+
+Interpolation:
+- linear, hold, ease in, ease out, bezier, custom curve
+
+Graph editor:
+- value graph, speed graph
+- bezier handles, multiple curves
+- snapping, curve isolation, zoom, pan, tangent control
+
+================================================================================
+INSPECTOR
+================================================================================
+Organize selected-layer properties:
+
+TRANSFORM: Position, Scale, Rotation, Anchor, Opacity
+BLENDING: Blend mode, Opacity, Track matte
+Also: Effects, Masks, 3D, Motion, Audio, Advanced
+
+Sections expand / collapse.
+Sliders + numeric input. Keyframeable where applicable.
+Reset, copy, paste parameters.
+
+================================================================================
+EFFECT BROWSER
+================================================================================
+Professional searchable effect browser.
+
+Categories:
+Blur, Sharpen, Color, Distortion, Stylize, Keying, Glow, Lighting, Noise,
+Transform, Time, Simulation, Generate, Matte, Utility, 3D
+
+Support:
+- search, favorites, recent
+- presets, custom presets
+- offline builtins + on-demand download packs (H1lol / ms-effects catalog)
+
+Effect parameters:
+- sliders, numeric input, toggles, dropdowns
+- color pickers, curves
+- keyframing, reset, copy, paste
+
+Offline baseline (always available when implemented):
+- Gaussian / box blur, brightness-contrast, opacity, invert
+- grayscale, sepia, vignette, mirror, chromakey
+Online packs: color, key/comp, stylize, transitions, blur/motion, text/shape, audio
+(~20 MB pack splits preferred)
+
+================================================================================
+NODE COMPOSITOR
+================================================================================
+Serious node-based compositor workspace.
+
+Support:
+- node canvas, pan, zoom
+- selection, multi-select, grouping
+- connections, rerouting
+- node search, duplication, comments
+- bypass, mute, solo, preview
+
+Node categories:
+Input, Output, Merge, Transform, Color, Blur, Mask, Key, Distortion,
+Composite, 3D, Utility, Time, Generators, Effects
+
+Gestures:
+- one finger: pan
+- two fingers: zoom
+- tap: select
+- long press: context menu
+- drag from port: create connection
+- double tap: properties
+
+================================================================================
+3D WORKSPACE
+================================================================================
+Support 3D layers, cameras, lights, materials, meshes, transforms, parenting,
+depth, shadows, environment, and 3D composition.
+
+Dedicated 3D viewport when appropriate (do not force all 3D into 2D UI).
+
+3D transforms:
+Position XYZ, Rotation XYZ, Scale XYZ, Anchor XYZ, Orientation,
+World/local coordinates, Pivot, Parenting, Constraints.
+Touch-friendly 3D manipulation.
+
+================================================================================
+MEDIA BROWSER
+================================================================================
+Photos, videos, audio, images, sequences, project assets, generated assets,
+imported files.
+
+Search, sort, filter, grid/list, preview, metadata, import, replace, relink.
+
+================================================================================
+AUDIO WORKSPACE
+================================================================================
+Waveforms, audio tracks, volume, pan, mute, solo, keyframes,
+fade in/out, audio meters, audio scrubbing, sync indicators.
+
+================================================================================
+COLOR WORKSPACE
+================================================================================
+Exposure, Contrast, Highlights, Shadows, Whites, Blacks,
+Temperature, Tint, Saturation, Hue, Curves,
+Lift, Gamma, Gain, Color Wheels.
+
+Scopes where practical: waveform, vectorscope, histogram, RGB parade.
+
+================================================================================
+RENDER / EXPORT
+================================================================================
+Professional export screen.
+
+Presets: Social, YouTube, Broadcast, Master, Custom.
+
+Controls:
+resolution, FPS, codec, bitrate, audio, color space, alpha, container,
+hardware acceleration, background rendering, render queue,
+estimated file size, estimated render time.
+
+RENDER QUEUE
+Multiple jobs. Each job:
+thumbnail, project, format, resolution, FPS, progress, speed, ETA,
+output location, status.
+
+Actions: pause, resume, cancel, retry, reveal file.
+
+================================================================================
+TERMINAL / CONSOLE / SCRIPTING (PROFESSIONAL)
+================================================================================
+In-app Terminal panel (pro feature):
+
+Tabs:
+1) Output — logs, errors, render queue messages
+2) Python — project scripting via ms.* API
+3) Shell — desktop system shell when available; on Android prefer
+   documented Termux companion (do not embed full Termux source)
+
+Example ms API surface:
+- ms.log(...)
+- ms.project.current()
+- ms.timeline / markers / export
+- ms.effects.apply(...)
+
+Script effects: optional user Python filters registered as effects.
+Do not block the editor if the shell fails.
+
+================================================================================
+AI COPILOT (OPTIONAL)
+================================================================================
+Optional side panel only. App must work fully without it.
+Prefer local chat-capable model (e.g. small Qwen via Ollama HTTP).
+Never block timeline or export on AI availability.
+Do not depend on gated or broken model tags.
+
+================================================================================
+SETTINGS
+================================================================================
+Categories:
+General, Appearance, Editor, Timeline, Playback, Performance, Media,
+Audio, Color, 3D, Render, Plugins, Scripting, Shortcuts, Storage,
+Privacy, About.
+
+================================================================================
+GESTURES
+================================================================================
+Tap, double tap, long press, drag, pinch, two-finger pan, two-finger tap,
+three-finger undo, three-finger redo, panel swipe, edge gestures.
+Do not conflict with OS navigation.
+
+================================================================================
+CONTEXT MENUS
+================================================================================
+Clip: cut, copy, paste, duplicate, split, trim, delete, speed, reverse,
+replace, properties.
+
+Layer: duplicate, pre-compose, parent, add effect, add mask, convert, 3D,
+blending.
+
+Node: duplicate, disconnect, bypass, rename, group, properties.
+
+================================================================================
+SELECTION
+================================================================================
+Single, multi, range, layer, timeline, node selection.
+Clear indicators without excessive outlines.
+
+================================================================================
+UNDO / REDO / SAFETY
+================================================================================
+Undo, redo, history panel, autosave, crash recovery, project backups.
+Every destructive operation reversible where practical.
+
+================================================================================
+PROJECT MANAGEMENT
+================================================================================
+Project files represent:
+timeline, assets, compositions, effects, keyframes, masks, nodes,
+3D data, audio, render settings, color settings, metadata, history state.
+
+================================================================================
+ACCESSIBILITY
+================================================================================
+Large text, high contrast, reduced motion, touch target scaling,
+color-safe indicators, readable typography.
+Never communicate important state through color alone.
+
+================================================================================
+MICRO-INTERACTIONS
+================================================================================
+Subtle, fast animations for panel transitions, button feedback, selection,
+timeline movement, node connections, render progress.
+Avoid bouncy, slow, neon, or decorative animations.
+
+================================================================================
+TYPOGRAPHY & ICONOGRAPHY
+================================================================================
+Professional UI font. Clear hierarchy:
+project title → panel title → section title → parameter name → value → metadata.
+Avoid giant typography.
+
+Icons: consistent, simple, recognizable, professional, compact.
+Do not mix random icon styles.
+
+================================================================================
+EMPTY / ERROR / LOADING STATES
+================================================================================
+Empty: useful CTAs (Add Media, Add Text, Add Shape, Add Camera, Add Light).
+No huge decorative illustrations.
+
+Error: what happened, why, what to do.
+Example: “Media file could not be decoded.”
+Actions: Retry, Relink, Replace, Details.
+Avoid generic “Something went wrong.”
+
+Loading: contextual progress (media thumbnails, render %, project stage).
+Avoid indefinite spinners where progress is known.
+
+================================================================================
+RESPONSIVE BREAKPOINTS
+================================================================================
+Small phone: viewer + timeline priority.
+Medium phone: viewer + timeline + compact inspector.
+Large phone / foldable: viewer + timeline + inspector.
+Tablet: multi-panel professional layout.
+Landscape tablet: full professional workspace.
+
+================================================================================
+PERFORMANCE UI
+================================================================================
+Optional developer overlay (off by default):
+FPS, frame time, GPU time, CPU time, memory, cache, dropped frames,
+render resolution, preview scale.
+
+UI must stay responsive while scrubbing, playing, rendering, decoding,
+caching, evaluating nodes, applying effects, and manipulating 3D.
+Never block the UI thread with expensive work.
+
+================================================================================
+CUSTOMIZABLE WORKSPACE
+================================================================================
+Panel visibility, panel order, timeline height, viewer size,
+inspector position, toolbar controls, default workspace,
+saved layouts, reset workspace.
+
+================================================================================
+IMPLEMENTATION RULES
+================================================================================
+- UI must connect to real application state.
+- Buttons must not be fake.
+- Panels operate on actual projects, timelines, layers, clips, keyframes,
+  effects, masks, nodes, 3D objects, media, render jobs, settings.
+- Every visible control must have a logical state and action.
+- Stack alignment: Flutter UI shell + C++ core; optional Python scripting.
+- No Kotlin / Jetpack Compose as product UI stack.
+- Do not vendor full Termux or full CPython source into the app binary tree;
+  depend or document companion installs where needed.
+
+================================================================================
+FINAL USER FLOW TEST (NO PLACEHOLDERS)
+================================================================================
+Verify a user can:
+1. Open Motion Studio
+2. Create a project
+3. Import media
+4. Add layers
+5. Move layers
+6. Trim clips
+7. Add effects
+8. Animate properties
+9. Edit keyframes
+10. Open the graph editor
+11. Create a node graph
+12. Add masks
+13. Use 3D layers
+14. Add cameras and lights
+15. Edit audio
+16. Color-correct
+17. Save
+18. Close
+19. Reopen
+20. Render
+21. Find the exported file
+22. (Optional) Run a Python ms.* script from Terminal
+23. (Optional) Download an effect pack and apply it
+
+================================================================================
+FINAL TARGET
+================================================================================
+Motion Studio must feel like:
+
+“Professional desktop-class creative power redesigned specifically for touch.”
+
+It should be:
+- DENSE WHEN NEEDED
+- SIMPLE WHEN POSSIBLE
+- FAST ALWAYS
+- CUSTOMIZABLE THROUGH SETTINGS
+- PROFESSIONAL ENOUGH FOR SERIOUS WORK
+- MOBILE-FIRST FROM THE GROUND UP
+
+Do not build a pretty prototype.
+Build the actual Motion Studio interface.
+================================================================================
+END OF PROMPT
+================================================================================

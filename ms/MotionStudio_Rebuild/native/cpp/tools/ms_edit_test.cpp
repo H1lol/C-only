@@ -1,0 +1,290 @@
+// Editing + effect-stack regression test: move, trim, ripple, tracks, effect
+// persistence through the project JSON, enable/disable and removal.
+#include "ms_engine.hpp"
+#include "ms_project.hpp"
+#include "ms_text.hpp"
+
+#include <cmath>
+#include <cstdio>
+#include <string>
+
+using namespace ms;
+
+static int failures = 0;
+
+static void check(bool cond, const char* what) {
+    if (!cond) {
+        std::printf("FAIL %s\n", what);
+        ++failures;
+    }
+}
+
+int main() {
+    Engine& e = Engine::instance();
+    if (!e.init(640, 360)) {
+        std::printf("ms_edit_test: engine init failed\n");
+        return 1;
+    }
+    if (!e.new_project("Edit test", 640, 360, 30.f)) {
+        std::printf("ms_edit_test: new_project failed\n");
+        return 1;
+    }
+
+    const auto& tracks = e.project().tracks();
+    check(!tracks.empty(), "default project has a track");
+    if (tracks.empty()) return 1;
+    const TrackId track = tracks[0].id;
+
+    ClipInfo c;
+    c.name = "Clip A";
+    c.start = 1.0;
+    c.duration = 2.0;
+    c.source_in = 0.0;
+    c.source_out = 2.0;
+    c.motion.ensure_defaults();
+    const ClipId clip = e.project().add_clip(track, c);
+    check(clip != 0, "clip added");
+
+    check(e.move_clip(track, clip, 3.0), "move clip");
+    check(std::fabs(e.project().find_clip(track, clip)->start - 3.0) < 1e-6, "move applied");
+
+    check(e.trim_clip(track, clip, 3.0, 1.5), "trim clip");
+    check(std::fabs(e.project().find_clip(track, clip)->duration - 1.5) < 1e-6, "trim applied");
+
+    // Effects
+    check(e.add_effect(track, clip, "gaussian_blur") == 0, "effect added at index 0");
+    check(e.set_effect_param(track, clip, 0, "radius", 8.f), "param set");
+    const ClipInfo* fx = e.project().find_clip(track, clip);
+    check(fx && fx->motion.effects.size() == 1, "one effect on clip");
+    {
+        auto it = fx ? fx->motion.effects[0].params.find("radius")
+                     : std::unordered_map<std::string, double>::const_iterator{};
+        check(fx && it != fx->motion.effects[0].params.end() && std::fabs(it->second - 8.0) < 1e-4,
+              "param stored");
+    }
+    check(e.set_effect_enabled(track, clip, 0, false), "effect disabled");
+    check(e.add_effect(track, clip, "vignette") == 1, "second effect at index 1");
+
+    // Round-trip: effects must survive save/load.
+    const std::string json = e.project_to_json();
+    check(json.find("\"effects\"") != std::string::npos, "effects serialized");
+    check(e.load_project_json(json), "project reloads");
+    const TrackInfo& rt = e.project().tracks()[0];
+    check(rt.clips.size() == 1, "one clip after reload");
+    check(rt.clips[0].motion.effects.size() == 2, "both effects reload");
+    check(rt.clips[0].motion.effects[0].id == "gaussian_blur", "effect id preserved");
+    check(!rt.clips[0].motion.effects[0].enabled, "disabled flag preserved");
+    {
+        const auto& params = rt.clips[0].motion.effects[0].params;
+        auto it = params.find("radius");
+        check(it != params.end() && std::fabs(it->second - 8.0) < 1e-4,
+              "param preserved through json");
+    }
+
+    // Undo must be able to walk the edits back.
+    const double before = e.project().find_clip(track, clip)->start;
+    e.move_clip(track, clip, 7.0);
+    check(std::fabs(e.project().find_clip(track, clip)->start - 7.0) < 1e-6, "move to 7");
+    e.project().undo();
+    check(std::fabs(e.project().find_clip(track, clip)->start - before) < 1e-6, "undo restores start");
+
+    // Transitions between two adjacent clips
+    {
+        ClipInfo c2;
+        c2.name = "Clip B";
+        c2.start = 12.0;
+        c2.duration = 2.0;
+        c2.source_in = 0.0;
+        c2.source_out = 2.0;
+        c2.motion.ensure_defaults();
+        const ClipId clip_b = e.project().add_clip(track, c2);
+        check(clip_b != 0, "second clip added");
+
+        const uint64_t tid = e.add_transition(track, clip, clip_b, 1, 0.8);
+        check(tid != 0, "transition added");
+        check(e.project().tracks()[0].transitions.size() == 1, "transition stored");
+
+        const std::string json2 = e.project_to_json();
+        check(json2.find("transitions") != std::string::npos, "transitions serialized");
+        check(e.load_project_json(json2), "reload with transitions");
+        check(e.project().tracks()[0].transitions.size() == 1, "transition restored");
+        check(e.project().tracks()[0].transitions[0].type == 1, "transition type restored");
+        check(std::fabs(e.project().tracks()[0].transitions[0].duration - 0.8) < 1e-4,
+              "transition duration restored");
+        const uint64_t restored = e.project().tracks()[0].transitions[0].id;
+        check(e.remove_transition(track, restored), "transition removed");
+        check(e.project().tracks()[0].transitions.empty(), "no transitions left");
+    }
+
+    // Text / titles — real glyph rasterisation through stb_truetype
+    {
+        ms::TextStyle ts;
+        ts.font = "anton";
+        ts.size = 96.f;
+        ts.align = ms::TextAlign::Center;
+        ts.anchor = ms::TextAnchor::Middle;
+
+        ms::TextMetrics metrics;
+        const bool measured = ms::measure_text(ts, "MOTION STUDIO", metrics);
+        check(measured, "title font resolves from the asset tree");
+        if (measured) {
+            check(metrics.width > 10.f, "measured title has width");
+            check(metrics.height > 10.f, "measured title has height");
+            check(metrics.lines == 1, "single line title");
+        }
+
+        ms::ImageBuffer tile;
+        const ms::Error te = ms::render_text(tile, 640, 360, ts, "MOTION STUDIO");
+        check(te.ok(), "title rasterised");
+        int opaque = 0;
+        if (tile.valid()) {
+            for (int i = 0; i < tile.width() * tile.height(); ++i)
+                if (tile.data()[i * 4 + 3] > 8) ++opaque;
+        }
+        check(opaque > 200, "title drew glyph coverage into the tile");
+
+        // Wrapping respects the box width.
+        ms::TextStyle wrapped = ts;
+        wrapped.box_width = 200.f;
+        ms::TextMetrics wm;
+        if (ms::measure_text(wrapped, "MOTION STUDIO TITLE", wm))
+            check(wm.lines > 1, "text wraps inside the box width");
+
+        // A text clip persists as a first-class clip with its style.
+        const int text_track = e.add_track("Titles", 4);
+        const ms::ClipId title = e.add_text_clip(text_track, 0.0, 3.0, "HELLO", ts);
+        check(title != 0, "text clip added");
+        const std::string tjson = e.project_to_json();
+        check(tjson.find("\"is_text\": true") != std::string::npos, "text clip serialized");
+        check(tjson.find("\"tx_text\": \"HELLO\"") != std::string::npos, "title text serialized");
+        check(e.load_project_json(tjson), "reload with a title");
+        const ms::ClipInfo* restored = e.project().find_clip(text_track, title);
+        check(restored && restored->is_text && restored->text == "HELLO", "title survives reload");
+        if (restored) check(std::fabs(restored->text_style.size - 96.f) < 1e-3f, "title size survives");
+    }
+
+    // Undo/redo must actually restore edits — the preview cache is keyed on the
+    // edit revision, so a missed invalidation here would freeze the preview.
+    {
+        const ms::ClipInfo* start_clip = e.project().find_clip(track, clip);
+        check(start_clip != nullptr, "clip exists for undo test");
+        const ms::TimeSec before = start_clip ? start_clip->start : 0.0;
+        check(e.move_clip(track, clip, before + 4.0), "move for undo");
+        check(std::fabs(e.project().find_clip(track, clip)->start - (before + 4.0)) < 1e-6,
+              "move applied");
+        check(e.undo(), "undo returns true");
+        check(std::fabs(e.project().find_clip(track, clip)->start - before) < 1e-6,
+              "undo restored the move");
+        check(e.redo(), "redo returns true");
+        check(std::fabs(e.project().find_clip(track, clip)->start - (before + 4.0)) < 1e-6,
+              "redo re-applied the move");
+        check(e.undo(), "undo again");
+
+        const int before_count = e.project().clip_count();
+        const ms::ClipId added = e.add_clip(track, 0, 30.0, 2.0);
+        check(added != 0, "engine add_clip returns an id");
+        check(e.project().clip_count() == before_count + 1, "add_clip grew the timeline");
+        check(e.undo(), "undo the added clip");
+        check(e.project().clip_count() == before_count, "undo removed the added clip");
+    }
+
+    // Timeline markers
+    {
+        const uint64_t m1 = e.add_marker(2.5, "intro");
+        check(m1 != 0, "marker added");
+        const uint64_t m2 = e.add_marker(7.0, "outro");
+        check(m2 != 0 && m2 != m1, "second marker added");
+        check(e.project().markers().size() == 2, "markers tracked");
+
+        const std::string mjson = e.project_to_json();
+        check(mjson.find("\"markers\"") != std::string::npos, "markers serialized");
+        check(mjson.find("\"name\": \"intro\"") != std::string::npos, "marker name serialized");
+        check(e.load_project_json(mjson), "reload with markers");
+        check(e.project().markers().size() == 2, "markers restored");
+        check(e.remove_marker(m1), "marker removed");
+        check(e.project().markers().size() == 1, "marker list shrank");
+    }
+
+    // Shape masks
+    {
+        ms::Mask em;
+        em.shape = ms::MaskShape::Ellipse;
+        em.x = 0.25f;
+        em.y = 0.25f;
+        em.w = 0.5f;
+        em.h = 0.5f;
+        em.feather = 0.f;
+        ms::ImageBuffer mask_img;
+        check(ms::rasterize_mask(em, 64, 64, mask_img).ok(), "mask rasterized");
+        auto strength = [&](int px, int py) -> int {
+            const uint8_t* p = mask_img.data() + py * mask_img.stride() + px * 4;
+            return p[0];
+        };
+        check(strength(32, 32) > 200, "mask centre is opaque");
+        check(strength(2, 2) < 20, "mask corner is clear");
+
+        check(e.set_clip_mask(track, clip, 1, 0.2f, 0.3f, 0.5f, 0.6f, 12.f, true),
+              "clip mask set");
+        float mk[6] = {};
+        bool inv = false;
+        check(e.clip_mask(track, clip, mk, &inv), "clip mask readable");
+        check(std::fabs(mk[3] - 0.5f) < 1e-3f && inv, "clip mask values");
+
+        const std::string mj = e.project_to_json();
+        check(mj.find("\"mask_enabled\": true") != std::string::npos, "mask serialized");
+        check(e.load_project_json(mj), "reload with a mask");
+        const ms::ClipInfo* mc = e.project().find_clip(track, clip);
+        check(mc && mc->mask_enabled && mc->mask.shape == ms::MaskShape::Ellipse,
+              "mask restored");
+        check(e.clear_clip_mask(track, clip), "mask cleared");
+        float mk2[6] = {};
+        check(!e.clip_mask(track, clip, mk2, &inv), "cleared mask not reported");
+    }
+
+    // Per-clip grade + waveform guards
+    {
+        check(e.set_clip_grade(track, clip, 0.5f, 1.2f, 1.1f, 0.1f, 0.f, 1.f, 1.f),
+              "clip grade set");
+        float g[7] = {};
+        check(e.clip_grade(track, clip, g), "clip grade readable");
+        check(std::fabs(g[0] - 0.5f) < 1e-3f && std::fabs(g[1] - 1.2f) < 1e-3f,
+              "clip grade values");
+
+        const std::string gj = e.project_to_json();
+        check(gj.find("\"grade_enabled\": true") != std::string::npos, "clip grade serialized");
+        check(e.load_project_json(gj), "reload with a clip grade");
+        const ms::ClipInfo* gc = e.project().find_clip(track, clip);
+        check(gc && gc->grade_enabled && std::fabs(gc->grade[3] - 0.1f) < 1e-3f,
+              "clip grade restored");
+
+        check(e.clear_clip_grade(track, clip), "clip grade cleared");
+        float g2[7] = {};
+        check(!e.clip_grade(track, clip, g2), "cleared clip grade is not reported");
+
+        // A clip with no decodable media must fail cleanly, not invent a waveform.
+        float peaks[8] = {};
+        check(!e.clip_peaks(track, clip, 8, peaks), "peaks refused for a clip with no media");
+        check(!e.clip_peaks(track, 9999, 8, peaks), "peaks refused for an unknown clip");
+        check(!e.clip_peaks(track, clip, 0, peaks), "peaks refused for zero bins");
+    }
+
+    // Tracks
+    const TrackId audio = e.add_track("A1", 1);
+    check(audio != 0, "audio track added");
+    check(e.set_track_flags(audio, true, false, true, false), "track flags set");
+    check(e.project().find_track(audio)->muted, "mute stored");
+    check(e.remove_track(audio), "track removed");
+
+    // Deletion
+    const int before_count = e.project().clip_count();
+    check(e.remove_clip(track, clip), "clip removed");
+    check(e.project().clip_count() == before_count - 1, "clip count dropped");
+
+    e.shutdown();
+    if (failures == 0) {
+        std::printf("ms_edit_test: all checks passed\n");
+        return 0;
+    }
+    std::printf("ms_edit_test: %d failure(s)\n", failures);
+    return 1;
+}

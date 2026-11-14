@@ -1,0 +1,46 @@
+{
+  "id": "92447f28-00e4-4b07-8a95-31324156bfbd",
+  "name": "Demo Project",
+  "version": 2,
+  "frame_rate": {
+    "num": 30,
+    "den": 1
+  },
+  "width": 1080,
+  "height": 1920,
+  "duration": 15.0,
+  "created_at": "2026-10-23T11:22:01.252152+00:00",
+  "modified_at": "2026-10-23T11:22:01.252152+00:00",
+  "tracks": [
+    {
+      "id": "896b762d-e01f-4720-9396-606765f3ebf2",
+      "name": "Video 1",
+      "track_type": "Video",
+      "clips": [],
+      "muted": false,
+      "locked": false,
+      "height": 64.0,
+      "visible": true
+    },
+    {
+      "id": "fd1f39de-f4fa-4c27-94f7-6d4ffa00e456",
+      "name": "Overlay",
+      "track_type": "Overlay",
+      "clips": [],
+      "muted": false,
+      "locked": false,
+      "height": 48.0,
+      "visible": true
+    },
+    {
+      "id": "026cbd3b-09da-44bd-8cbf-44fe588ea86e",
+      "name": "Audio 1",
+      "track_type": "Audio",
+      "clips": [],
+      "muted": false,
+      "locked": false,
+      "height": 40.0,
+      "visible": true
+    }
+  ]
+}

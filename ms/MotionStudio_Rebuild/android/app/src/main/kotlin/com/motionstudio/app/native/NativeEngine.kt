@@ -1,0 +1,135 @@
+package com.motionstudio.app.native
+
+import android.graphics.Bitmap
+
+/**
+ * Direct binding to the Motion Studio C++ engine (`libmotionstudio_jni.so`).
+ *
+ * Every call forwards to the C ABI in `native/cpp/bridge/ms_bridge.h`; the
+ * project document, timeline, compositing, audio mix and export all live in
+ * C++. This object is the only place the UI touches native code.
+ */
+object NativeEngine {
+
+    init {
+        System.loadLibrary("motionstudio_jni")
+    }
+
+    // Lifecycle
+    external fun nativeInit(width: Int, height: Int): Boolean
+    external fun nativeNewProject(name: String, width: Int, height: Int, fps: Double): Boolean
+    external fun nativeShutdown()
+
+    // Document
+    external fun nativeProjectLoad(json: String): Boolean
+    external fun nativeProjectToJson(): String
+    external fun nativeSaveProject(path: String): Boolean
+    external fun nativeAutosaveProject(path: String): Boolean
+
+    // Transport
+    external fun nativeSeek(seconds: Double)
+    external fun nativePlay()
+    external fun nativePause()
+    external fun nativePreviewState(): DoubleArray
+
+    // Rendering
+    external fun nativeRenderFrame(): Boolean
+    external fun nativeFrameBytes(): Long
+    external fun nativeCopyFrame(bitmap: Bitmap): Boolean
+
+    // Editing
+    external fun nativeImportMedia(path: String): Int
+    external fun nativeAddClip(trackId: Int, mediaId: Int, start: Double, duration: Double): Int
+    external fun nativeSplitClip(trackId: Int, clipId: Int, at: Double): Boolean
+    external fun nativeUndo(): Boolean
+    external fun nativeRedo(): Boolean
+
+    // Audio
+    external fun nativeAudioState(): DoubleArray
+    external fun nativeReadAudioPcm(buffer: FloatArray, frames: Int, channels: Int): Boolean
+    external fun nativeSetMasterGain(db: Float): Boolean
+
+    // Master grade + scopes
+    external fun nativeGradeSet(
+        exposure: Float,
+        contrast: Float,
+        saturation: Float,
+        temperature: Float,
+        lift: Float,
+        gamma: Float,
+        gain: Float,
+    )
+    external fun nativeGradeClear()
+    external fun nativeScopesHistogram(out: IntArray, bins: Int): Boolean
+
+    // Timeline markers + project settings
+    external fun nativeMarkerAdd(time: Double, name: String): Int
+    external fun nativeMarkerRemove(id: Int): Boolean
+    external fun nativeProjectSettings(width: Int, height: Int, fps: Double): Boolean
+
+    // Shape masks (shape: 0 rect, 1 ellipse, 2 full frame; x/y/w/h normalized)
+    external fun nativeClipMaskSet(
+        track: Int, clip: Int, shape: Int, x: Float, y: Float, w: Float, h: Float,
+        feather: Float, inverted: Boolean,
+    ): Boolean
+    external fun nativeClipMaskClear(track: Int, clip: Int): Boolean
+    external fun nativeClipMaskGet(track: Int, clip: Int, out: FloatArray, invertedOut: IntArray): Boolean
+
+    // Per-clip grade
+    external fun nativeClipGradeSet(
+        track: Int, clip: Int, exposure: Float, contrast: Float, saturation: Float,
+        temperature: Float, lift: Float, gamma: Float, gain: Float,
+    ): Boolean
+    external fun nativeClipGradeClear(track: Int, clip: Int): Boolean
+    external fun nativeClipGradeGet(track: Int, clip: Int, out: FloatArray): Boolean
+
+    // Timeline waveform: fills `out` with `bins` peaks in 0..1.
+    external fun nativeClipPeaks(track: Int, clip: Int, out: FloatArray, bins: Int): Boolean
+
+    // Text / titles (stb_truetype rasteriser in the engine)
+    external fun nativeTextSetFontDir(dir: String): Boolean
+    external fun nativeTextAddClip(
+        track: Int, start: Double, duration: Double, text: String, font: String,
+        size: Double, color: String, align: Int, anchor: Int, outline: Double,
+        outlineColor: String, shadow: Double, lineSpacing: Double, tracking: Double,
+        boxWidth: Double, uppercase: Boolean,
+    ): Int
+    external fun nativeTextUpdateClip(
+        track: Int, clipId: Int, text: String, font: String, size: Double, color: String,
+        align: Int, anchor: Int, outline: Double, outlineColor: String, shadow: Double,
+        lineSpacing: Double, tracking: Double, boxWidth: Double, uppercase: Boolean,
+    ): Boolean
+
+    // Transitions
+    external fun nativeTransitionAdd(trackId: Int, outgoing: Int, incoming: Int, type: Int, duration: Double): Int
+    external fun nativeTransitionRemove(trackId: Int, id: Int): Boolean
+
+    // Keyframes (prop: 0 opacity, 1 scale, 2 pos_x, 3 pos_y; time clip-local)
+    external fun nativeKeyframeAdd(trackId: Int, clipId: Int, prop: Int, time: Double, value: Double): Boolean
+    external fun nativeKeyframeClear(trackId: Int, clipId: Int, prop: Int): Boolean
+
+    // Timeline editing
+    external fun nativeClipRemove(trackId: Int, clipId: Int): Boolean
+    external fun nativeClipMove(trackId: Int, clipId: Int, start: Double): Boolean
+    external fun nativeClipTrim(trackId: Int, clipId: Int, start: Double, duration: Double): Boolean
+    external fun nativeClipRippleDelete(trackId: Int, clipId: Int): Boolean
+    external fun nativeTrackAdd(name: String, type: Int): Int
+    external fun nativeTrackRemove(trackId: Int): Boolean
+    external fun nativeTrackFlags(trackId: Int, muted: Boolean, locked: Boolean, visible: Boolean, solo: Boolean): Boolean
+
+    // Clip effect stack
+    external fun nativeEffectAdd(trackId: Int, clipId: Int, baseId: String): Int
+    external fun nativeEffectRemove(trackId: Int, clipId: Int, index: Int): Boolean
+    external fun nativeEffectSetParam(trackId: Int, clipId: Int, index: Int, name: String, value: Float): Boolean
+    external fun nativeEffectSetEnabled(trackId: Int, clipId: Int, index: Int, enabled: Boolean): Boolean
+
+    // Display look (3D .cube LUT applied by the engine to the preview frame)
+    external fun nativeLookLoad(path: String): Boolean
+    external fun nativeLookClear()
+    external fun nativeLookSetStrength(strength: Float)
+    external fun nativeLookStrength(): Float
+
+    // Diagnostics
+    external fun nativePerfFrameMs(): Double
+    external fun nativePerfFps(): Double
+}

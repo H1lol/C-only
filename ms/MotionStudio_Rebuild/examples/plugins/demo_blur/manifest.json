@@ -1,0 +1,13 @@
+{
+  "id": "community.demo.blur",
+  "name": "Demo Blur",
+  "version": "1.0.0",
+  "author": "MotionStudio Community",
+  "license": "MIT",
+  "open_source": true,
+  "description": "Example .msp-style plugin folder",
+  "category": "blur",
+  "entry_type": "composite",
+  "entry_path": "effect.json",
+  "min_app_version": "0.6.0"
+}

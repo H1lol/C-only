@@ -1,0 +1,445 @@
+# Sprocket feature inventory
+
+Working document that drives user-documentation coverage. It lives **in the app
+repo** so that shipping or changing a user-facing feature and updating its row
+happen in the same commit. The guides it references live in the docs repo:
+`../sprocket-docs/src/content/docs/` (published at docs.sprocketvideo.org).
+Entries in the Docs column are `folder/guide.md#anchor` paths relative to that
+folder.
+
+One row per feature at the granularity a user thinks of ("Ripple edit", not
+"ripple drag hit-testing").
+
+> **Docs coverage audited against** `sprocket` @ `92226ec` on 2026-07-02.
+> A full re-audit only needs `git log 92226ec..HEAD` plus RELEASE_NOTES.md
+> diffs; update the affected rows and bump this stamp.
+
+> **IA note (2026-07-10):** the docs site was reorganized into grouped folders
+> (`get-started/`, `media/`, `edit/`, `effects-color/`, `audio/`, `export/`,
+> `performance/`, `ai/`), each a sidebar group. The numbered sections below
+> mirror those groups; a group with several guides is split into `###`
+> subsections. The old flat `getting-started.md`/`color-grading.md` mega-guides
+> were split — the everyday-effects, audio, and export walkthrough steps now
+> have dedicated guides (`effects-color/effects.md`, `audio/audio-mixing.md`,
+> `export/exporting.md`), and log-footage moved to `media/log-footage.md`.
+
+**Doc-coverage symbols** — every feature listed here is shipped and working; this column
+only tracks whether a user guide covers it yet, not whether it exists.
+
+| | |
+|---|---|
+| ✅ | documented — the Docs column links to the covering guide + anchor |
+| 🟡 | partially documented — exists in a guide but incomplete or shallow |
+| ❌ | undocumented — shipped in the app, no guide covers it yet |
+| ➖ | deliberately not documented (internal, developer-facing, or disabled in the UI) |
+
+**Maintenance contract**
+
+- **App side (this repo):** when a user-facing feature ships or changes
+  behavior, add or amend its row in the same change (new features start ❌).
+  This complements PLAN.md's step markers: PLAN tracks *build order*, this file
+  tracks *doc coverage*.
+- **App side (§0 rows):** when a change matches a §0 row's staleness trigger,
+  flip that row to 🟡/❌ in the same change with a one-line note of what
+  changed (e.g. "🟡 stale — new Ripple button in toolbar; quick tour
+  screenshot + text").
+- **Docs side (`../sprocket-docs`):** when a guide is written or extended,
+  update the affected rows' Docs status and Docs columns in the same change.
+- **Docs side (§0 rows):** when a page listed in §0 is updated, bump its
+  Audited @ stamp to the app commit the update was checked against and reset
+  its Status, in the same change.
+- The numbered sections below are the intended docs-site information
+  architecture (one per sidebar group): new guides should map to one section or
+  `###` subsection.
+- Docs anchors listed here are load-bearing (see sprocket-docs/CLAUDE.md) —
+  if one changes, fix it here too.
+
+---
+
+## 0. Doc pages & cross-cutting sections
+
+Unlike feature rows, these track *pages/sections of the docs site* whose
+content spans many features — the getting-started guide, the quick tour, the
+shortcut reference, the landing page. Each row has its own audit stamp; a row
+goes stale when any feature it draws from changes, even if no single feature
+row below flips status. The **Staleness trigger** column states the condition
+in terms an app-side committer can check against their diff.
+
+| Page / section | Draws from | Staleness trigger | Audited @ | Status |
+|---|---|---|---|---|
+| get-started/getting-started.md (whole guide) | §§1–4, 6–7 (everyday subset) | a *common-task* workflow changes, or a new feature belongs in the everyday path | c09258f | ✅ current (task 1 notes parking the playhead past the last clip, `End` back to the content end, and the Page Scroll follow — linking to the new Following the playhead section) |
+| get-started/getting-started.md#a-quick-tour-of-the-main-screen | §1 (all visible chrome) | anything visible in the main window changes: toolbar, panels, status bar, menus | 972911b | ✅ current (Program-monitor bullet now links out to the new preview-and-monitors guide) |
+| get-started/getting-started.md#keyboard-shortcuts-worth-knowing | §9 (Keyboard shortcuts) | any shortcut in the curated table changes | pending | ✅ current (zoom row now shows the bare `-`/`=` keys — re-stamp Audited @ to this change's commit) |
+| get-started/keyboard-shortcuts.md (full page) | §9; MainWindow.axaml.cs key handlers + menu InputGestures | any key handler or InputGesture added/changed | 9d38eef | ✅ current (Up / Down edit-point rows; the full In / Out set — Go to / Clear / Mark Clip / Mark Selection / Lift / Extract — with a Source-monitor routing tip; new Three-point editing section: `,` / `.` / `Shift+F11`) |
+| get-started/projects-and-saving.md | §1 (Projects & saving); §9 (Autosave interval) | New/Open/Open Recent/Save/Save As, the unsaved-changes prompt, autosave + crash recovery, the autosave interval preference, or Relink Media change | pending | ✅ current (new Reopen a recent project subsection + open-recent.png; file-menu.png re-captured with Open Recent — re-stamp Audited @ to this change's commit) |
+| get-started/arranging-your-workspace.md | §1 (Window & layout: window chrome, macOS menu bar, full-screen window, panel show/hide, Reset Layout, per-project layout memory) | the title bar/caption buttons, the View menu panel or Full Screen items, Window ▸ Reset Layout, or what the per-project layout restores change | c8eaed0 | ✅ current (new guide) |
+| get-started/updates-and-help.md | §1 (Window & layout: Help ▸ About, Third-Party Notices, auto-update, Linux applications-menu integration, Help-menu links); §9 (Preferences ▸ Updates) | the Help menu items, the About box, the update badge/toast/Help-menu dot or their escalation, the Update Available / portable Check for Updates dialogs, the Preferences ▸ Updates toggle, or the Linux AppImage menu offer change | c8eaed0 | ✅ current (new guide; Update Available dialog, badge and toast documented from code — only reachable in an installed build) |
+| index.md (landing page) | guide list + group structure | a guide is added/renamed, or a sidebar group changes | 9d38eef | ✅ current (added the Three-point editing guide under Edit) |
+| edit/editing-on-the-timeline.md | §3 (Timeline editing; Clips: speed / frame hold / frame edits) | any timeline tool/behavior changes, or the Speed/Duration or Frame Hold dialogs change | 9d38eef | ✅ current (new Targeting, sync lock, and lock section incl. the source-patch column; Up / Down edit-point note under Getting around) |
+| edit/marks-and-markers.md | §3 (Markers; In/Out marks; Play In to Out) | the Markers panel, in/out mark keys/overlay, or Play In to Out change | 9d38eef | ✅ current (marks saved + undoable; Mark Clip / Mark Selection / Go to / Clear In and Out; new Lift and Extract and Marks in the Source monitor sections) |
+| edit/three-point-editing.md | §3 (Source-monitor marks; source patching; track targeting / sync lock / lock; three-point Insert / Overwrite; Fit to Fill; drag from the Source monitor; Up / Down edit points) | the three-point mark rules, the Source bar, the source-patch column, the header targeting / lock / sync-lock toggles, Fit to Fill, or Source-monitor drags change | 9d38eef | ✅ current (new guide) |
+| edit/titles-and-generators.md | §3 (Titles, generators & layers) | the Clip ▸ Insert generator set, the title Inspector sections, or adjustment-layer placement change | 487ace6 | ✅ current |
+| edit/multicam-and-sequences.md | §3 (Multicam & sequences) | multicam creation/angle-switching, the Sequence menu (New/Open/Settings), or nesting change | 0e665cb | ✅ current (sequence section rewritten for the frame-size picker; format-preset detail moved to aspect-ratio-and-framing.md; sequence-settings.png re-captured) |
+| edit/aspect-ratio-and-framing.md | §3 (Sequence format presets; per-clip conform; Inspector Framing) | the New Sequence / Sequence Settings frame-size picker, the preset list, per-clip Fit/Fill conform, or the Inspector Framing controls (Conform / Center / Fill Height / Reset Framing) change | 0e665cb | ✅ current (new guide) |
+| effects-color/effects.md | §4 (Effects & the effect stack) | the everyday effects, the Effects menu, or the Inspector effect UI change | c8eaed0 | ✅ current (new Work with the effect stack section: bypass LED, reorder by drag / Move Up·Down, Expand/Collapse all, drag-to-scrub numbers, % entry, parameter tooltips; new effect-stack-bypass.png + effect-stack-move-menu.png) |
+| effects-color/color-grading.md | §4 (Color grading & scopes) | grading effects, scopes, or wheel UI change | 438f6e2 | ✅ current |
+| media/importing-media.md | §2 (Importing media & the Project panel) | the import formats/picker, media-bin tiles/badges/search, Project-panel tabs, still/sequence/alpha import, or the Interpret Footage dialog change | 5227505 | ✅ current |
+| media/log-footage.md | §2 (Working with log & camera footage) | Input Color Transform, the camera LUT set, or ACES Filmic change | 438f6e2 | ✅ current |
+| audio/audio-mixing.md | §5 (track mute/solo, the Fade effect; the mixer: gain/pan, master strip, loudness meters, normalization, insert chains) | per-track audio controls, the Fade effect, or any mixer control (strips, master, meters, Normalize targets, inserts) change | 9e7bc4d | ✅ current (expanded from levels-only to the full mixer: strips, master, loudness meters, normalize, inserts) |
+| audio/audio-effects.md | §5 (audio-effect library: Gain/Pan, EQ, Compressor, Noise Gate, reverbs, delays; preset picker; Freeze/Unfreeze Clip Audio) | an audio effect is added/changed, the audio-effect Inspector UI or preset picker changes, or Freeze/Unfreeze Clip Audio changes | 9e7bc4d | ✅ current (new guide) |
+| export/exporting.md | §6 (Export Settings; format matrix; audio-only; presets; burn-ins; handles; encoding; color; metadata; progress/reveal) | the Export Settings dialog, its defaults, the format/codec matrix, the built-in preset list, or the audio-only formats change | ddf153b | ✅ current (quality/encoding section rewritten for the two-mode Rate control; portrait/square resolutions added; export-settings.png re-captured + new export-rate-bitrate.png) |
+| export/export-queue-and-interchange.md | §6 (Export Queue; EDL/Final Cut XML interchange) | the Export Queue window controls/statuses, or the interchange formats/warnings change | 48acaf5 | ✅ current (new guide) |
+| performance/preview-and-monitors.md | §7 (Source monitor; Preview zoom; Guides overlay; Full-screen preview) | the Program/Source tabs, the Fit ▾ zoom levels, the Guides overlay, or full-screen preview change | 9d38eef | ✅ current (bin double-click entry, Source audio + audio-only waveform view, one monitor plays at a time, the Source bar — links to three-point-editing.md) |
+| ai/ai-control.md | §8 (+ §9 Preferences MCP settings, §4 effect tags) | the MCP tool surface, Preferences AI section, setup command, status-bar indicator, or effect-tag UI changes | c86c921 | ✅ current |
+
+## 1. Get started
+
+### Window & layout
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Supported platforms (Windows 10 & 11 — Win10 floor 64-bit, version 1809+ — Linux, macOS; self-contained builds, no .NET/FFmpeg install) | README.md platform table; PLAN.md step 56 | get-started/getting-started.md#system-requirements | ✅ |
+| Main screen layout (menu bar, toolbar, panels, timeline, status bar) | UI.md §3; Sprocket.App/MainWindow.axaml | get-started/getting-started.md#a-quick-tour-of-the-main-screen | ✅ |
+| Custom window chrome, native per OS (drag, double-click maximize; Windows/Linux caption buttons — on Windows a real Win32 caption, so the maximize button shows the snap-layouts flyout; macOS uses the native traffic lights instead) | MainWindow.axaml.cs `ConfigureWindowChrome` / `WireWindowChrome` | get-started/arranging-your-workspace.md#move-and-resize-the-window | ✅ |
+| macOS system menu bar (File…Help at the top of the screen; About / Preferences ⌘, in the Sprocket application menu; Window ▸ Minimize ⌘M / Zoom) | MacMenuBridge.cs | get-started/arranging-your-workspace.md#on-macos | ✅ |
+| Full-screen window (View ▸ Full Screen; `F11`, `⌃⌘F` and the native green button on macOS; `Esc` exits; title bar/menu stays visible; never persisted across launches) | MainWindow.axaml.cs `ToggleWindowFullScreen` | get-started/arranging-your-workspace.md#go-full-screen | ✅ |
+| Resizable panels (splitters) | MainWindow.axaml GridSplitters | get-started/getting-started.md#a-quick-tour-of-the-main-screen | ✅ |
+| Show/hide Project & Inspector panels (View menu) | MainWindow.axaml.cs `SetPanelVisible` | get-started/arranging-your-workspace.md#show-or-hide-the-side-panels | ✅ |
+| Reset Layout | MainWindow.axaml.cs `ResetLayout` | get-started/arranging-your-workspace.md#reset-the-layout | ✅ |
+| Per-project layout memory: each project reopens with its panel sizes, Project/Inspector visibility, timeline zoom and Program/Source monitor tab (with the Source clip). Stored per user in `%LocalAppData%/Sprocket/layouts`, never in the shared project file; untitled projects use the defaults. Hiding and re-showing a panel keeps its width | Sprocket.App/ProjectLayoutStore.cs; MainWindow.axaml.cs `SaveProjectLayout`/`ApplyPaneLayout`/`RestoreViewLayout` | get-started/arranging-your-workspace.md#each-project-remembers-its-layout | ✅ |
+| Window-state persistence (reopens maximized/centered; size, position and maximized/full-screen state also survive opening a project) | Sprocket.App/WindowStateStore.cs (`WindowStateStore`, `WindowPlacement`) | — | ➖ (invisible; mention only if asked) |
+| Project name + saved/unsaved indicator in title bar | MainWindow.axaml.cs:1609 | get-started/getting-started.md#11-save-your-project | ✅ |
+| Status bar (engine state, messages, live fps/size/duration) | UI.md §3.7; MainWindow.axaml.cs `RenderTelemetry` | get-started/getting-started.md#a-quick-tour-of-the-main-screen | ✅ |
+| Help ▸ About (version, open logs folder) | Sprocket.App/Dialogs.cs `AboutDialog` | get-started/updates-and-help.md#see-your-version-and-find-the-log-files | ✅ |
+| Help ▸ Third-Party Notices (bundled library/font/media licenses) | Sprocket.App/Dialogs.cs `ThirdPartyNoticesDialog`; THIRD-PARTY-NOTICES.md | get-started/updates-and-help.md#third-party-notices | ✅ |
+| Auto-update (Help ▸ Check for Updates; status-bar badge with Help-menu discoverability dot + age-based colour escalation; one-time first-run toast per version; installed builds download + Install & Restart in-app with an inline "what's new" changelog for the offered version and a "Full Release Notes" link to that release's GitHub page; portable builds link to the releases page) | Sprocket.App/UpdateService.cs; UpdateDialogs.cs; UpdateEscalation.cs; scripts/release.ps1 `Get-FeedReleaseNotes`; PLAN.md steps 36 + 45 | get-started/updates-and-help.md#how-youll-know-an-update-is-ready | ✅ |
+| Add to applications menu (Linux AppImage only: first-run offer + Help ▸ Add/Remove from Applications Menu; writes a per-user launcher + icon so the AppImage appears in the menu) | Sprocket.App/LinuxDesktopIntegration.cs; MainWindow.axaml.cs `MaybeOfferLinuxDesktopIntegrationAsync` | get-started/updates-and-help.md#add-sprocket-to-the-linux-applications-menu | ✅ |
+| Help ▸ Sprocket Website (opens sprocketvideo.org; also linked in About) | MainWindow.axaml.cs `OpenWebsiteAsync`; Dialogs.cs `AboutDialog.WebsiteUrl` | — | ➖ (trivial; mention only if asked) |
+| Help ▸ Documentation (opens sprocketvideo.org/docs/) | MainWindow.axaml.cs `OpenUriAsync`; Dialogs.cs `AboutDialog.DocsUrl` | — | ➖ (trivial; mention only if asked) |
+| Help ▸ Report an Issue (opens the GitHub new-issue chooser) | MainWindow.axaml.cs `OpenUriAsync`; Dialogs.cs `AboutDialog.ReportIssueUrl`; .github/ISSUE_TEMPLATE/ | — | ➖ (trivial; mention only if asked) |
+| Help ▸ Support Sprocket ♥ (opens the GitHub Sponsors funding page) | MainWindow.axaml.cs `OpenUriAsync`; Dialogs.cs `AboutDialog.SupportUrl`; .github/FUNDING.yml | — | ➖ (trivial; mention only if asked) |
+
+### Projects & saving
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| New Project (`Ctrl+N`) | MainWindow.axaml.cs `NewProject` | get-started/getting-started.md#open-something-to-work-with | ✅ |
+| Open Project (`Ctrl+O`) | MainWindow.axaml.cs `OpenProjectAsync` | get-started/getting-started.md#open-something-to-work-with | ✅ |
+| Open Sample Project | MainWindow.axaml.cs `OpenSampleProject` | get-started/getting-started.md#open-something-to-work-with | ✅ |
+| Open Recent (File ▸ Open Recent — up to 10 recent projects, newest first, numbered 1–10 as access keys; Clear Recent; stale entries self-prune) | MainWindow.axaml.cs `RefreshRecentMenu`/`OpenRecentAsync`; UserSettingsStore.cs `PushRecent` | get-started/projects-and-saving.md#reopen-a-recent-project | ✅ |
+| Save / Save As (`Ctrl+S` / `Ctrl+Shift+S`) | MainWindow.axaml.cs `Save`/`SaveAsAsync` | get-started/getting-started.md#11-save-your-project | ✅ |
+| Unsaved-changes prompt when dirty (Save · Don't Save · Cancel) — guards New / Open / Open Sample **and** closing the window / Exit / Quit; Save that fails or is cancelled aborts the action | MainWindow.axaml.cs `ConfirmSaveIfDirtyAsync`, `ConfirmCloseAsync`, `OnClosing`; App.axaml.cs `OnShutdownRequested` | get-started/projects-and-saving.md#the-unsaved-changes-safety-check | ✅ |
+| Autosave + crash recovery (one-shot recover-newer-autosave prompt: Recover opens it as unsaved changes, Discard autosave deletes it; Don't Save on close/New/Open also deletes the autosave) | Sprocket.App/AutosaveService.cs; `ShouldRecoverAsync`; `DiscardAutosave` | get-started/projects-and-saving.md#autosave-and-crash-recovery | ✅ |
+| Relink Media (folder pick, match preview) | MainWindow.axaml.cs `RelinkMediaAsync` | get-started/projects-and-saving.md#relink-moved-or-missing-media | ✅ |
+| Undo / Redo with named steps (`Ctrl+Z` / `Ctrl+Shift+Z`, `⌘Z` / `⌘⇧Z` on macOS; `Ctrl+Y` alias on Windows/Linux only) | UI.md; MainWindow.axaml.cs:322 | get-started/getting-started.md#10-undo-and-redo | ✅ (`Ctrl+Y` alias in the shortcut reference) |
+
+## 2. Import & organize media
+
+### Importing media & the Project panel
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Import Media (`Ctrl+I`, file picker) | MainWindow.axaml.cs `ImportDialogAsync` | media/importing-media.md#import-media-into-your-project | ✅ (also in the getting-started quick path at #open-something-to-work-with) |
+| Drag-and-drop files from OS to import | MainWindow.axaml.cs:795 | media/importing-media.md#import-media-into-your-project | ✅ |
+| Supported import formats (16 video + 11 audio + 9 image extensions) | MainWindow.axaml.cs `VideoFileType`/`AudioFileType`/`ImageFileType` | media/importing-media.md#supported-file-formats | ✅ |
+| Media bin: thumbnails, waveforms, format/duration badges | Sprocket.App/MediaBrowser/MediaBrowserPanel.cs | media/importing-media.md#reading-the-media-bin | ✅ |
+| Media bin search/filter | MediaBrowser/MediaSearch.cs | media/importing-media.md#finding-media-in-the-bin | ✅ |
+| Project panel tabs: Media / Effects / Transitions / Audio | MediaBrowserPanel.cs:77 | media/importing-media.md#the-project-panel | ✅ |
+| Drag media from bin onto timeline tracks: the drop **overwrites** the covered stretch of the destination tracks (Premiere's drag behavior — no overlap stacking), `Ctrl`/`Cmd`+drop **inserts** (splits and pushes the destination and sync-locked tracks right); the lane's stream lands on it, the companion on its source-patched track (else the first editable one); a translucent ghost previews the landing spot, with ripple arrows while inserting. A bin item with Source-monitor marks drops only its marked range, and its tile shows a `[m:ss]` marked-length badge | TimelineControl.cs `OnDragOver`/`PlanSourceDrop`/`DropSource`; ClipPlacement.cs `DropTargets`/`MarkedRange`; ThreePointEdits.cs `Build`; MediaBadges.cs `MarkedTag` | media/importing-media.md#putting-media-on-the-timeline | ✅ current |
+| Double-click a bin item to preview it in the Source monitor (the monitor becomes the active pane, so `I` / `O` mark the source) | MediaBrowserPanel.cs MediaActivated; MainWindow.axaml.cs ShowInSourceMonitor | performance/preview-and-monitors.md#program-vs-source-the-two-monitors | ✅ |
+| Hover-scrub a bin video thumbnail (filmstrip preview) | ThumbnailService.GetFilmstripAsync; FilmstripMath.cs | — | ❌ |
+| Alpha-channel media import & compositing | PLAN.md step 26; Sprocket.Render/SkiaEffectPipeline.cs (premultiplied-alpha compositing); MediaBrowser/MediaBadges.cs | media/importing-media.md#transparent-alpha-media | ✅ (Alpha badge + compositing on an upper track; the premultiplied render path itself stays internal) |
+| Image-sequence import (numbered stills → one clip, fps choice) | PLAN.md step 42; ImageSequenceDetection.cs, ImageSequenceImportDialog.cs, MediaImport.cs | media/importing-media.md#image-sequences | ✅ |
+| Still-image import (single image, default duration preference) | PLAN.md step 42; MediaImport.cs, PreferencesDialog.cs | media/importing-media.md#still-images | ✅ |
+| Interpret Footage (reassign frame rate; media-bin & Clip menu) | PLAN.md step 42; ReinterpretFootageCommand, InterpretFootageDialog.cs | media/importing-media.md#interpret-footage-changing-a-clips-frame-rate | ✅ |
+
+### Working with log & camera footage
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Log footage: Input Color Transform (DJI D-Log family via vendor LUT; ARRI LogC3/LogC4, Sony S-Log3, Panasonic V-Log, Canon C-Log3, Blackmagic Film Gen 5, Fujifilm F-Log2, Nikon N-Log via math curve), ACES Filmic | EffectCatalog.cs; Sprocket.Render/{ColorLuts,CubeLut}.cs + Effects/AcesFilmicEffect.cs; PLAN.md steps 37, 52 | media/log-footage.md#log-footage-input-color-transform-and-aces-filmic | ✅ |
+
+## 3. Edit
+
+### Timeline editing
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Select tool — move & edge-trim (side-specific trim cursor on edge hover; at a butt join the left half of the edit point trims the outgoing clip's end, the right half the incoming clip's start) | UI.md §3.2; TimelineControl.cs; TimelineMath.HoverCursor/HitPriority | edit/editing-on-the-timeline.md#select--move-and-trim | ⚠️ stale — hover trim cursor covered in #the-editing-tools; butt-join side split not described |
+| Blade tool — split clips (hover cut-line preview) | TimelineControl.cs `BladeClip` / `DrawBladePreview` | get-started/getting-started.md#5-split-a-clip-with-the-blade; edit/editing-on-the-timeline.md#the-editing-tools | ✅ (split in getting-started; cut-line preview noted in #the-editing-tools) |
+| Per-tool custom cursors (trim/ripple brackets, roll, slip/slide, razor, hand, magnifier) | ToolCursors.cs; TimelineMath.HoverCursor | edit/editing-on-the-timeline.md#the-editing-tools | ✅ |
+| Ripple tool | PLAN.md step 22; TimelineControl `DragKind.Ripple` | edit/editing-on-the-timeline.md#ripple | ✅ |
+| Roll tool | TimelineControl `DragKind.Roll` | edit/editing-on-the-timeline.md#roll | ✅ |
+| Slip tool | TimelineControl `DragKind.Slip` | edit/editing-on-the-timeline.md#slip | ✅ |
+| Slide tool | TimelineControl `DragKind.Slide` | edit/editing-on-the-timeline.md#slide | ✅ |
+| Hand & Zoom view tools | TimelineControl.cs | edit/editing-on-the-timeline.md#getting-around-hand-and-zoom | ✅ |
+| Snapping toggle (remembered per user across sessions and projects) | TimelineControl.Snapping; UserSettings `TimelineSnapping` | edit/editing-on-the-timeline.md#snapping | 🟡 (toggle covered; that it is now remembered across sessions is undocumented) |
+| Linked A/V toggle + Link / Unlink (Clip menu & context menu; `Ctrl+L` toggles by selection state — Link needs a multi-selection spanning video + audio). The Linked toggle is remembered per user across sessions and projects | MainWindow.axaml.cs:1134; TimelineControl `LinkSelected`/`UnlinkSelected`; ClipEdits.cs link builders; UserSettings `TimelineLinked`; PLAN.md steps 13/55 | edit/editing-on-the-timeline.md#keeping-audio-and-video-together | 🟡 (Link/Unlink covered; that the toggle is now remembered across sessions is undocumented) |
+| Timeline zoom in/out/fit (`-`/`=` or `Ctrl+-`/`Ctrl+=`; `Shift+Z` fits). Zoom anchors on the playhead, or on the viewport centre when the playhead is off-screen | TimelineControl `ZoomIn/Out/ToFit`; TimelineMath `ZoomAnchorX` | get-started/getting-started.md#2-zoom-the-timeline-in-and-out | ✅ |
+| Move / delete / Ripple Delete (`Delete` / `Shift+Delete`) | TimelineControl.cs:2184 | edit/editing-on-the-timeline.md#deleting-clips-and-closing-gaps | ✅ |
+| Cut / Copy / Paste clips (paste at playhead; a multi-clip selection pastes as a set with relative offsets preserved) | Sprocket.App/ClipboardOps.cs; PLAN.md step 54 | edit/editing-on-the-timeline.md#cut-copy-and-paste | ✅ |
+| Nudge clip by one frame (`Alt+←` / `Alt+→`) | MainWindow.axaml.cs:368 | edit/editing-on-the-timeline.md#nudging-with-the-keyboard | ✅ |
+| Multi-clip selection: Ctrl-click toggles, Shift-click extends, rubber-band marquee on empty lane area, Select All (`Ctrl+A`); batch Delete / Ripple Delete / Cut / Copy / Nudge / Enable act on the set as one undo entry; a plain drag moves the set rigidly; the primary clip drives the Inspector and dialog-backed operations | PLAN.md step 54; Timeline/ClipSelection.cs; ClipEdits.cs batch builders; TimelineControl.cs | edit/editing-on-the-timeline.md#selecting-several-clips-at-once | ✅ |
+| Clip right-click context menu, shaped by lane kind (common: Cut/Copy/Paste/Duplicate, Delete/Ripple Delete, Split at Playhead, Enable, Unlink, Link, Speed, Nest; video clips add Frame Hold ▸, Interpret Footage, Multicam ▸; audio clips add Normalize Audio) | PLAN.md step 53; TimelineControl `ClipContextMenuRequested`; MainWindow.axaml.cs `ShowClipContextMenu` | edit/editing-on-the-timeline.md#the-right-click-menu | ✅ |
+| Split at Playhead (`Ctrl+K`, Clip menu & context menu) | PLAN.md step 53; TimelineControl `SplitAtPlayhead`; ClipEdits.cs | edit/editing-on-the-timeline.md#splitting-a-clip-at-the-playhead | ✅ |
+| Duplicate clip (Clip menu & context menu; linked pair copies under a fresh group) | PLAN.md step 53; TimelineControl `DuplicateSelected`; ClipEdits.cs | edit/editing-on-the-timeline.md#duplicating-a-clip | ✅ |
+| Enable/Disable clip (`Shift+E`, checkable Clip-menu/context item; disabled clips render nothing in preview *and* export, draw dimmed) | PLAN.md step 53; Clip.Enabled; TimelineControl `ToggleSelectedEnabled`; PlaybackEngine `ActiveVideoClip` | edit/editing-on-the-timeline.md#turning-a-clip-off-without-deleting-it | ✅ |
+| Add video/audio tracks (+ Track) | MainWindow.axaml.cs `AddTrack` | get-started/getting-started.md#9-add-a-track | ✅ |
+| Track header toggles: Enable (eye) / Mute / Solo | TimelineControl.cs `HandleHeaderClick` | audio/audio-mixing.md#adjust-the-audio | 🟡 (M/S/eye covered; per-track *video* enable only parenthetical) |
+| Track targeting (`V1`/`A1` header chip), Sync Lock, and Track Lock — header toggles + track right-click menu (Target Track / Sync Lock / Lock Track / Target All / Target None), each one undo step, saved with the project; targeting scopes Lift / Extract / Mark Clip and Up / Down edit-point navigation (Shift+Up / Shift+Down = every track) and is the default paste destination; a locked track's clips can't be selected, moved, trimmed, cut, dropped on, or edited by AI (drawn hatched), and linked partners on it stay put | Sprocket.Core/Model/Track.cs `Targeted`/`SyncLocked`/`Locked`; TimelineControl.cs `HandleHeaderClick`/`SetTrackLocked`; MainWindow.axaml.cs `ShowTrackContextMenu`/`JumpToEditPoint`; Sprocket.Core/Model/EditPointNavigation.cs | edit/three-point-editing.md#track-targeting-sync-lock-and-lock | ✅ (overview in edit/editing-on-the-timeline.md#targeting-sync-lock-and-lock) |
+| Delete tracks (right-click a track header ▸ Delete Track — confirms when the track has clips; ▸ Delete Empty Tracks — removes every clip-less track; each one undo step; the last video / audio track is never deleted) | TimelineControl.cs `DeleteTrack` / `DeleteEmptyTracks`; MainWindow.axaml.cs `ShowTrackContextMenu`; Sprocket.Core/Commands/ModelCommands.cs `TrackRemoval` | — | ❌ |
+| Rename a track (double-click header) | TimelineControl.cs:1380 | edit/editing-on-the-timeline.md#renaming-and-resizing-tracks | ✅ |
+| Resize track-header column | TimelineControl.cs:1371 | edit/editing-on-the-timeline.md#renaming-and-resizing-tracks | ✅ |
+| Fade handles & opacity rubber-band on clips | PLAN.md step 39; TimelineControl.cs:40–99 | edit/editing-on-the-timeline.md#fading-a-clip-in-or-out | ✅ |
+| Clip filmstrip & waveform thumbnails | TimelineControl.cs:1257 | get-started/getting-started.md#a-quick-tour-of-the-main-screen | ✅ |
+| Markers: add (`M`), navigate (`Shift+M`/`Ctrl+Shift+M`), Markers panel | MainWindow.axaml.cs `AddMarker`, `BuildMarkersPanel` | edit/marks-and-markers.md#markers | ✅ (add/navigate + the Markers panel; panel supports add/seek/remove only) |
+| In/Out marks: set (`I`/`O`), clear (`Alt+I`/`Alt+O`), range overlay; per-sequence (restored on sequence switch), saved with the project, and undoable | MainWindow.axaml.cs `SetMarkAtPlayhead`; Sequence `MarkIn`/`MarkOut`; RangeEdits.cs `SetSequenceMarksCommand` | edit/marks-and-markers.md#in-and-out-marks | ✅ |
+| Mark Clip (`X`, the clip under the playhead on the topmost *targeted* video track, else the first targeted audio track), Mark Selection (`/`), Go to In/Out (`Shift+I`/`Shift+O`), Clear In and Out (`Ctrl+Shift+X`); all under Sequence ▸ In / Out | MainWindow.axaml.cs `MarkClip`/`MarkSelection`/`GoToMark`/`ClearMarks`; RangeEdits.cs `ClipSpanAt`/`SelectionSpan` | edit/marks-and-markers.md#in-and-out-marks | ✅ |
+| Lift (`;`) / Extract (`'`), Sequence menu: removes the marked range from the *targeted* tracks — Lift leaves a gap, Extract ripples the rest left (targeted + sync-locked tracks; a sync-locked track with material in the range stays put and the status bar reports the sync break; locked tracks are never touched); straddling clips are bladed at the marks, transitions in the range removed; clears the marks; one undo step | Sprocket.Core/Commands/RangeEdits.cs; MainWindow.axaml.cs `LiftOrExtract` | edit/marks-and-markers.md#lift-and-extract | ✅ |
+| Play In to Out (`Ctrl+Shift+Space`, Sequence menu): plays only the marked range, stops at the out mark, replays from the in mark; plain Space stays unconstrained | PlaybackEngine `PlayInToOut`; MainWindow.axaml.cs `PlayInToOut` | edit/marks-and-markers.md#play-just-the-marked-range | ✅ |
+| Source-monitor In/Out marks, saved per media item with the project and undoable: with the monitor focused on the Source tab, `I`/`O`, `Shift+I`/`Shift+O`, `Alt+I`/`Alt+O`, `Ctrl+Shift+X` and `Ctrl+Shift+Space` act on the Source media; a Source-tab bar has Mark In / Mark Out buttons and In / Out / Duration readouts; both monitors draw their marks over the scrubber | Sprocket.Core/Model/MediaRef.cs `SourceMarkIn`/`SourceMarkOut`; RangeEdits.cs `SetSourceMarksCommand`; MainWindow.axaml.cs `MarkKey`/`SetSourceMarkAtPlayhead`/`UpdateMarkDisplay`; ScrubberMarks.cs | edit/three-point-editing.md#mark-the-source-range | ✅ (key routing also in edit/marks-and-markers.md#marks-in-the-source-monitor) |
+| Three-point Insert (`,`) / Overwrite (`.`), Clip menu + Source-monitor buttons: cuts the Source monitor's marked range into the sequence with Premiere's rules — the sequence In (else the playhead) sets where; with a sequence Out too the edit fills that range (a 4-point edit ignores the source Out, noted in the status bar); a sequence Out alone backtimes it; a short source is clamped with a note. Overwrite replaces the range on the patched tracks only; Insert blades and pushes right every patched and sync-locked track, plus transitions and sequence markers after the point; locked tracks never move and a locked destination refuses the edit. Clears the sequence marks, parks the playhead at the edit's end; one undo step | Sprocket.Core/Commands/ThreePointEdits.cs `ThreePointResolver`/`ThreePointEdits`; MainWindow.axaml.cs `ThreePointEdit` | edit/three-point-editing.md#insert-or-overwrite | ✅ (mark rules in #how-the-marks-combine) |
+| Fit to Fill (`Shift+F11`, Resolve's key; Clip ▸ Fit to Fill): needs a sequence In and Out; retimes the Source monitor's marked range (the whole media for a missing mark) to exactly fill the sequence In–Out at constant speed = source length ÷ sequence range, as an Overwrite on the patched tracks; the status bar reports the speed ("retimed to 200%"); refused outside the 1%–10000% speed limits; a still simply fills the range; clears the sequence marks; one undo step; the retime is an ordinary clip speed, editable later in Speed / Duration | Sprocket.Core/Commands/ThreePointEdits.cs `FitToFill`; MainWindow.axaml.cs `FitToFill` | edit/three-point-editing.md#fit-to-fill | ✅ |
+| Source patching: `V1`/`A1` source-indicator chips in a column at the far left of the track headers (shown while the Source monitor holds media with that stream) pick the tracks Insert / Overwrite land on — click a lane's column to move the chip there, click the chip to un-patch / re-patch that stream (an un-patched chip stays on its lane, dimmed); defaults to the bottom video and first audio track; per sequence, saved with the project, one undo step | Sprocket.Core/Model/Sequence.cs `SourcePatch`/`ResolvePatch`; ThreePointEdits.cs `SetSourcePatchCommand`; TimelineControl.cs `HandleSourcePatchClick` | edit/three-point-editing.md#patch-the-destination-tracks | ✅ |
+| Drag from the Source monitor: drag the Source picture onto a lane to edit in its marked range (both streams), or the **Drag Video Only** / **Drag Audio Only** handles on the Source bar for one stream; the drop overwrites at the snapped drop point, `Ctrl`/`Cmd`+drop inserts; the sequence marks aren't used or cleared | MainWindow.axaml.cs `EnableSourceDrag`; SourceRangePayload.cs; DragFormats.cs `SourceRange`; TimelineControl.cs `PlanSourceDrop` | edit/three-point-editing.md#drag-from-the-source-monitor | ✅ |
+
+### Clips: speed, freeze frames & stop motion
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Clip Speed / Duration dialog (constant speed, presets, Reverse speed toggle) | Dialogs.cs `SpeedDialog`; PLAN.md step 21 | edit/editing-on-the-timeline.md#changing-a-clips-speed | 🟡 stale — the dialog gained a Reverse speed checkbox (and the clip context menu a Reverse Speed / Play Forward item); a constant speed from the dialog replaces a speed ramp |
+| Reverse playback (Reverse speed in the Speed / Duration dialog, Inspector Reverse checkbox, clip context menu; ◀ clip badge; GOP-aware backward decode on preview + export, reversed audio) | PLAN.md step 21 remainder; Clip `Reverse`, Media `ReverseVideoDecodeRing` / `GopFrameWindow`, AudioMixer reverse read | — | ❌ |
+| Keyframed speed ramps (Inspector Speed lane: ◇ keyframe toggle, keyframe strip + velocity graph; RAMP clip badge; duration follows the curve; ramp-aware plain trim + split) | PLAN.md step 21 remainder; Clip `SpeedCurve`, Core `SpeedRamp`, InspectorPanel `BuildSpeedRow` | — | ❌ |
+| Frame hold / freeze frame: Frame Hold Options…, Add Frame Hold, Insert Frame Hold Segment (Clip menu; HOLD badge, Inspector Hold row) | PLAN.md step 43; FrameHoldOptionsDialog.cs, TimelineControl `AddFrameHoldAtPlayhead` | edit/editing-on-the-timeline.md#freezing-a-frame-frame-hold | ✅ |
+| Stop-motion frame edits: Duplicate Frame / Remove Frame (source-frame grid, ripple ±1 frame) | PLAN.md step 43; Sprocket.Core/Commands/FrameHoldEdits.cs | edit/editing-on-the-timeline.md#duplicate-or-remove-a-single-frame-stop-motion | ✅ |
+
+### Titles, generators & layers
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Insert generators: Title, Lower Third, Credits Roll, Crawl, Color Matte | Sprocket.Core/Model/GeneratorCatalog.cs | edit/titles-and-generators.md#adding-a-title-or-other-generator | ✅ |
+| Smoke generator (`builtin.gen.smoke`): drifting fractal smoke over transparency — amount, scale, speed, direction, detail, softness, ground bias, tint, seed | GeneratorCatalog.cs `builtin.gen.smoke`; Sprocket.Render/AtmosphereRenderer.cs; plan/features/special-effects.md | — | ❌ |
+| Fog generator (`builtin.gen.fog`): slow low-lying haze settling toward the bottom of frame — same cloud parameter set as Smoke | GeneratorCatalog.cs `builtin.gen.fog`; Sprocket.Render/AtmosphereRenderer.cs; plan/features/special-effects.md | — | ❌ |
+| Dust generator (`builtin.gen.dust`): floating dust motes — amount, count, size, speed, direction, spread, flicker, streak, source bias, tint, seed | GeneratorCatalog.cs `builtin.gen.dust`; Sprocket.Render/AtmosphereRenderer.cs; plan/features/special-effects.md | — | ❌ |
+| Embers generator (`builtin.gen.embers`): rising warm flickering embers — same particle parameter set as Dust | GeneratorCatalog.cs `builtin.gen.embers`; Sprocket.Render/AtmosphereRenderer.cs; plan/features/special-effects.md | — | ❌ |
+| Sparks generator (`builtin.gen.sparks`): fast struck sparks with motion streaks — same particle parameter set as Dust | GeneratorCatalog.cs `builtin.gen.sparks`; Sprocket.Render/AtmosphereRenderer.cs; plan/features/special-effects.md | — | ❌ |
+| Light Leak generator (`builtin.gen.lightleak`): angled film light leak, best on an upper track set to Screen — amount, direction, position X/Y, width, softness, speed, tint, seed | GeneratorCatalog.cs `builtin.gen.lightleak`; Sprocket.Render/AtmosphereRenderer.cs; plan/features/special-effects.md | — | ❌ |
+| Generator Inspector rows are built from `GeneratorDescriptor.Parameters`/`Colors` (sliders, integer snapping, %-scaled values, colour pickers) | Sprocket.App/Inspector/InspectorPanel.cs; GeneratorCatalog.cs | — | ❌ |
+| Action VFX presets — Muzzle Flash, Small Fire Burst, Ground Explosion, Explosion Aftermath, Burning Edge, Dust Hit, Aftershock: insert at the playhead (the impact frame) as one undo entry via Clip ▸ Insert ▸ Action VFX or the Effects browser's ACTION VFX group; each is a stack of ordinary generator overlays (on reused/new tracks with Screen/Add/Normal blend) plus an adjustment layer carrying keyframed flash / shake / shockwave decays, all editable afterwards; the status line shows a placement hint | Sprocket.Core/Model/ActionVfxCatalog.cs; TimelineControl.cs `InsertActionVfx`; MediaBrowserPanel.cs `ActionVfxRow`; plan/features/special-effects.md | — | ❌ |
+| MCP: `list_action_vfx_presets` / `add_action_vfx` (insert a preset at a tick position) | Sprocket.Mcp/SprocketTools.Structure.cs; StateFormatter.cs `ActionVfxPresets` | — | ❌ |
+| Edit title text inline (double-click title clip) | TimelineControl.cs:1432 | edit/titles-and-generators.md#editing-a-titles-text | ✅ |
+| Rich text & titles (styling, lower thirds, credits) | PLAN.md step 40; Sprocket.Render/{TitleRenderer,TitleFonts}.cs; Sprocket.Core/Model/{Generator,GeneratorCatalog}.cs | edit/titles-and-generators.md#styling-a-title-in-the-inspector | ✅ |
+| Adjustment layers | MainWindow.axaml.cs:390; PLAN.md step 19 | edit/titles-and-generators.md#adjustment-layers | ✅ |
+
+### Multicam & sequences
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Multicam: Create Multicam Source + angle switch (`1`–`9`) | MainWindow.axaml.cs `CreateMulticamSource`; PLAN.md step 24 | edit/multicam-and-sequences.md#cutting-between-camera-angles-multicam | ✅ (angle-buttons Inspector shot deferred — sample project has one video clip) |
+| Multiple sequences: New / Open / Sequence Settings (rename + editable frame size) | MainWindow.axaml.cs `NewSequenceAsync`, `SwitchToSequence`, `ShowSequenceSettingsAsync`; Dialogs.cs `SequenceSettingsDialog` | edit/multicam-and-sequences.md#working-with-more-than-one-sequence | ✅ (New Sequence + Sequence Settings now describe the frame-size picker; format presets detailed in aspect-ratio-and-framing.md) |
+| Sequence format presets incl. portrait/square (1080×1920, 1080×1350, 1080×1080, 2160×3840 + Custom) in New Sequence / Sequence Settings | Sprocket.App/SequenceFormatPresets.cs; Dialogs.cs `SequenceSettingsDialog` | edit/aspect-ratio-and-framing.md#choose-your-videos-shape | ✅ |
+| Per-clip conform mode: Fit (letterbox) / Fill (centre-crop) for mismatched-resolution media | Sprocket.Core/Model/Clip.cs `ConformMode`; Sprocket.Render/FramePresenter.cs `ComputeFillRect` | edit/aspect-ratio-and-framing.md#fit-or-fill-how-a-clip-meets-the-frame | ✅ |
+| Inspector Framing section: Conform dropdown + Center / Fill Height / Reset Framing buttons | InspectorPanel.cs `BuildFramingSection`; Sprocket.App/FramingOps.cs | edit/aspect-ratio-and-framing.md#the-framing-controls | ✅ |
+| Nest selection into a sequence (compound clips; the whole multi-clip selection nests) | MainWindow.axaml.cs `NestSelection`; PLAN.md steps 23, 54 | edit/multicam-and-sequences.md#nesting-clips-into-a-sequence | ✅ |
+
+## 4. Effects & color
+
+### Effects & the effect stack
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Applying effects (Effects menu, browser drag, + Effect button) | MainWindow.axaml.cs `RefreshEffectsMenu`; `ApplyEffectToSelected` | effects-color/effects.md#change-how-a-clip-looks | 🟡 (guide covers the 4 everyday effects and acknowledges the rest of the menu; browser-drag apply still unshown) |
+| Transform effect (scale/position/rotation/anchor/opacity) | Sprocket.Core/Model/EffectCatalog.cs | effects-color/effects.md#change-how-a-clip-looks | ✅ |
+| Video stabilization (`builtin.stabilization`: Translation / Similarity / Perspective methods; adaptive / uniform / lock smoothing, per-channel, focus-breathing Scale Lock, cropping budget + auto-zoom, Detailed Analysis tier) — background motion analysis in a per-user cache, Inspector Analyze / Cancel + status + camera-path graph, auto-analyze on apply, monitor banners, Background Tasks window, media-bin Analyze, export pre-check; preview and export pull the same cached solve | EffectCatalog.cs `builtin.stabilization`; Sprocket.App/Stabilization/{StabilizationService,AnalysisCache,MotionAnalyzer}.cs; Sprocket.Analysis/*; Sprocket.Core/Stabilization/*; plan/features/stabilization.md | effects-color/stabilization.md | ✅ |
+| Color effect (exposure/contrast/saturation/vibrance) | EffectCatalog.cs | effects-color/effects.md#change-how-a-clip-looks | ✅ |
+| Glow effect (`builtin.glow`): bloom the highlights — threshold, radius, intensity | EffectCatalog.cs `builtin.glow`; Sprocket.Render/Effects/GlowEffect.cs; plan/features/special-effects.md | — | ❌ |
+| Directional Blur effect (`builtin.directionalblur`): linear smear along an angle — angle, length | EffectCatalog.cs `builtin.directionalblur`; Sprocket.Render/Effects/DirectionalBlurEffect.cs; plan/features/special-effects.md | — | ❌ |
+| Zoom Blur effect (`builtin.zoomblur`): radial smear from a centre point — amount, centre X/Y | EffectCatalog.cs `builtin.zoomblur`; Sprocket.Render/Effects/ZoomBlurEffect.cs; plan/features/special-effects.md | — | ❌ |
+| Heat Distortion effect (`builtin.heatdistortion`): animated refraction shimmer — amount, detail, speed | EffectCatalog.cs `builtin.heatdistortion`; Sprocket.Render/Effects/HeatDistortionEffect.cs; plan/features/special-effects.md | — | ❌ |
+| Shockwave effect (`builtin.shockwave`): expanding ring of displacement — keyframeable radius, width, amplitude, centre X/Y | EffectCatalog.cs `builtin.shockwave`; Sprocket.Render/Effects/ShockwaveEffect.cs; plan/features/special-effects.md | — | ❌ |
+| Chromatic Aberration effect (`builtin.chromaticaberration`): radial red/blue lens fringing — amount, centre X/Y | EffectCatalog.cs `builtin.chromaticaberration`; Sprocket.Render/Effects/ChromaticAberrationEffect.cs; plan/features/special-effects.md | — | ❌ |
+| Impact Shake effect (`builtin.impactshake`): deterministic camera shake — amount (master, keyframe to decay), frequency, rotation, overscan | EffectCatalog.cs `builtin.impactshake`; Sprocket.Render/Effects/ImpactShakeEffect.cs; plan/features/special-effects.md | — | ❌ |
+| Flicker effect (`builtin.flicker`): exposure pulse — amount, frequency, randomness (sine → firelight) | EffectCatalog.cs `builtin.flicker`; Sprocket.Render/Effects/FlickerEffect.cs; plan/features/special-effects.md | — | ❌ |
+| Mosaic effect (`builtin.mosaic`): pixelate into a block grid over the layer — horizontal/vertical blocks, Sharp Colors (centre sample vs block average), edge softness | EffectCatalog.cs `builtin.mosaic`; Sprocket.Render/Effects/MosaicEffect.cs; plan/features/toy-cassette-camera.md | — | ❌ |
+| Posterize Time effect (`builtin.posterizetime`): the clip's picture (frame, effects, keyframes, generators) updates at a lower frame rate (default 12 fps, 1–60, not keyframeable) on a sequence-anchored grid — composes with speed/ramp/reverse, Frame Hold wins, linked audio plays smoothly | EffectCatalog.cs `builtin.posterizetime`; Clip.cs `MapToSourceVideo`/`EffectEvalTime`; RenderGraph.cs; plan/features/toy-cassette-camera.md | — | ❌ |
+| Echo effect (`builtin.echo`): combine each frame with up to 8 earlier frames of the clip — Echo Time (−1 s…0, default −0.033 s), Number of Echoes (0–8), Starting Intensity, Decay, Echo Operator (Add / Maximum / Minimum / Screen / Composite in Back / Composite in Front / Blend), Highlight Key (only bright pixels trail; 0 = After Effects behaviour); echoes follow speed, ramps, reverse and Posterize Time, reach into head handles at a clip's start, and look the same in preview (paused, scrubbed or playing) and export; effects below Echo re-apply to each echo | EffectCatalog.cs `builtin.echo`; Sprocket.Core/Model/TemporalFootprint.cs; RenderGraph.cs `PriorSourceTimes`; Sprocket.Render/Effects/EchoEffect.cs; SkiaEffectPipeline.cs; ExportFrameProvider.cs `GetFrames`; VideoTrackPlayer.cs history; plan/features/toy-cassette-camera.md | — | ❌ |
+| Toy Cassette Camera effect (`builtin.toycam`): one-stage late-80s toy cassette camcorder look (brand only in the tooltip) — 120×90 soft picture pixels, red-leaning monochrome with contrast/black crush, highlight bloom, rightward spatial highlight smear (length/threshold; the one-tap look swaps it for Echo's temporal trail), tape noise lines and dropouts, streaky grain, a rounded 4:3 window scaled inside a black border (size/softness), seed; noise steps with Posterize Time; looks Clean / Worn Tape / Low Light via the Inspector preset picker or MCP `add_effect` `preset` | EffectCatalog.cs `builtin.toycam`; Sprocket.Core/Model/ToyCamPresets.cs; Sprocket.Render/Effects/ToyCamEffect.cs; plan/features/toy-cassette-camera.md | — | ❌ |
+| Toy Cassette Camera one-tap look — Clean / Worn Tape / Low Light (brand only in the tooltip): Posterize Time at 15 fps + an Echo highlight trail (Maximum, keyed to highlights, one echo per camera frame, fading fast) + the Toy Cassette Camera look (its spatial smear off) on the picture and the same-named Cassette character on the linked audio, as one undo entry, via the Effects browser's TOY CASSETTE CAMERA group (double-click applies to the selected clip, or drag onto a clip — either half of a linked pair gets both halves; an unlinked clip gets only its own kind, the rest reported as skipped) or MCP `list_preset_stacks` / `apply_preset_stack`; re-applying swaps the look in place (keeps position, effect tag, Seed and Mix) instead of stacking | Sprocket.Core/Model/{PresetStack,ToyCassetteCameraStacks}.cs; MediaBrowser/PresetStackBrowserModel.cs; MediaBrowserPanel.cs `PresetStackRow`; TimelineControl.cs `DropPresetStack`; Sprocket.Mcp/SprocketTools.Structure.cs; plan/features/toy-cassette-camera.md | — | ❌ |
+| Brightness effect | EffectCatalog.cs | effects-color/effects.md#change-how-a-clip-looks | ✅ |
+| Fade effect (video opacity + audio gain) | EffectCatalog.cs | audio/audio-mixing.md#adjust-the-audio | ✅ |
+| Inspector: sections, sliders/numeric entry, remove effect | Sprocket.App/Inspector/InspectorPanel.cs | get-started/getting-started.md#3-select-a-clip | 🟡 (sliders/typing covered; the typed controls — checkbox toggles for on/off params (keyframeable, hold-stepped), dropdowns for choices, integer-snapped sliders, unit-aware typing like "1.5 EV" — are new and undocumented) |
+| Percentage display for ratio parameters (Opacity, Scale, and the audio effects' mix/amount controls read and accept `%`, e.g. `50%`; typing a bare `50` works too) | EffectCatalog.cs `EffectParameterDescriptor.DisplayScale`; Inspector/InspectorFormat.cs | effects-color/effects.md#adjust-numbers-faster | ✅ |
+| Drag-to-scrub numeric fields (drag over any Inspector or mixer number to change it, Shift = coarse, Ctrl = fine, Esc cancels; click to type) | Controls/DragNumber.cs; Controls/DragNumberMath.cs | effects-color/effects.md#adjust-numbers-faster | ✅ |
+| Enable/bypass an effect (green status LED in the effect header; parameters kept while bypassed) | InspectorPanel.cs `BuildEffectSection`; ModelCommands.cs `SetEffectEnabledCommand` | effects-color/effects.md#turn-an-effect-off-without-removing-it | ✅ |
+| Effect reference tags (unique per-instance tag chip in the effect header, e.g. RV-1 — how AI/MCP clients address an effect) | Sprocket.Core/Model/EffectTags.cs; InspectorPanel.cs | ai/ai-control.md#effect-reference-tags | ✅ |
+| Effect parameter tooltips (hover a parameter label for a plain-language description) | EffectCatalog.cs `EffectParameterDescriptor.Description`; InspectorPanel.cs | effects-color/effects.md#adjust-numbers-faster | ✅ |
+| Reorder effects in the stack (drag a section header; Move Up/Down context menu) | InspectorPanel.cs; ModelCommands.cs `MoveChainEffectCommand`; PLAN.md step 51 | effects-color/effects.md#change-the-order-of-effects | ✅ |
+| Inspector: Expand All / Collapse All section buttons (pane header) | MainWindow.axaml `InspectorExpandAllButton`; InspectorPanel.cs `SetAllSectionsExpanded` | effects-color/effects.md#expand-and-collapse-sections | ✅ |
+| Plugin Manager (Edit ▸ Plugins…): see installed effect plugins with version/status, enable/disable each, install a plugin `.dll`, uninstall user plugins, rescan, open the plugins folder | Sprocket.App/PluginManagerWindow.cs; PluginManager.cs; PluginService.cs; PLAN.md step 58 | — | ❌ |
+| LADSPA audio plugin hosting: native LADSPA plugins found on the system's LADSPA path (`LADSPA_PATH` + standard dirs, plus `<app-data>/Sprocket/Plugins/LADSPA`) appear as audio effects with type-driven parameter controls; listed in the Plugin Manager, enable/disable per plugin | Sprocket.Plugins/Ladspa/*; PluginManager.cs; PLAN.md step 59 | — | ❌ |
+| LV2 audio plugin hosting (core subset: audio + control ports, `urid:map`): `*.lv2` bundles on the LV2 path (`LV2_PATH` + standard dirs, plus `<app-data>/Sprocket/Plugins/LV2`) appear as audio effects with controls built from the bundle's port metadata (ranges, toggles, enumerations as dropdowns, units); plugins needing atoms/worker/UI features are listed with a reason and skipped | Sprocket.Plugins/Lv2/*; PluginManager.cs; PLAN.md step 59 | — | ❌ |
+| frei0r video filter hosting: frei0r filters on the frei0r path (`FREI0R_PATH` + standard dirs, plus `<app-data>/Sprocket/Plugins/frei0r`) appear as video effects (bool/double/colour/position parameters); run on the CPU via a GPU readback so they are heavy in playback — the Inspector points at Sequence ▸ Render In to Out; sources/mixers are listed but not hosted | Sprocket.Plugins/Frei0r/*; Sprocket.Render/CpuEffectStage.cs; PluginManager.cs; PLAN.md step 59 | — | ❌ |
+
+### Transitions
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Transitions: browse (Cross Dissolve, Dip to Black/White, Wipe), apply to a cut, delete | Sprocket.Core/Model/TransitionCatalog.cs; MediaBrowserPanel.cs:402 | effects-color/transitions.md | ✅ |
+
+### Keyframing & animation
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Keyframing: animate parameters, keyframe lanes, velocity graph, `[`/`]` navigation | InspectorPanel.cs; Inspector/KeyframeLane.cs | effects-color/keyframing.md | ✅ (dedicated guide; the two former teasers in effects.md + getting-started.md now link to it) |
+
+### Color grading & scopes
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Color grading: White Balance, Color Wheels, Curves, HSL Qualifier | EffectCatalog.cs; Sprocket.Render/Effects/{WhiteBalance,ColorWheels,Curves,HslQualifier}Effect.cs; PLAN.md step 34 | effects-color/color-grading.md | ✅ |
+| Grading scopes: Waveform / RGB Parade / Vectorscope / Histogram | Sprocket.App/ScopeView.cs | effects-color/color-grading.md#judging-your-grade-with-scopes | ✅ |
+| Day for Night grade (`builtin.dayfornight`): turns a daylight exterior into moonlit night in one ordered stage — night strength, exposure, sky darkening (top-weighted blue/pale key), highlight rolloff, shadow floor, saturation, moonlight tint + hue, practical-light keep (bright warm sources), protect skin, vignette; looks Standard / Exterior Wide / Street Scene / Blue Moon via the Inspector preset picker, the Effects browser's DAY FOR NIGHT group (double-click grades the selected clip or adjustment layer; or drag a look onto a clip) or MCP `add_effect` `preset` | EffectCatalog.cs `builtin.dayfornight`; Sprocket.Core/Model/DayForNightPresets.cs; Sprocket.Render/Effects/DayForNightEffect.cs; MediaBrowserPanel.cs `EffectPresetRow`; plan/features/special-effects.md | — | ❌ |
+| Black & White conversion: 8-hue channel mixer, optical colour filter, film tone response + grain, toning / split-toning, vignette, preset library (filters, film stocks, tonings, cinematic looks) | EffectCatalog.cs `builtin.blackwhite`; Sprocket.Core/Model/BlackWhitePresets.cs; Sprocket.Render/Effects/BlackWhiteEffect.cs; plan/features/black-and-white.md | effects-color/black-and-white.md | ✅ |
+| Looks browser (Project panel ▸ Looks tab): 20 built-in creative looks in Cinematic / Film / Vintage / Mood / Clean groups, search, double-click to grade the selected clip or drag a look onto a clip (one undo step; adds ordinary grading effects after any Input Color Transform), Save Look… (the selected clip's enabled grading stack, keyframes sampled at the playhead), Import LUT… (creative `.cube` → a LUT look), Rename / Delete saved looks; saved looks are app-wide (`looks.json` in the user app-data folder), never the tier-1 camera transform | Sprocket.Core/Model/{Look,LooksCatalog}.cs; Sprocket.Persistence/LooksStore.cs; Sprocket.App/MediaBrowser/{LooksLibrary,LooksBrowserModel,MediaBrowserPanel}.cs; TimelineControl.cs `DropLook`; plan/features/looks-browser.md | — | ❌ |
+| Creative LUT effect (`builtin.lut.creative`): a user `.cube` 3D LUT for Rec.709 footage with Intensity; a missing or unreadable LUT passes through | EffectCatalog.cs; Sprocket.Render/CreativeLuts.cs; SkiaEffectPipeline.cs | — | ❌ |
+
+## 5. Audio
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Track mute / solo | TimelineControl.cs headers | audio/audio-mixing.md#adjust-the-audio | ✅ |
+| Audio fades (Fade effect; fade handles on clips) | EffectCatalog.cs; TimelineControl fade handles | audio/audio-mixing.md#adjust-the-audio; edit/editing-on-the-timeline.md#fading-a-clip-in-or-out | ✅ (Fade effect in audio-mixing; on-clip fade handles in editing-on-the-timeline) |
+| Mixer (Audio tab): per-track gain/pan/mute/solo, master strip | Sprocket.App/Mixer/MixerView.cs | audio/audio-mixing.md#set-a-tracks-gain-pan-mute-and-solo; audio/audio-mixing.md#the-master-strip | 🟡 (faders/mute/solo covered; the gain and pan read-outs are now editable fields — type an exact dB value (`-6`, `-inf`) or pan (`C`, `L50`, `-50`), or drag over the number to scrub — and that is undocumented) |
+| Mixer insert chains: track / Sequence Bus / Master inserts (add, enable LED, remove, Move Up/Down; click an insert to edit its parameters/keyframes in the Inspector) | MixerView.cs `BuildInsertsBlock`; Mixer/AudioChainTarget.cs; InspectorPanel.cs `SetSelectedChain`; PLAN.md step 31 follow-on | audio/audio-mixing.md#add-insert-effects-to-a-track-bus-or-the-master | ✅ |
+| Loudness meters (LUFS + true peak, EBU R128) | Sprocket.Audio/Loudness/*.cs | audio/audio-mixing.md#read-the-loudness-meters | ✅ |
+| Loudness normalization (clip / track / master to LUFS target) | MixerView.cs; `NormalizeSelectedClip` | audio/audio-mixing.md#match-a-loudness-target | ✅ |
+| Audio effects: Gain/Pan, Parametric EQ, Compressor, Reverb (Lite) | Sprocket.Audio/Effects/*.cs; EffectCatalog.cs | audio/audio-effects.md#add-an-audio-effect | ✅ (Gain/Pan + Compressor in #levels--dynamics, Parametric EQ in #equalizers, Reverb (Lite) in #reverb) |
+| Studio Reverb (Dattorro plate/hall; presets Room–Cathedral–Ambient Bloom via Inspector preset picker) | Sprocket.Audio/Effects/StudioReverbEffect.cs; EffectCatalog.cs | audio/audio-effects.md#reverb | ✅ |
+| Delay effects: Digital, Tape (wow/flutter + saturation), Multi-Tap (8 taps), Stereo (Ping Pong) | Sprocket.Audio/Effects/{DigitalDelay,TapeDelay,MultiTapDelay,StereoDelay}Effect.cs; EffectCatalog.cs | audio/audio-effects.md#delay--echo | ✅ |
+| Noise Gate (threshold/attack/hold/release, range floor, hysteresis) | Sprocket.Audio/Effects/NoiseGateEffect.cs; EffectCatalog.cs | audio/audio-effects.md#levels--dynamics | ✅ |
+| Shelving EQ (standalone low + high shelves: freq/gain/slope, per-shelf enable) | Sprocket.Audio/Effects/ShelvingEqEffect.cs; EffectCatalog.cs | audio/audio-effects.md#equalizers | ✅ |
+| Shimmer Reverb (pitch-shifted feedback wash; interval control; presets Classic–Dark–Fifth–Drone) | Sprocket.Audio/Effects/ShimmerReverbEffect.cs; EffectCatalog.cs | audio/audio-effects.md#reverb | ✅ |
+| Convolution Reverb (user WAV impulse-response import via Inspector Browse… row; pre-delay, length trim, low/high damp, width, mix; zero-latency partitioned convolution; missing IR passes through) | Sprocket.Audio/Effects/ConvolutionReverbEffect.cs; EffectCatalog.cs; InspectorPanel.cs `BuildAssetRow` | — | ❌ |
+| Cassette effect (`builtin.audio.cassette`): cheap cassette-recorder sound in one stage — Mono fold-down (on by default), pumping automatic gain control (AGC Amount / AGC Release), tape saturation, 24 dB/oct Low Cut / High Cut band-limit (100 Hz–5 kHz by default), tape Hiss at a set dB level, wow & flutter pitch wobble with a slight level waver, Mix; no added latency; characters Clean / Worn Tape / Low Light via the Inspector preset picker or MCP `add_effect` `preset` | Sprocket.Audio/Effects/CassetteEffect.cs; Sprocket.Core/Model/CassettePresets.cs; EffectCatalog.cs; plan/features/toy-cassette-camera.md | — | ❌ |
+| Freeze / Unfreeze Clip Audio (pre-render heavy audio chains; Sequence menu) | MainWindow.axaml.cs `UnfreezeClipAudio`; RenderCacheService.cs | audio/audio-effects.md#freeze-a-heavy-audio-chain | ✅ |
+| Audio output device (Edit ▸ Preferences ▸ Audio): pick where playback is monitored; applies immediately without interrupting playback; survives restart; auto-recovers to the system default if a device is lost or unavailable; always runs on the bundled OpenAL Soft, even when a legacy system OpenAL (Creative router) is installed, so enumeration/switch/loss-recovery behave the same on every machine | UserSettings.AudioOutputDevice; PreferencesDialog.cs; Sprocket.Audio/OpenAlAudioOutput.cs `EnumerateOutputDevices`; AudioEngine `SwitchOutputDevice`/device-loss recovery | — | ❌ |
+
+## 6. Export & share
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Export Settings dialog (`Ctrl+E`): container/codec/rate control/resolution/frame rate | Dialogs.cs `ExportSettingsDialog` | export/exporting.md#export-your-finished-video | ✅ |
+| Portrait/square export resolution overrides (2160×3840, 1080×1920, 720×1280, 1080×1350, 1080×1080) with an orientation-aware 4K cap | Dialogs.cs `ExportSettingsDialog` `Resolutions`; VideoExporter.cs `ComputeExportResolution` | export/exporting.md#set-the-resolution-and-frame-rate | ✅ |
+| Rate control: Constant quality (CRF slider on the codec's own scale + plain-language readout) or Target bitrate (Mbps + optional max, resolution-scaled default) | Dialogs.cs `ExportSettingsDialog` (Rate control picker); Sprocket.Export/ExportFormat.cs `ExportRateControl`/`CrfFor`/`DefaultTargetBitrate`; VideoExporter.cs `ExportOptions` | export/exporting.md#set-the-quality-and-encoding | ✅ |
+| Format matrix: MP4/MOV/MKV/WebM/AVI/TS × H.264/HEVC/AV1/VP9/MPEG-2/ProRes × AAC/MP3/PCM/FLAC/AC-3/Opus | Sprocket.Export/ExportFormat.cs | export/exporting.md#format-reference | ✅ (reference tables for container×codec + audio-only formats) |
+| Audio-only export (master mix, no video): WAV/PCM, FLAC, MP3, AAC/M4A, Opus | Sprocket.Export/ExportFormat.cs `ExportAudioFormat`; VideoExporter.cs `ExportAudioOnly` | export/exporting.md#export-the-audio-only | ✅ |
+| Delivery presets (built-in + save your own; a saved preset also restores the Encoding and Mode choices) | ExportPresetStore.cs; UserExportPresets.cs | export/exporting.md#save-and-reuse-presets | 🟡 stale — a saved preset now also captures Encoding (Software / Hardware encoder if available) and Mode (Final / Fast Export); the guide's step 1 list omits both |
+| Burn-ins (timecode / clip name / watermark, 9-point position) | Dialogs.cs:593 | export/exporting.md#add-burn-ins | ✅ (all three fields + nine positions) |
+| Handles (extra frames around an in/out range) | Dialogs.cs:609 | export/exporting.md#add-handles | ✅ |
+| Hardware vs software encoding choice (hardware now honors the quality setting via each vendor's CQ/QP knob — NVENC cq, QSV ICQ, AMF/VAAPI CQP, VideoToolbox qscale) | Dialogs.cs `ExportSettingsDialog` (Encoding picker); Sprocket.Media/MediaEncoder.cs `VideoEncoderSettings.HardwareCandidates` + `DescribeHardwareQualityOptions`; PLAN.md step 29 | export/exporting.md#set-the-quality-and-encoding | 🟡 stale — the picker's option is now labelled "Hardware encoder (if available)" and is locked to it while Mode is Fast Export |
+| Export color handling (bake log transform vs pass-through) | Dialogs.cs:618 | export/exporting.md#choose-how-color-is-handled | ✅ |
+| Export metadata tags (title/author/copyright/comment) | Dialogs.cs:622 | export/exporting.md#add-file-details-metadata | ✅ |
+| Export progress, cancel, reveal in folder | Dialogs.cs `ExportProgressDialog` | export/exporting.md#while-it-exports | ✅ |
+| Export completion diagnostics: the encoder that actually ran (e.g. h264_nvenc / libx264), hardware vs software with an explicit "hardware unavailable" fallback note, elapsed time + average fps, and decode/render/encode/audio stage times — in the Export Complete dialog, status bar, and Export Queue rows; a muted-only or solo-excluded timeline now exports with no audio stream | Sprocket.Export/ExportRunSummary.cs; VideoExporter.cs `ExportWithSummary`; Sprocket.App/ExportSummaryText.cs; plan/features/export-speed.md phase 1 | — | ❌ |
+| Export Mode: Final Export (reproducible reference output, the default) vs Fast Export (a GPU encoder when one opens, else the software encoder's speed preset — x264/x265 veryfast, SVT-AV1 10 — for review/draft files); Fast locks Encoding to hardware, shows on Export Queue rows, and its completion diagnostics name the mode, decode path, and any speed preset; captured by presets; MCP `export_video` `fast` flag. GPU decode for Fast is an opt-in (`SPROCKET_EXPORT_GPU_DECODE=1`) with per-source software fallback, since it measured slower on a desktop | Sprocket.Export/ExportFormat.cs `ExportMode`; VideoExporter.cs; ExportGpuDecode.cs; ExportFrameProvider.cs; Dialogs.cs `ExportSettingsDialog` (Mode picker); ExportSummaryText.cs; plan/features/export-speed.md phase 3 | — | ❌ |
+| Closing / quitting mid-export prompts first (Cancel Export and Close · Keep Exporting); confirming cancels the export — single, MCP, or queue — and waits for it to unwind so the partly-written file is deleted | MainWindow.axaml.cs `ConfirmAbortExportAsync`, `BeginExport`/`EndExport` | export/exporting.md#while-it-exports | ❌ |
+| Export Queue (`Ctrl+Shift+E`): batch jobs, per-job progress | Sprocket.App/ExportQueueWindow.cs | export/export-queue-and-interchange.md#export-several-files-at-once | ✅ |
+| Interchange export: EDL (CMX3600), Final Cut XML (+ warnings) | MainWindow.axaml.cs `ExportInterchangeAsync` | export/export-queue-and-interchange.md#hand-your-edit-to-another-editor | ✅ |
+| Export in-to-out range only (Range selector in the Export Settings dialog: Entire sequence / In/Out range, defaulting to the marked range when marks are set; applies to single export and queued jobs) | Dialogs.cs `ExportSettingsDialog` Range picker; MainWindow.axaml.cs `MarkedExportRange` | export/exporting.md#export-just-part-of-the-timeline | ✅ |
+
+## 7. Playback & performance
+
+### Playback & monitors
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Transport: play/pause (`Space`), jump start/end (`Home`/`End`), frame step (`←`/`→`, `Shift+←`/`→` = 5 frames) | MainWindow.axaml.cs `OnKeyDown`; `WireTransport` | get-started/getting-started.md#1-play-and-preview-your-video; get-started/keyboard-shortcuts.md#playback-and-transport | ✅ |
+| Scrubber + timeline-ruler scrubbing (frame-snapped; the playhead tracks the pointer immediately, one seek per frame crossed) | MainWindow.axaml.cs:910; TimelineControl.cs:1406 | get-started/getting-started.md#1-play-and-preview-your-video | ✅ |
+| Playhead can be parked in the empty space past the last clip (Premiere/Resolve-style open-ended sequence; a scrub held at the viewport edge auto-scrolls out; the preview goes black, the sequence duration and export are unchanged) | PlaybackEngine.AllowPlayheadPastEnd / NavigableEnd; TimelineMath.ScrollExtentPx; TimelineControl.SeekToX | edit/editing-on-the-timeline.md#following-the-playhead | ✅ |
+| Playback auto-scroll: the timeline follows the playhead during playback — View ▸ Playback Auto-Scroll ▸ No Scroll / **Page Scroll** (default; jumps a screen at a time) / Smooth Scroll (playhead stays centred), Premiere's three modes and default. Persisted across restarts. A transport jump made while stopped (`End`, `[`/`]`, `Shift+M`) always reveals the playhead; a scrub, pan or clip drag is never fought | TimelineMath.AutoScrollX; TimelineControl.FollowPlayhead; UserSettings.TimelineAutoScroll | edit/editing-on-the-timeline.md#following-the-playhead | ✅ |
+| Source monitor (preview a clip's raw footage; Program/Source tabs; entered by selecting a placed clip or double-clicking a bin item; plays the source's audio in sync; audio-only media opens too, showing its waveform with the marked range and playhead under an "Audio only" label; only one monitor plays at a time) | Sprocket.App/Monitors.cs; `WireMonitorTabs`; `ShowInSourceMonitor` | performance/preview-and-monitors.md#program-vs-source-the-two-monitors | ✅ |
+| Preview zoom: Fit / 50 / 100 / 200% | MainWindow.axaml.cs `WireZoomAndGuides` | performance/preview-and-monitors.md#zoom-the-preview | ✅ |
+| Guides overlay (frame outline / safe areas / framing grid; the frame's empty canvas shows black, matching export) | PreviewSurface.ShowGuides; Sprocket.Render/MonitorOverlay.cs | performance/preview-and-monitors.md#overlay-framing-guides | ✅ (portrait-canvas fix 2026-07-16 covered; aspect-ratio-and-framing.md's Fit/Fill shot still predates the fix — re-shoot with Guides on) |
+| Full-screen preview (View ▸ Full Screen Preview; `Ctrl+F`, `⌘F` on macOS; `Esc` or the shortcut exits; transport keys stay live; works for Program and Source) | MainWindow.axaml.cs `EnterFullscreenPreview`; PreviewSurface.cs | performance/preview-and-monitors.md#full-screen-preview | ✅ |
+| Timecode readouts (position / duration) | MainWindow.axaml:360 | get-started/getting-started.md#1-play-and-preview-your-video | ✅ |
+| Playback Statistics overlay (View menu) | Sprocket.App/PlaybackStatsOverlay.cs | performance/troubleshooting-playback.md | 🟡 stale — dropped-frame/preview-rate semantics now speed-aware (slow-motion holds count as delivered, never as drops), pump pacing is phase-locked to the master clock, and the audio master clock is now smoothed over the device's update quantum (raw device counters step ~20–25 ms), so the counter reads 0 during healthy playback instead of a permanent aliasing floor; re-verify the metric descriptions |
+
+### Performance: proxies & render cache
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Proxy media (automatic background proxies; status-bar indicator) | Sprocket.App/Proxy/*.cs; PLAN.md step 18 | performance/proxies-and-render-cache.md#proxies-automatic-help-with-heavy-footage | 🟡 (automatic behavior + the ready/pending messages are covered; the internal tier/resolution/CRF numbers stay undocumented. **Needs amending:** the status bar now also announces a build *starting* and reports failures — `proxy generation failed (n) — previewing originals`, the message a user sees when `ffmpeg` isn't on PATH. **Needs amending:** auto-proxy criteria are now format-aware — besides >1080p sources, 1080p-class HEVC/AV1/VP9 and 10-bit / 4:2:2 footage proxies automatically (ProRes/DNx exempt); at the Full tier that can be a same-resolution conversion) |
+| Proxy window (View ▸ Proxy): per-asset proxy state with live progress + ETA and on-disk size, plus live controls — Use proxies on/off, resolution tier (Quarter / Half / Full), Pause/Resume, Rebuild All, Delete All Proxies, and per-row Delete / Generate; rows carry the why (demanding codec / 10-bit / playback dropped frames) | Sprocket.App/ProxyStatusWindow.cs; Sprocket.App/ProxySettingsOps.cs; PLAN.md step 18 | — | ❌ |
+| Proxy recommendation from playback (when a single software-decoded original sustains dropped frames, the source is marked "Recommended" in the Proxy window and a status-bar hint appears; never auto-built by any path — the user clicks Generate; once per source per session; no recommendation while several clips are layered, where drops can't be attributed) | Sprocket.App/Proxy/ProxyAdvisor.cs; Sprocket.App/MainWindow.axaml.cs `SampleProxyAdvisor`; PLAN.md step 18 | — | ❌ |
+| Render In to Out / Selection / Audio (Sequence menu) | MainWindow.axaml.cs `RenderRangeAsync` | performance/proxies-and-render-cache.md#render-a-range-for-smooth-playback | ✅ |
+| Render bar (green/yellow/red cache states) | RenderCache/RenderBarModel.cs | performance/proxies-and-render-cache.md#the-render-bar-what-needs-rendering | ✅ |
+| Delete Render Files (with disk footprint) | MainWindow.axaml.cs `DeleteRenderFilesAsync` | performance/proxies-and-render-cache.md#reclaim-disk-space | ✅ |
+| Hardware-accelerated decode (automatic; software fallback, incl. auto-skip of VAAPI when the Linux system libva lacks a symbol the bundled FFmpeg trampolines — needs libva ≥ 2.21; software decode is multi-threaded) | Sprocket.Media/HardwareContext.cs; Sprocket.Media/LibVaPreflight.cs; PLAN.md step 6; README | performance/troubleshooting-playback.md#if-the-preview-cant-keep-up | ➖ (automatic; covered only as a troubleshooting note) |
+
+## 8. AI control (MCP) & command line
+
+**AI control is a user-facing, headline feature** — it needs its own prominent,
+dedicated guide (enable → connect → edit by prompt), not a footnote under
+Preferences or an "advanced" page.
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Enable AI control (Edit ▸ Preferences, or `--mcp` / `--mcp-port` flags) | Sprocket.App/PreferencesDialog.cs; CliOptions.cs | ai/ai-control.md#turn-on-ai-control + #starting-from-the-command-line | ✅ |
+| Connect an AI client (Copy setup command, bearer token, loopback security model) | PreferencesDialog.cs; McpServerService.cs | ai/ai-control.md#connect-an-ai-client + #require-a-bearer-token | ✅ |
+| What AI can do: the tool surface (~70 tools — edit, effects, markers, export, transport; export_video takes rate-control params: rateControl quality/bitrate, crf, bitrateMbps, maxBitrateMbps, hardware, plus fast for Fast Export) | Sprocket.Mcp/SprocketTools*.cs; PLAN.md step 38 | ai/ai-control.md#what-ai-can-do-the-tool-reference | 🟡 (tool reference predates the export_video rate-control params and the fast flag) |
+| AI edits are undoable (route through the same undo stack) | Sprocket.Mcp/McpEditorSession.cs | ai/ai-control.md#ai-edits-are-undoable | ✅ |
+| MCP: `set_track_state` (targeted / sync_locked / locked; state lists them per track); edit tools refuse a clip or destination on a locked track | Sprocket.Mcp/SprocketTools.Structure.cs `SetTrackState`; SprocketTools.cs `ResolveClip`/`RequireUnlocked` | — | ❌ |
+| MCP: `set_source_marks` / `set_sequence_marks` (state lists the sequence `marks` and each media's `source_marks`); `add_clip_to_timeline` places the marked source range | Sprocket.Mcp/SprocketTools.cs `SetSourceMarks`/`SetSequenceMarks`; StateFormatter.cs `MarksObject` | — | ❌ |
+| MCP: `insert_edit` / `overwrite_edit` (three-point edits; source / record ranges default to the stored marks and the playhead, tracks to the source patch, `stream` picks both / video / audio) and `lift` / `extract` (range defaults to the sequence marks); state adds `source_patch` | Sprocket.Mcp/SprocketTools.cs `InsertEdit`/`OverwriteEdit`/`Lift`/`Extract`; StateFormatter.cs | — | ❌ |
+| Address effects by reference tag (effect_tag, e.g. RV-1 — stable across reorders; shown as the Inspector tag chip) | Sprocket.Core/Model/EffectTags.cs; Sprocket.Mcp/SprocketTools*.cs `ResolveEffect` | ai/ai-control.md#effect-reference-tags | ✅ |
+| MCP status in the status bar | MainWindow.axaml.cs `UpdateMcpStatus` | ai/ai-control.md#the-status-bar-tells-you-when-its-on | ✅ (also named in the quick tour) |
+| Open a media file from the command line (bare arg) | Sprocket.App/Program.cs | — | ❌ |
+| Diagnostics: `--version`, `--ffmpeg-check`, `--audio-check`, `--probe`, `--doctor` (Linux env self-check: glibc baseline ≥ 2.35, bundled-native load, missing system libs with per-distro install hints; run by `install.sh`), `--mcp-check` (headless MCP endpoint smoke: initialize + tools/list) | Program.cs; Doctor.cs; McpCheck.cs | — | 🟡 (`--probe`/`--doctor` appear in RELEASE_NOTES bug-report + Linux-setup instructions only; docs site says nothing) |
+
+## 9. Reference
+
+### Keyboard shortcuts
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Complete shortcut reference (on macOS the primary modifier is `⌘` wherever Windows/Linux use `Ctrl`; Ctrl does not alias it there; `Ctrl+Y` redo is Windows/Linux-only) | MainWindow.axaml.cs `OnKeyDown` key handlers; menu InputGestures (macOS gestures swapped in `WireCommandMenus`) | get-started/keyboard-shortcuts.md | ✅ (full reference page grouped by task, with macOS differences; getting-started keeps the curated teaser) |
+| Quit, per-OS native (Windows File ▸ Exit / `Alt+F4`; Linux File ▸ **Quit** / `Ctrl+Q`, the GNOME convention; macOS has no File item — AppKit's Sprocket ▸ **Quit Sprocket** `⌘Q` is the only route). Quitting or closing with unsaved changes prompts first — gated at the application level so it holds on macOS, where a Quit never reaches the window's close handler | MainWindow.axaml.cs `WireMenu` quit block + `OnKeyDown` + `OnClosing`; hidden on macOS in `WireCommandMenus`; App.axaml.cs `OnShutdownRequested` | get-started/keyboard-shortcuts.md | ❌ (page predates the Linux `Ctrl+Q` / macOS-app-menu split and the save-on-quit prompt) |
+| Work-area focus ring: `Tab` / `Shift+Tab` step between the Project, Monitor, Timeline and Inspector panes (hidden panes skipped) instead of crawling every widget; the active pane reads with an accent edge. `Shift+1`–`Shift+4` activate one directly (1 Project, 2 Timeline, 3 Monitor, 4 Inspector). Text fields keep native `Tab`; inside an Inspector section `Tab` walks that section's fields first | Sprocket.App/WorkAreaFocus.cs; MainWindow.axaml.cs `WireWorkAreaFocus` / `OnShellKeyDown` | get-started/keyboard-shortcuts.md | ❌ |
+
+### Preferences
+
+| Feature | Source of truth | Docs | Docs status |
+|---|---|---|---|
+| Preferences dialog (`Ctrl+,`) | Sprocket.App/PreferencesDialog.cs | — | ❌ |
+| Cache management (clear proxy / render caches; "Clear proxy cache" routes through the proxy service so View ▸ Proxy stays consistent) | PreferencesDialog.cs | — | ❌ |
+| Export metadata defaults (with `{project}`/`{username}`/`{year}`/`{date}` tokens) | PreferencesDialog.cs; Sprocket.App/MetadataTokens.cs | — | ❌ |
+| Autosave interval | PreferencesDialog.cs | get-started/projects-and-saving.md#change-how-often-sprocket-autosaves | ✅ |
+| Update check settings (enable/disable) | PreferencesDialog.cs; Sprocket.App/UpdateService.cs | — | ❌ |
+| AI control (MCP) settings | PreferencesDialog.cs | ai/ai-control.md#turn-on-ai-control | ✅ |
+
+---
+
+## Planned / not yet built — do NOT document
+
+Per PLAN.md status markers @ `92226ec`. Documenting these would describe
+features users can't use; recheck each audit and promote to the matrix when built.
+
+| Feature | Status source |
+|---|---|
+| Pitch-preserving time-stretch / frame-interpolated slow motion | PLAN.md step 21 (reverse + speed ramps shipped 2026-08-27; these two remain later quality tiers) |
+| Native VST3 / AU audio plugin hosting | PLAN.md step 31 (🟡 partial) |
+| Tracked/masked placement of VFX and matte-based sky/subject isolation | plan/features/special-effects.md phases 5–6 (phase 1's primitive effects and phase 4's Day for Night grade ship today — see §4; phase 2's atmospheric generators and phase 3's action VFX presets — see §3) |
+| Native OCIO / OFX hosting; scene-linear color management | PLAN.md step 33 (🟡 partial); [COLOR_GRADING_ROADMAP.md](COLOR_GRADING_ROADMAP.md) has the detailed parity sequence and follow-on grading roadmap |
+| Bundled impulse-response library for the Convolution Reverb (CC0 / Sprocket-recorded captures) | PLAN.md step 49 follow-on (the convolution engine + user IR import shipped in step 49; licensing-clear IRs deferred) |
+| Code-signing & macOS notarization (installers themselves shipped: Windows Setup.exe, Linux AppImage, macOS .app via scripts/release.ps1 + Velopack; alpha is unsigned) | PLAN.md step 36 (✅ done except signing/notarization, deliberately deferred) |
+
+## Not user-facing — never document
+
+| Item | Why |
+|---|---|
+| Plugin host/SDK internals (`IVideoEffect`, load contexts) | The user-facing surface is the Plugin Manager row in §4 (Edit ▸ Plugins…); the host/SDK internals and authoring a plugin are a separate developer deliverable |
+| FFmpeg P/Invoke binding, render graph, command stack internals | Architecture, not behavior |
+| Build/release scripts, CI | Developer tooling |
+| `SPROCKET_APP_SECONDS`, `SPROCKET_HWACCEL` env vars | Diagnostics; at most a troubleshooting footnote |
+
+---

@@ -1,0 +1,217 @@
+{
+  "version": 1,
+  "repo": "motionstudio-effects",
+  "base_url": "https://raw.githubusercontent.com/your-org/motionstudio-effects/main/",
+  "updated_at": "2026-10-23T21:00:00Z",
+  "count": 5,
+  "effects": [
+    {
+      "base_id": "blur_gaussian",
+      "display_name": "Gaussian Blur",
+      "version": "1.0.0",
+      "category": "Blur",
+      "description": "High-quality separable Gaussian blur",
+      "author": "MotionStudio",
+      "license": "MIT",
+      "gpu_cost": "medium",
+      "min_app_version": "2.0.0",
+      "download_url": "effects/blur_gaussian.zip",
+      "size_bytes": 12400,
+      "sha256": "placeholder_sha256_blur",
+      "thumbnail_url": "effects/blur_gaussian/thumb.png",
+      "params": [
+        {
+          "name": "radius",
+          "type": "float",
+          "default": 8.0,
+          "min": 0.0,
+          "max": 64.0,
+          "label": "Radius"
+        }
+      ],
+      "tags": [
+        "blur",
+        "basic"
+      ]
+    },
+    {
+      "base_id": "glitch_rgb",
+      "display_name": "RGB Glitch",
+      "version": "1.2.0",
+      "category": "Stylize",
+      "description": "RGB channel offset glitch with block noise",
+      "author": "MotionStudio",
+      "license": "MIT",
+      "gpu_cost": "medium",
+      "min_app_version": "2.0.0",
+      "download_url": "effects/glitch_rgb.zip",
+      "size_bytes": 18200,
+      "sha256": "placeholder_sha256_glitch",
+      "thumbnail_url": "effects/glitch_rgb/thumb.png",
+      "params": [
+        {
+          "name": "amount",
+          "type": "float",
+          "default": 0.15,
+          "min": 0.0,
+          "max": 1.0,
+          "label": "Amount"
+        },
+        {
+          "name": "speed",
+          "type": "float",
+          "default": 1.0,
+          "min": 0.0,
+          "max": 5.0,
+          "label": "Speed"
+        },
+        {
+          "name": "block_size",
+          "type": "float",
+          "default": 8.0,
+          "min": 1.0,
+          "max": 64.0,
+          "label": "Block Size"
+        }
+      ],
+      "tags": [
+        "glitch",
+        "stylize",
+        "popular"
+      ]
+    },
+    {
+      "base_id": "chromatic_aberration",
+      "display_name": "Chromatic Aberration",
+      "version": "1.0.1",
+      "category": "Distort",
+      "description": "Lens-style RGB fringing",
+      "author": "MotionStudio",
+      "license": "MIT",
+      "gpu_cost": "medium",
+      "min_app_version": "2.0.0",
+      "download_url": "effects/chromatic_aberration.zip",
+      "size_bytes": 9800,
+      "sha256": "placeholder_sha256_chromatic",
+      "thumbnail_url": "effects/chromatic_aberration/thumb.png",
+      "params": [
+        {
+          "name": "amount",
+          "type": "float",
+          "default": 0.02,
+          "min": 0.0,
+          "max": 0.1,
+          "label": "Amount"
+        },
+        {
+          "name": "center_x",
+          "type": "float",
+          "default": 0.5,
+          "min": 0.0,
+          "max": 1.0,
+          "label": "Center X"
+        },
+        {
+          "name": "center_y",
+          "type": "float",
+          "default": 0.5,
+          "min": 0.0,
+          "max": 1.0,
+          "label": "Center Y"
+        }
+      ],
+      "tags": [
+        "distort",
+        "lens"
+      ]
+    },
+    {
+      "base_id": "film_grain",
+      "display_name": "Film Grain",
+      "version": "1.0.0",
+      "category": "Stylize",
+      "description": "Organic film grain overlay",
+      "author": "MotionStudio",
+      "license": "MIT",
+      "gpu_cost": "medium",
+      "min_app_version": "2.0.0",
+      "download_url": "effects/film_grain.zip",
+      "size_bytes": 15600,
+      "sha256": "placeholder_sha256_grain",
+      "thumbnail_url": "effects/film_grain/thumb.png",
+      "params": [
+        {
+          "name": "intensity",
+          "type": "float",
+          "default": 0.3,
+          "min": 0.0,
+          "max": 1.0,
+          "label": "Intensity"
+        },
+        {
+          "name": "size",
+          "type": "float",
+          "default": 1.0,
+          "min": 0.5,
+          "max": 3.0,
+          "label": "Size"
+        }
+      ],
+      "tags": [
+        "film",
+        "grain",
+        "stylize"
+      ]
+    },
+    {
+      "base_id": "vhs_tracking",
+      "display_name": "VHS Tracking",
+      "version": "1.0.0",
+      "category": "Stylize",
+      "description": "Old VHS tracking distortion",
+      "author": "MotionStudio",
+      "license": "MIT",
+      "gpu_cost": "medium",
+      "min_app_version": "2.0.0",
+      "download_url": "effects/vhs_tracking.zip",
+      "size_bytes": 21000,
+      "sha256": "placeholder_sha256_vhs",
+      "thumbnail_url": "effects/vhs_tracking/thumb.png",
+      "params": [
+        {
+          "name": "amount",
+          "type": "float",
+          "default": 0.4,
+          "min": 0.0,
+          "max": 1.0,
+          "label": "Amount"
+        },
+        {
+          "name": "speed",
+          "type": "float",
+          "default": 1.2,
+          "min": 0.0,
+          "max": 3.0,
+          "label": "Speed"
+        }
+      ],
+      "tags": [
+        "vhs",
+        "retro",
+        "stylize"
+      ]
+    },
+    {
+      "id": "org.motionstudio.gaussian_blur",
+      "name": "Gaussian Blur",
+      "category": "Blur & Sharpen",
+      "version": "1.0.0",
+      "msp_url": "https://example.com/plugins/gaussian_blur.msp",
+      "open_source": true,
+      "license": "MIT",
+      "description": "Official sample .msp plugin"
+    }
+  ],
+  "msp_version": 1,
+  "note": "Plugins are .msp packages; open source recommended"
+}

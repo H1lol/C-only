@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "app": "MotionStudio",
+  "owner": "H1lol",
+  "repo": "ms-effects",
+  "effects": [
+    {
+      "id": "org.motionstudio.gaussian_blur",
+      "name": "Gaussian Blur",
+      "category": "blur",
+      "msp": "effects/gaussian_blur.msp",
+      "open_source": true,
+      "builtin": true
+    },
+    {
+      "id": "org.motionstudio.grayscale",
+      "name": "Grayscale",
+      "category": "color",
+      "msp": "effects/grayscale.msp",
+      "open_source": true,
+      "builtin": true
+    },
+    {
+      "id": "org.motionstudio.sepia",
+      "name": "Sepia",
+      "category": "color",
+      "msp": "effects/sepia.msp",
+      "open_source": true
+    },
+    {
+      "id": "org.motionstudio.vignette",
+      "name": "Vignette",
+      "category": "stylize",
+      "msp": "effects/vignette.msp",
+      "open_source": true
+    },
+    {
+      "id": "org.motionstudio.mirror",
+      "name": "Mirror",
+      "category": "distort",
+      "msp": "effects/mirror.msp",
+      "open_source": true
+    },
+    {
+      "id": "community.pack.film_look",
+      "name": "Film Look Pack",
+      "category": "pack",
+      "msp": "effects/film_look.msp",
+      "open_source": true
+    }
+  ]
+}

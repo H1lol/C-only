@@ -1,0 +1,37 @@
+{
+  "msp_version": 1,
+  "id": "org.motionstudio.gaussian_blur",
+  "name": "Gaussian Blur",
+  "version": "1.0.0",
+  "author": "MotionStudio",
+  "license": "MIT",
+  "license_url": "https://opensource.org/licenses/MIT",
+  "source_url": "https://github.com/motionstudio/plugins",
+  "description": "Separable Gaussian blur. Official open-source sample plugin.",
+  "category": "Blur & Sharpen",
+  "tags": ["blur", "soft", "official"],
+  "min_app_version": "2.0.0",
+  "entry": {
+    "type": "shader",
+    "shader": "shaders/blur.frag"
+  },
+  "params": [
+    {
+      "id": "radius",
+      "label": "Radius",
+      "type": "float",
+      "default": 4.0,
+      "min": 0.0,
+      "max": 64.0
+    },
+    {
+      "id": "quality",
+      "label": "Quality",
+      "type": "float",
+      "default": 1.0,
+      "min": 0.25,
+      "max": 2.0
+    }
+  ],
+  "open_source": true
+}

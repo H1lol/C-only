@@ -1,0 +1,851 @@
+package com.motionstudio.app.editor
+
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.motionstudio.app.audio.NativeAudioPlayer
+import com.motionstudio.app.data.ProjectStore
+import com.motionstudio.app.model.ProjectDoc
+import com.motionstudio.app.native.NativeEngine
+import java.io.File
+
+/** Styling for a title clip; mirrors ms::TextStyle one field at a time. */
+data class TitleOptions(
+    val font: String = "anton",
+    val size: Double = 140.0,
+    val color: String = "#FFFFFF",
+    val align: Int = 1,
+    val anchor: Int = 1,
+    val outline: Double = 0.0,
+    val outlineColor: String = "#000000",
+    val shadow: Double = 0.0,
+    val lineSpacing: Double = 1.12,
+    val tracking: Double = 0.0,
+    val boxWidth: Double = 0.0,
+    val uppercase: Boolean = false,
+)
+
+/**
+ * Owns one native editing session and mirrors it into Compose state.
+ *
+ * The C++ engine is the source of truth for the document, timeline and render
+ * output; this class only drives it and caches the JSON view.
+ */
+class EditorEngine(
+    private val store: ProjectStore,
+    private val autosaveEnabled: () -> Boolean,
+) {
+
+    var doc: ProjectDoc by mutableStateOf(ProjectDoc.empty())
+        private set
+
+    var time by mutableDoubleStateOf(0.0)
+        private set
+
+    var playing by mutableStateOf(false)
+        private set
+
+    var dirty by mutableStateOf(false)
+        private set
+
+    var saving by mutableStateOf(false)
+        private set
+
+    var status by mutableStateOf("Ready")
+        private set
+
+    var lastError: String? by mutableStateOf(null)
+        private set
+
+    var selectedTrackId by mutableIntStateOf(-1)
+        private set
+
+    var selectedClipId by mutableIntStateOf(-1)
+        private set
+
+    var currentFile: File? = null
+        private set
+
+    /** Name of the active .cube look, or null when the preview is ungraded. */
+    var lookName: String? by mutableStateOf(null)
+        private set
+
+    var lookStrength: Float by mutableFloatStateOf(1f)
+        private set
+
+    // Master grade state, mirrored for the UI.
+    var gradeExposure by mutableFloatStateOf(0f)
+        private set
+    var gradeContrast by mutableFloatStateOf(1f)
+        private set
+    var gradeSaturation by mutableFloatStateOf(1f)
+        private set
+    var gradeTemperature by mutableFloatStateOf(0f)
+        private set
+    var gradeLift by mutableFloatStateOf(0f)
+        private set
+    var gradeGamma by mutableFloatStateOf(1f)
+        private set
+    var gradeGain by mutableFloatStateOf(1f)
+        private set
+    var gradeActive by mutableStateOf(false)
+        private set
+
+    private val audio = NativeAudioPlayer()
+    private var lastAutosaveAt = 0L
+
+    val fps: Double get() = if (doc.fps > 1.0) doc.fps else 30.0
+    val duration: Double get() = doc.timelineEnd
+    val hasProject: Boolean get() = doc.tracks.isNotEmpty() || doc.media.isNotEmpty()
+
+    fun openNew(name: String, width: Int, height: Int, fps: Double, duration: Double) {
+        lastError = null
+        val ok = NativeEngine.nativeNewProject(name, width, height, fps)
+        if (!ok) {
+            lastError = "Could not create the project"
+            return
+        }
+        currentFile = null
+        reload()
+        // The engine owns the duration; apply the requested one by trimming the
+        // sequence end after creation.
+        status = "New project"
+        dirty = false
+        time = 0.0
+        selectedTrackId = doc.tracks.firstOrNull()?.id ?: -1
+        selectedClipId = -1
+        if (duration > 0) NativeEngine.nativeSeek(0.0)
+    }
+
+    fun openFile(file: File): Boolean {
+        lastError = null
+        val json = store.read(file)
+        if (json.isBlank()) {
+            lastError = "That project file is empty"
+            return false
+        }
+        if (!NativeEngine.nativeProjectLoad(json)) {
+            lastError = "The native engine rejected this project file"
+            return false
+        }
+        currentFile = file
+        reload()
+        time = 0.0
+        selectedTrackId = doc.tracks.firstOrNull()?.id ?: -1
+        selectedClipId = -1
+        dirty = false
+        status = "Opened ${file.nameWithoutExtension}"
+        return true
+    }
+
+    /** Lets the UI report progress (import, export) through the status line. */
+    fun note(message: String) {
+        status = message
+    }
+
+    fun reload() {
+        doc = ProjectDoc.parse(NativeEngine.nativeProjectToJson())
+        val state = NativeEngine.nativePreviewState()
+        if (state.size >= 4) {
+            time = state[0]
+            playing = state[3] == 1.0
+        }
+        if (selectedTrackId == -1) selectedTrackId = doc.tracks.firstOrNull()?.id ?: -1
+    }
+
+    fun seek(seconds: Double) {
+        val target = seconds.coerceIn(0.0, duration)
+        NativeEngine.nativeSeek(target)
+        time = target
+    }
+
+    fun step(frames: Int) = seek(time + frames / fps)
+
+    fun togglePlay() {
+        if (playing) {
+            NativeEngine.nativePause()
+            audio.stop()
+            playing = false
+        } else {
+            NativeEngine.nativePlay()
+            val state = NativeEngine.nativeAudioState()
+            val rate = if (state.size >= 2 && state[0] > 0) state[0].toInt() else 48_000
+            val channels = if (state.size >= 2 && state[1] > 0) state[1].toInt() else 2
+            audio.start(rate, channels)
+            playing = true
+        }
+    }
+
+    fun select(trackId: Int, clipId: Int) {
+        selectedTrackId = trackId
+        selectedClipId = clipId
+    }
+
+    fun splitAtPlayhead(): Boolean {
+        val trackId = selectedTrackId
+        val clipId = selectedClipId
+        if (trackId < 0 || clipId <= 0) {
+            status = "Select a clip first"
+            return false
+        }
+        val ok = NativeEngine.nativeSplitClip(trackId, clipId, time)
+        if (ok) {
+            markDirty()
+            reload()
+            status = "Split at ${formatTimecode(time)}"
+        } else {
+            status = "Nothing to split at the playhead"
+        }
+        return ok
+    }
+
+    fun undo(): Boolean {
+        val ok = NativeEngine.nativeUndo()
+        if (ok) {
+            markDirty()
+            reload()
+            status = "Undo"
+        }
+        return ok
+    }
+
+    fun redo(): Boolean {
+        val ok = NativeEngine.nativeRedo()
+        if (ok) {
+            markDirty()
+            reload()
+            status = "Redo"
+        }
+        return ok
+    }
+
+    /** Imports media and drops it on the first track at the playhead. */
+    fun importMedia(path: String, displayName: String? = null): Boolean {
+        val mediaId = NativeEngine.nativeImportMedia(path)
+        if (mediaId <= 0) {
+            status = "Could not import that file"
+            return false
+        }
+        reload()
+        val media = doc.media.firstOrNull { it.id == mediaId }
+        val length = media?.duration?.takeIf { it > 0.05 } ?: 5.0
+        val trackId = selectedTrackId.takeIf { it > 0 } ?: doc.tracks.firstOrNull()?.id ?: -1
+        if (trackId > 0) {
+            val clipId = NativeEngine.nativeAddClip(trackId, mediaId, time, length)
+            if (clipId > 0) {
+                selectedTrackId = trackId
+                selectedClipId = clipId
+            }
+        }
+        markDirty()
+        reload()
+        status = "Imported ${displayName ?: media?.name ?: "media"}"
+        return true
+    }
+
+    /** Called by the preview loop with the engine's authoritative clock. */
+    fun onFrameRendered(nativeTime: Double, isPlaying: Boolean) {
+        if (playing != isPlaying) playing = isPlaying
+        if (kotlin.math.abs(time - nativeTime) > 0.004) time = nativeTime
+    }
+
+    /** Loads a `.cube` look into the engine; the preview loop picks it up next frame. */
+    fun applyLook(path: String, name: String): Boolean {
+        if (!NativeEngine.nativeLookLoad(path)) {
+            status = "Could not read the $name look"
+            return false
+        }
+        NativeEngine.nativeLookSetStrength(lookStrength)
+        lookName = name
+        status = "Look: $name"
+        return true
+    }
+
+    fun clearLook() {
+        NativeEngine.nativeLookClear()
+        lookName = null
+        status = "Look cleared"
+    }
+
+    fun updateLookStrength(value: Float) {
+        lookStrength = value.coerceIn(0f, 1f)
+        NativeEngine.nativeLookSetStrength(lookStrength)
+    }
+
+    /** Pushes the whole grade to the engine; it is applied to the preview frame. */
+    fun applyGrade(
+        exposure: Float = gradeExposure,
+        contrast: Float = gradeContrast,
+        saturation: Float = gradeSaturation,
+        temperature: Float = gradeTemperature,
+        lift: Float = gradeLift,
+        gamma: Float = gradeGamma,
+        gain: Float = gradeGain,
+    ) {
+        gradeExposure = exposure
+        gradeContrast = contrast
+        gradeSaturation = saturation
+        gradeTemperature = temperature
+        gradeLift = lift
+        gradeGamma = gamma
+        gradeGain = gain
+        NativeEngine.nativeGradeSet(exposure, contrast, saturation, temperature, lift, gamma, gain)
+        gradeActive = true
+    }
+
+    fun resetGrade() {
+        gradeExposure = 0f
+        gradeContrast = 1f
+        gradeSaturation = 1f
+        gradeTemperature = 0f
+        gradeLift = 0f
+        gradeGamma = 1f
+        gradeGain = 1f
+        NativeEngine.nativeGradeClear()
+        gradeActive = false
+        status = "Grade reset"
+    }
+
+    /** R/G/B/luma histogram of the last rendered frame, `bins` per channel. */
+    fun histogram(bins: Int = 64): IntArray {
+        val out = IntArray(bins * 4)
+        NativeEngine.nativeScopesHistogram(out, bins)
+        return out
+    }
+
+    /**
+     * Adds a keyframe at the playhead for the selected clip.
+     * prop: 0 opacity, 1 scale, 2 pos_x, 3 pos_y.
+     */
+    fun addKeyframe(prop: Int, value: Float): Boolean {
+        val (t, c) = selection() ?: run {
+            status = "Select a clip first"
+            return false
+        }
+        val clip = doc.clipById(t, c) ?: return false
+        val local = (time - clip.start).coerceAtLeast(0.0)
+        if (!NativeEngine.nativeKeyframeAdd(t, c, prop, local, value.toDouble())) {
+            status = "Could not add the keyframe"
+            return false
+        }
+        markDirty()
+        reload()
+        status = "Keyframe at ${formatTimecode(time)}"
+        return true
+    }
+
+    fun clearKeyframes(prop: Int): Boolean {
+        val (t, c) = selection() ?: return false
+        if (!NativeEngine.nativeKeyframeClear(t, c, prop)) return false
+        markDirty()
+        reload()
+        status = "Animation cleared"
+        return true
+    }
+
+    /** The clip that follows the selected one on the same track, if any. */
+    fun nextClip(): com.motionstudio.app.model.NativeClip? {
+        val track = doc.tracks.firstOrNull { it.id == selectedTrackId } ?: return null
+        val ordered = track.clips.sortedBy { it.start }
+        val index = ordered.indexOfFirst { it.id == selectedClipId }
+        if (index < 0) return null
+        return ordered.getOrNull(index + 1)
+    }
+
+    fun transitionsOnSelectedTrack(): List<com.motionstudio.app.model.NativeTransition> =
+        doc.tracks.firstOrNull { it.id == selectedTrackId }?.transitions ?: emptyList()
+
+    fun addTransitionToNext(type: Int, duration: Double = 0.6): Boolean {
+        val (t, c) = selection() ?: run {
+            status = "Select a clip first"
+            return false
+        }
+        val next = nextClip() ?: run {
+            status = "No clip after this one on the track"
+            return false
+        }
+        val id = NativeEngine.nativeTransitionAdd(t, c, next.id, type, duration)
+        if (id <= 0) {
+            status = "Could not add the transition"
+            return false
+        }
+        markDirty()
+        reload()
+        status = "Transition added"
+        return true
+    }
+
+    fun removeTransition(id: Int): Boolean {
+        val (t, _) = selection() ?: return false
+        if (!NativeEngine.nativeTransitionRemove(t, id)) return false
+        markDirty()
+        reload()
+        status = "Transition removed"
+        return true
+    }
+
+    // ---- Markers + project settings ----------------------------------------
+
+    fun addMarker(name: String = ""): Boolean {
+        val id = NativeEngine.nativeMarkerAdd(time, name)
+        if (id <= 0) {
+            status = "Could not add the marker"
+            return false
+        }
+        markDirty()
+        reload()
+        status = "Marker added at ${"%.2f".format(time)}s"
+        return true
+    }
+
+    fun removeMarker(id: Int): Boolean {
+        if (!NativeEngine.nativeMarkerRemove(id)) return false
+        markDirty()
+        reload()
+        status = "Marker removed"
+        return true
+    }
+
+    fun setProjectSettings(width: Int, height: Int, fps: Double): Boolean {
+        if (!NativeEngine.nativeProjectSettings(width, height, fps)) {
+            status = "The engine rejected those settings"
+            return false
+        }
+        markDirty()
+        reload()
+        status = "Project set to ${width}×${height} @ ${fps.toInt()} fps"
+        return true
+    }
+
+    // ---- Shape masks -------------------------------------------------------
+
+    var clipMask by mutableStateOf(floatArrayOf(0f, 0.1f, 0.1f, 0.8f, 0.8f, 0f))
+        private set
+    var clipMaskActive by mutableStateOf(false)
+        private set
+    var clipMaskInverted by mutableStateOf(false)
+        private set
+
+    fun refreshClipMask() {
+        val (t, c) = selection() ?: run {
+            clipMaskActive = false
+            return
+        }
+        val out = FloatArray(6)
+        val inv = IntArray(1)
+        if (NativeEngine.nativeClipMaskGet(t, c, out, inv)) {
+            clipMask = out
+            clipMaskInverted = inv[0] != 0
+            clipMaskActive = true
+        } else {
+            clipMaskActive = false
+        }
+    }
+
+    fun setClipMask(
+        shape: Int,
+        x: Float,
+        y: Float,
+        w: Float,
+        h: Float,
+        feather: Float,
+        inverted: Boolean,
+    ): Boolean {
+        val (t, c) = selection() ?: run {
+            status = "Select a clip first"
+            return false
+        }
+        if (!NativeEngine.nativeClipMaskSet(t, c, shape, x, y, w, h, feather, inverted)) return false
+        clipMask = floatArrayOf(shape.toFloat(), x, y, w, h, feather)
+        clipMaskInverted = inverted
+        clipMaskActive = shape != 3
+        markDirty()
+        return true
+    }
+
+    fun clearClipMask(): Boolean {
+        val (t, c) = selection() ?: return false
+        if (!NativeEngine.nativeClipMaskClear(t, c)) return false
+        clipMaskActive = false
+        markDirty()
+        status = "Mask removed"
+        return true
+    }
+
+    // ---- Per-clip grade ----------------------------------------------------
+
+    var clipGrade by mutableStateOf(floatArrayOf(0f, 1f, 1f, 0f, 0f, 1f, 1f))
+        private set
+    var clipGradeActive by mutableStateOf(false)
+        private set
+
+    /** Pulls the selected clip's grade into Compose state. */
+    fun refreshClipGrade() {
+        val (t, c) = selection() ?: run {
+            clipGradeActive = false
+            return
+        }
+        val out = FloatArray(7)
+        if (NativeEngine.nativeClipGradeGet(t, c, out)) {
+            clipGrade = out
+            clipGradeActive = true
+        } else {
+            clipGradeActive = false
+        }
+    }
+
+    fun applyClipGrade(
+        exposure: Float = clipGrade[0],
+        contrast: Float = clipGrade[1],
+        saturation: Float = clipGrade[2],
+        temperature: Float = clipGrade[3],
+        lift: Float = clipGrade[4],
+        gamma: Float = clipGrade[5],
+        gain: Float = clipGrade[6],
+    ): Boolean {
+        val (t, c) = selection() ?: run {
+            status = "Select a clip first"
+            return false
+        }
+        if (!NativeEngine.nativeClipGradeSet(
+                t, c, exposure, contrast, saturation, temperature, lift, gamma, gain,
+            )
+        ) return false
+        clipGrade = floatArrayOf(exposure, contrast, saturation, temperature, lift, gamma, gain)
+        clipGradeActive = true
+        markDirty()
+        status = "Clip grade applied"
+        return true
+    }
+
+    fun clearClipGrade(): Boolean {
+        val (t, c) = selection() ?: return false
+        if (!NativeEngine.nativeClipGradeClear(t, c)) return false
+        clipGrade = floatArrayOf(0f, 1f, 1f, 0f, 0f, 1f, 1f)
+        clipGradeActive = false
+        markDirty()
+        status = "Clip grade cleared"
+        return true
+    }
+
+    // ---- Waveform ----------------------------------------------------------
+
+    private val peaksCache = HashMap<String, FloatArray>()
+
+    /**
+     * Peak envelope for a clip's audio, cached per source range. Empty when the
+     * clip has no decodable audio, which is how the timeline decides to skip
+     * drawing a waveform.
+     */
+    fun peaks(trackId: Int, clipId: Int, bins: Int = 96): FloatArray {
+        val clip = doc.clipById(trackId, clipId) ?: return FloatArray(0)
+        val key = "$trackId:$clipId:${clip.duration}:${clip.mediaId}:$bins"
+        peaksCache[key]?.let { return it }
+        val out = FloatArray(bins)
+        val result = if (NativeEngine.nativeClipPeaks(trackId, clipId, out, bins)) out else FloatArray(0)
+        peaksCache[key] = result
+        // Keep the cache from growing without bound across a long session.
+        if (peaksCache.size > 256) peaksCache.clear()
+        return result
+    }
+
+    // ---- Text / titles -----------------------------------------------------
+
+    fun selectedIsText(): Boolean {
+        val (t, c) = selection() ?: return false
+        return doc.clipById(t, c)?.isText == true
+    }
+
+    /** Existing style of the selected title, for populating the editor. */
+    fun selectedTitleOptions(): TitleOptions {
+        val (t, c) = selection() ?: return TitleOptions()
+        val clip = doc.clipById(t, c) ?: return TitleOptions()
+        return TitleOptions(
+            font = clip.textFont.ifEmpty { "anton" },
+            size = if (clip.textSize > 0) clip.textSize else 140.0,
+        )
+    }
+
+    fun selectedTitleText(): String {
+        val (t, c) = selection() ?: return ""
+        return doc.clipById(t, c)?.text.orEmpty()
+    }
+
+    /** Adds a title clip at the playhead on the overlay (or first video) track. */
+    fun addTitle(text: String, opts: TitleOptions, duration: Double = 3.0): Boolean {
+        if (text.isBlank()) {
+            status = "Type the title text first"
+            return false
+        }
+        val track = doc.tracks.firstOrNull { it.type == 1 }
+            ?: doc.tracks.firstOrNull { it.type == 0 }
+            ?: run {
+                status = "No video or overlay track to put the title on"
+                return false
+            }
+        val id = NativeEngine.nativeTextAddClip(
+            track.id, time, duration, text, opts.font, opts.size, opts.color,
+            opts.align, opts.anchor, opts.outline, opts.outlineColor, opts.shadow,
+            opts.lineSpacing, opts.tracking, opts.boxWidth, opts.uppercase,
+        )
+        if (id <= 0) {
+            status = "The text rasteriser could not build that title"
+            return false
+        }
+        selectedTrackId = track.id
+        selectedClipId = id
+        markDirty()
+        reload()
+        status = "Title added"
+        return true
+    }
+
+    /** Re-renders the selected title clip with new text and/or style. */
+    fun updateSelectedTitle(text: String, opts: TitleOptions): Boolean {
+        val (t, c) = selection() ?: return false
+        if (doc.clipById(t, c)?.isText != true) return false
+        val ok = NativeEngine.nativeTextUpdateClip(
+            t, c, text, opts.font, opts.size, opts.color, opts.align, opts.anchor,
+            opts.outline, opts.outlineColor, opts.shadow, opts.lineSpacing,
+            opts.tracking, opts.boxWidth, opts.uppercase,
+        )
+        if (!ok) return false
+        markDirty()
+        reload()
+        return true
+    }
+
+    fun keyframeCount(prop: Int): Int {
+        val clip = doc.clipById(selectedTrackId, selectedClipId) ?: return 0
+        val key = when (prop) {
+            0 -> "keys_opacity"
+            1 -> "keys_scale"
+            2 -> "keys_pos_x"
+            else -> "keys_pos_y"
+        }
+        return clip.keyframes[key] ?: 0
+    }
+
+    private fun selection(): Pair<Int, Int>? {
+        val t = selectedTrackId
+        val c = selectedClipId
+        return if (t > 0 && c > 0) t to c else null
+    }
+
+    /** Effects currently attached to the selected clip. */
+    val selectedEffects: List<com.motionstudio.app.model.NativeEffect>
+        get() = selection()?.let { (t, c) -> doc.clipById(t, c)?.effects } ?: emptyList()
+
+    fun removeSelectedClip(): Boolean {
+        val (t, c) = selection() ?: run {
+            status = "Select a clip first"
+            return false
+        }
+        if (!NativeEngine.nativeClipRemove(t, c)) {
+            status = "Could not delete that clip"
+            return false
+        }
+        selectedClipId = -1
+        markDirty()
+        reload()
+        status = "Clip deleted"
+        return true
+    }
+
+    fun rippleDeleteSelected(): Boolean {
+        val (t, c) = selection() ?: run {
+            status = "Select a clip first"
+            return false
+        }
+        if (!NativeEngine.nativeClipRippleDelete(t, c)) {
+            status = "Could not ripple delete that clip"
+            return false
+        }
+        selectedClipId = -1
+        markDirty()
+        reload()
+        status = "Ripple deleted"
+        return true
+    }
+
+    fun moveClip(trackId: Int, clipId: Int, start: Double): Boolean {
+        val ok = NativeEngine.nativeClipMove(trackId, clipId, start.coerceAtLeast(0.0))
+        if (ok) {
+            markDirty()
+            reload()
+            status = "Moved to ${formatTimecode(start)}"
+        } else {
+            status = "Could not move that clip"
+        }
+        return ok
+    }
+
+    fun trimClip(trackId: Int, clipId: Int, start: Double, duration: Double): Boolean {
+        val safeStart = start.coerceAtLeast(0.0)
+        val safeDuration = duration.coerceAtLeast(MIN_CLIP_SECONDS)
+        val ok = NativeEngine.nativeClipTrim(trackId, clipId, safeStart, safeDuration)
+        if (ok) {
+            markDirty()
+            reload()
+            status = "Trimmed to ${formatTimecode(safeDuration)}"
+        } else {
+            status = "Could not trim that clip"
+        }
+        return ok
+    }
+
+    fun addTrack(video: Boolean = true): Boolean {
+        val count = doc.tracks.count { (it.type == 1) != video } + 1
+        val name = if (video) "V$count" else "A$count"
+        val id = NativeEngine.nativeTrackAdd(name, if (video) 0 else 1)
+        if (id <= 0) {
+            status = "Could not add a track"
+            return false
+        }
+        markDirty()
+        reload()
+        selectedTrackId = id
+        selectedClipId = -1
+        status = "Added $name"
+        return true
+    }
+
+    fun removeTrack(trackId: Int): Boolean {
+        if (!NativeEngine.nativeTrackRemove(trackId)) {
+            status = "Could not remove that track"
+            return false
+        }
+        if (selectedTrackId == trackId) {
+            selectedTrackId = -1
+            selectedClipId = -1
+        }
+        markDirty()
+        reload()
+        status = "Track removed"
+        return true
+    }
+
+    fun toggleTrackMuted(trackId: Int): Boolean {
+        val track = doc.tracks.firstOrNull { it.id == trackId } ?: return false
+        val ok = NativeEngine.nativeTrackFlags(trackId, !track.muted, track.locked, track.visible, false)
+        if (ok) {
+            markDirty()
+            reload()
+            status = if (track.muted) "Unmuted ${track.name}" else "Muted ${track.name}"
+        }
+        return ok
+    }
+
+    fun toggleTrackVisible(trackId: Int): Boolean {
+        val track = doc.tracks.firstOrNull { it.id == trackId } ?: return false
+        val ok = NativeEngine.nativeTrackFlags(trackId, track.muted, track.locked, !track.visible, false)
+        if (ok) {
+            markDirty()
+            reload()
+        }
+        return ok
+    }
+
+    fun addEffect(baseId: String): Boolean {
+        val (t, c) = selection() ?: run {
+            status = "Select a clip first"
+            return false
+        }
+        val index = NativeEngine.nativeEffectAdd(t, c, baseId)
+        if (index < 0) {
+            status = "Could not add that effect"
+            return false
+        }
+        markDirty()
+        reload()
+        status = "Added $baseId"
+        return true
+    }
+
+    fun removeEffect(index: Int): Boolean {
+        val (t, c) = selection() ?: return false
+        if (!NativeEngine.nativeEffectRemove(t, c, index)) return false
+        markDirty()
+        reload()
+        status = "Effect removed"
+        return true
+    }
+
+    fun setEffectParam(index: Int, name: String, value: Float): Boolean {
+        val (t, c) = selection() ?: return false
+        val ok = NativeEngine.nativeEffectSetParam(t, c, index, name, value)
+        if (ok) {
+            markDirty()
+            reload()
+        }
+        return ok
+    }
+
+    fun setEffectEnabled(index: Int, enabled: Boolean): Boolean {
+        val (t, c) = selection() ?: return false
+        val ok = NativeEngine.nativeEffectSetEnabled(t, c, index, enabled)
+        if (ok) {
+            markDirty()
+            reload()
+        }
+        return ok
+    }
+
+    fun markDirty() {
+        dirty = true
+    }
+
+    fun save(): Boolean {
+        val json = NativeEngine.nativeProjectToJson()
+        if (json.isBlank() || json == "{}") {
+            lastError = "Nothing to save yet"
+            return false
+        }
+        saving = true
+        val file = currentFile ?: store.save(doc.name, json)
+        if (currentFile != null) file.writeText(json)
+        currentFile = file
+        saving = false
+        dirty = false
+        lastAutosaveAt = System.currentTimeMillis()
+        status = "Saved"
+        return true
+    }
+
+    /** Autosaves at most every 10 minutes, matching the documented recovery policy. */
+    fun maybeAutosave() {
+        if (!autosaveEnabled() || !dirty || playing) return
+        val now = System.currentTimeMillis()
+        if (now - lastAutosaveAt < AUTOSAVE_INTERVAL_MS) return
+        val json = NativeEngine.nativeProjectToJson()
+        if (json.isBlank() || json == "{}") return
+        runCatching { store.autosave(doc.name, json) }
+        lastAutosaveAt = now
+        status = "Autosaved"
+    }
+
+    fun release() {
+        if (dirty && autosaveEnabled()) maybeAutosave()
+        audio.stop()
+        NativeEngine.nativePause()
+        playing = false
+    }
+
+    companion object {
+        const val AUTOSAVE_INTERVAL_MS = 10 * 60 * 1000L
+        const val MIN_CLIP_SECONDS = 0.05
+
+        fun formatTimecode(seconds: Double, fps: Double = 30.0): String {
+            val safe = seconds.coerceAtLeast(0.0)
+            val total = safe.toLong()
+            val mm = (total / 60).toString().padStart(2, '0')
+            val ss = (total % 60).toString().padStart(2, '0')
+            val ff = ((safe - total) * fps).toInt().coerceIn(0, (fps - 1).toInt())
+                .toString().padStart(2, '0')
+            return "$mm:$ss:$ff"
+        }
+    }
+}

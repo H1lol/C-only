@@ -1,0 +1,15 @@
+Motion Studio native milestones 1-10 are now wired into the C++ engine.
+
+Completed in this pass:
+1. Flutter <-> C++ C ABI bridge
+2. Project/session model and .msproj JSON
+3. Timeline track/clip editing primitives
+4. Media probing + FFmpeg-backed frame decoding with slate fallback
+5. Real native frame compositing into an RGBA buffer
+6. Keyframed motion primitives are connected to clip rendering
+7. CPU effect stack is connected to clip rendering
+8. Sequence render/export path is built and tested
+9. Masks/layer/blend modules are part of the native compositor foundation
+10. Node graph evaluation is compiled into the native core
+
+Next work begins at milestone 11: cache/proxy system, then audio, autosave, presets, performance, 3D, color, plugins, render queue, final mobile UI/shipping.

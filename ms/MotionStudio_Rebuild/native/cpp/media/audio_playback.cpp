@@ -1,0 +1,343 @@
+#include "ms_audio_playback.hpp"
+#include "ms_project.hpp"
+#include <cstdio>
+#include <cstdlib>
+#include <cmath>
+#include <cstring>
+#include <sstream>
+#include <algorithm>
+#include <filesystem>
+#include <sys/wait.h>
+
+namespace ms {
+namespace fs = std::filesystem;
+
+AudioDecoderFFmpeg::AudioDecoderFFmpeg(FFmpegPaths paths) : paths_(std::move(paths)) {}
+
+Error AudioDecoderFFmpeg::open(const std::string& path, int target_rate, int target_ch) {
+  close();
+  path_ = path;
+  info_ = {};
+  info_.sample_rate = target_rate > 0 ? target_rate : 48000;
+  info_.channels = target_ch > 0 ? target_ch : 2;
+
+  auto probe = ffmpeg_probe(path, paths_);
+  double dur = probe.duration_ms / 1000.0;
+  if (dur <= 0) dur = 0;
+  for (const auto& s : probe.streams) {
+    if (s.type == "audio") {
+      if (s.sample_rate > 0) {
+        // keep target rate for mixability; note native rate in path
+      }
+      if (s.duration_ms > 0) dur = s.duration_ms / 1000.0;
+      break;
+    }
+  }
+  // also duration from format
+  if (probe.duration_ms > 0) dur = std::max(dur, probe.duration_ms / 1000.0);
+  info_.duration = dur > 0 ? dur : 0;
+  open_ = true;
+  return Error::success();
+}
+
+void AudioDecoderFFmpeg::close() {
+  pcm_.clear();
+  open_ = false;
+  path_.clear();
+}
+
+Error AudioDecoderFFmpeg::decode_window(double start, double duration, AudioBuffer& dst) {
+  if (!open_ || path_.empty())
+    return Error::make(ErrorCode::NotInitialized, "audio decoder closed");
+  if (!ffmpeg_available(paths_))
+    return Error::make(ErrorCode::NotSupported, "ffmpeg not found");
+  if (duration <= 0)
+    return Error::make(ErrorCode::InvalidArgument, "duration");
+
+  int rate = info_.sample_rate;
+  int ch = info_.channels;
+  std::ostringstream cmd;
+  cmd << paths_.ffmpeg << " -v error -ss " << start
+      << " -i \"" << path_ << "\""
+      << " -t " << duration
+      << " -vn -ac " << ch << " -ar " << rate
+      << " -f f32le -";
+
+  FILE* pipe = popen(cmd.str().c_str(), "r");
+  if (!pipe) return Error::make(ErrorCode::MediaDecodeFailed, "popen audio");
+
+  std::vector<float> data;
+  float buf[2048];
+  while (true) {
+    size_t n = fread(buf, sizeof(float), 2048, pipe);
+    if (n == 0) break;
+    data.insert(data.end(), buf, buf + n);
+  }
+  int st = pclose(pipe);
+  (void)st;
+
+  dst.sample_rate = rate;
+  dst.channels = ch;
+  dst.samples = std::move(data);
+  // if empty (no audio stream), silence
+  if (dst.samples.empty()) {
+    int frames = std::max(1, static_cast<int>(duration * rate));
+    dst.samples.assign(static_cast<size_t>(frames) * ch, 0.f);
+  }
+  return Error::success();
+}
+
+Error AudioDecoderFFmpeg::decode_all(double max_seconds) {
+  if (!open_) return Error::make(ErrorCode::NotInitialized, "closed");
+  double dur = info_.duration > 0 ? info_.duration : max_seconds;
+  if (dur > max_seconds) dur = max_seconds;
+  if (dur <= 0) dur = 1.0;
+  Error e = decode_window(0, dur, pcm_);
+  if (!e.ok()) return e;
+  info_.total_samples = pcm_.samples.size() / std::max(1, pcm_.channels);
+  info_.duration = static_cast<double>(info_.total_samples) / info_.sample_rate;
+  return Error::success();
+}
+
+// ---- AudioPlayback ----
+
+AudioPlayback::AudioPlayback(FFmpegPaths paths) : decoder_(std::move(paths)) {}
+
+Error AudioPlayback::open(const std::string& path) {
+  close();
+  Error e = decoder_.open(path);
+  if (!e.ok()) return e;
+  e = decoder_.decode_all(180.0);
+  if (!e.ok()) return e;
+  info_ = decoder_.info();
+  time_ = 0;
+  playing_ = false;
+  loaded_ = true;
+  return Error::success();
+}
+
+void AudioPlayback::close() {
+  decoder_.close();
+  loaded_ = false;
+  playing_ = false;
+  time_ = 0;
+}
+
+Error AudioPlayback::play() {
+  if (!loaded_) return Error::make(ErrorCode::NotInitialized, "no audio");
+  playing_ = true;
+  return Error::success();
+}
+
+void AudioPlayback::pause() { playing_ = false; }
+
+void AudioPlayback::stop() {
+  playing_ = false;
+  time_ = 0;
+}
+
+Error AudioPlayback::seek(TimeSec t) {
+  if (!loaded_) return Error::make(ErrorCode::NotInitialized, "no audio");
+  time_ = std::clamp(t, 0.0, info_.duration);
+  return Error::success();
+}
+
+void AudioPlayback::advance(double dt) {
+  if (!playing_ || !loaded_) return;
+  time_ += dt;
+  if (time_ >= info_.duration) {
+    if (looping_) time_ = std::fmod(time_, info_.duration);
+    else {
+      time_ = info_.duration;
+      playing_ = false;
+    }
+  }
+}
+
+Error AudioPlayback::read_pcm(float* interleaved, int frames, int channels) {
+  if (!interleaved || frames <= 0)
+    return Error::make(ErrorCode::InvalidArgument, "pcm args");
+  const int ch = channels > 0 ? channels : 2;
+  std::memset(interleaved, 0, sizeof(float) * static_cast<size_t>(frames) * ch);
+  if (!loaded_ || !playing_) return Error::success();
+
+  const auto& pcm = decoder_.buffer();
+  const int src_ch = pcm.channels > 0 ? pcm.channels : 2;
+  const int rate = pcm.sample_rate > 0 ? pcm.sample_rate : 48000;
+  size_t start = static_cast<size_t>(time_ * rate);
+  for (int i = 0; i < frames; ++i) {
+    size_t si = start + static_cast<size_t>(i);
+    for (int c = 0; c < ch; ++c) {
+      float s = 0.f;
+      if (si * src_ch + static_cast<size_t>(std::min(c, src_ch - 1)) < pcm.samples.size()) {
+        s = pcm.samples[si * src_ch + static_cast<size_t>(std::min(c, src_ch - 1))];
+      }
+      interleaved[i * ch + c] = s * volume_;
+    }
+  }
+  return effects_.process(interleaved, static_cast<std::size_t>(frames), rate, ch);
+}
+
+Error AudioPlayback::read_buffer(AudioBuffer& out, int frames) {
+  int ch = 2;
+  out.sample_rate = info_.sample_rate;
+  out.channels = ch;
+  out.samples.assign(static_cast<size_t>(frames) * ch, 0.f);
+  return read_pcm(out.samples.data(), frames, ch);
+}
+
+AudioPlaybackInfo AudioPlayback::info() const {
+  AudioPlaybackInfo i = info_;
+  i.time = time_;
+  i.playing = playing_;
+  return i;
+}
+
+// ---- TimelineAudioPlayback ----
+
+TimelineAudioPlayback::TimelineAudioPlayback(ProjectSession* session, FFmpegPaths paths)
+    : session_(session), paths_(std::move(paths)) {}
+
+Error TimelineAudioPlayback::prepare() {
+  if (!session_) return Error::make(ErrorCode::NotInitialized, "no session");
+  fps_ = session_->meta().fps > 1 ? session_->meta().fps : 24.f;
+  decoders_.clear();
+  return Error::success();
+}
+
+Error TimelineAudioPlayback::play() {
+  Error e = prepare();
+  if (!e.ok()) return e;
+  playing_ = true;
+  return Error::success();
+}
+
+void TimelineAudioPlayback::pause() { playing_ = false; }
+
+void TimelineAudioPlayback::stop() {
+  playing_ = false;
+  time_ = 0;
+}
+
+Error TimelineAudioPlayback::seek(TimeSec t) {
+  time_ = std::max(0.0, t);
+  return Error::success();
+}
+
+void TimelineAudioPlayback::advance(double dt) {
+  if (playing_) time_ += dt;
+}
+
+Error TimelineAudioPlayback::read_pcm(float* interleaved, int frames, int channels) {
+  if (!interleaved || frames <= 0)
+    return Error::make(ErrorCode::InvalidArgument, "pcm");
+  const int ch = channels > 0 ? channels : 2;
+  std::memset(interleaved, 0, sizeof(float) * static_cast<size_t>(frames) * ch);
+  if (!session_ || !playing_) return Error::success();
+
+  const int rate = 48000;
+  double win = static_cast<double>(frames) / rate;
+
+  for (const auto& track : session_->tracks()) {
+    if (track.muted) continue;
+    // video tracks may still have audio in media — for audio tracks prefer type
+    for (const auto& clip : track.clips) {
+      if (time_ + win < clip.start || time_ >= clip.start + clip.duration) continue;
+      const MediaInfo* mi = session_->find_media(clip.media_id);
+      if (!mi) continue;
+
+      auto it = decoders_.find(mi->path);
+      if (it == decoders_.end()) {
+        auto dec = std::make_unique<AudioDecoderFFmpeg>(paths_);
+        if (!dec->open(mi->path).ok()) continue;
+        // decode full short media for simplicity
+        if (!dec->decode_all(120.0).ok()) continue;
+        it = decoders_.emplace(mi->path, std::move(dec)).first;
+      }
+      const AudioBuffer& pcm = it->second->buffer();
+      int src_ch = pcm.channels > 0 ? pcm.channels : 2;
+      int src_rate = pcm.sample_rate > 0 ? pcm.sample_rate : 48000;
+
+      for (int i = 0; i < frames; ++i) {
+        double t = time_ + static_cast<double>(i) / rate;
+        if (t < clip.start || t >= clip.start + clip.duration) continue;
+        double local = (t - clip.start) * clip.speed + clip.source_in;
+        size_t si = static_cast<size_t>(local * src_rate);
+        float g = clip.opacity; // reuse as gain proxy 0..1
+        if (g <= 0) g = 1.f;
+        for (int c = 0; c < ch; ++c) {
+          float s = 0.f;
+          size_t idx = si * src_ch + static_cast<size_t>(std::min(c, src_ch - 1));
+          if (idx < pcm.samples.size()) s = pcm.samples[idx];
+          interleaved[i * ch + c] += s * g;
+        }
+      }
+    }
+  }
+  // Keep the pre-insert mix bounded, then process the stateful timeline insert
+  // chain. Float output may exceed unity after time-based effects; the host's
+  // device/output stage is responsible for final conversion/limiting.
+  for (int i = 0; i < frames * ch; ++i)
+    interleaved[i] = std::clamp(interleaved[i], -1.f, 1.f);
+  return effects_.process(interleaved, static_cast<std::size_t>(frames), rate, ch);
+}
+
+Error TimelineAudioPlayback::clip_peaks(const ClipInfo& clip, int bins, std::vector<float>& out) {
+  if (bins <= 0) return Error::make(ErrorCode::InvalidArgument, "bins");
+  out.assign(static_cast<size_t>(bins), 0.f);
+  if (!session_) return Error::make(ErrorCode::NotInitialized, "no session");
+  if (clip.is_text) return Error::make(ErrorCode::InvalidArgument, "text clip has no audio");
+
+  const MediaInfo* mi = session_->find_media(clip.media_id);
+  if (!mi) return Error::make(ErrorCode::FileNotFound, "clip media");
+
+  auto it = decoders_.find(mi->path);
+  if (it == decoders_.end()) {
+    auto dec = std::make_unique<AudioDecoderFFmpeg>(paths_);
+    Error e = dec->open(mi->path);
+    if (!e.ok()) return e;
+    e = dec->decode_all(600.0);
+    if (!e.ok()) return e;
+    it = decoders_.emplace(mi->path, std::move(dec)).first;
+  }
+
+  const AudioBuffer& pcm = it->second->buffer();
+  const int src_ch = pcm.channels > 0 ? pcm.channels : 2;
+  const int src_rate = pcm.sample_rate > 0 ? pcm.sample_rate : 48000;
+  const double duration = clip.duration > 0.01 ? clip.duration : 0.01;
+
+  for (int b = 0; b < bins; ++b) {
+    const double t0 = clip.source_in + duration * static_cast<double>(b) / bins;
+    const double t1 = clip.source_in + duration * static_cast<double>(b + 1) / bins;
+    size_t s0 = static_cast<size_t>(std::max(0.0, t0) * src_rate);
+    size_t s1 = static_cast<size_t>(std::max(0.0, t1) * src_rate);
+    if (s1 <= s0) s1 = s0 + 1;
+    // Bound the work per bin for long clips; a waveform does not need every sample.
+    const size_t stride = std::max<size_t>(1, (s1 - s0) / 4096);
+    float peak = 0.f;
+    bool any = false;
+    for (size_t s = s0; s < s1; s += stride) {
+      for (int c = 0; c < src_ch; ++c) {
+        const size_t idx = s * static_cast<size_t>(src_ch) + static_cast<size_t>(c);
+        if (idx >= pcm.samples.size()) break;
+        any = true;
+        peak = std::max(peak, std::fabs(pcm.samples[idx]));
+      }
+      if (!any) break;
+    }
+    out[static_cast<size_t>(b)] = std::clamp(peak, 0.f, 1.f);
+  }
+  return Error::success();
+}
+
+AudioPlaybackInfo TimelineAudioPlayback::info() const {
+  AudioPlaybackInfo i;
+  i.sample_rate = 48000;
+  i.channels = 2;
+  i.time = time_;
+  i.playing = playing_;
+  if (session_) i.duration = session_->sequence_end();
+  return i;
+}
+
+} // namespace ms
