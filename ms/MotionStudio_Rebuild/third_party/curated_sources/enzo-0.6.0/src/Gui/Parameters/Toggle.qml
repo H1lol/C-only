@@ -1,0 +1,47 @@
+import QtQuick
+import Enzo
+import "../Components"
+import "../Style"
+
+// Left aligned switch, on when the value is non zero.
+Item {
+    id: root
+
+    required property var item
+    implicitHeight: Constants.parameterHeight
+    implicitWidth: switchTrack.width
+
+    Rectangle {
+        id: switchTrack
+
+        width: 38
+        height: 20
+        radius: 10
+        anchors.verticalCenter: parent.verticalCenter
+        color: (root.item && root.item.value) ? Theme.toggle.onColor : Theme.parameter.backgroundColor
+        border.color: Theme.parameter.lineColor
+
+        Rectangle {
+            width: 16
+            height: 16
+            radius: 8
+            anchors.verticalCenter: parent.verticalCenter
+            x: (root.item && root.item.value) ? parent.width - width - 2 : 2
+            color: Theme.var.text
+            Behavior on x { NumberAnimation { duration: 90 } }
+        }
+
+        TapHandler {
+            onTapped: {
+                root.item.beginEdit();
+                root.item.value = root.item.value ? 0 : 1;
+                root.item.commitEdit();
+            }
+        }
+    }
+
+    ParameterContextMenuTrigger {
+        anchors.fill: parent
+        item: root.item
+    }
+}

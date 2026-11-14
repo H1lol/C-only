@@ -1,0 +1,553 @@
+##########################################################################
+#
+#  Copyright (c) 2015, John Haddon. All rights reserved.
+#
+#  Redistribution and use in source and binary forms, with or without
+#  modification, are permitted provided that the following conditions are
+#  met:
+#
+#      * Redistributions of source code must retain the above
+#        copyright notice, this list of conditions and the following
+#        disclaimer.
+#
+#      * Redistributions in binary form must reproduce the above
+#        copyright notice, this list of conditions and the following
+#        disclaimer in the documentation and/or other materials provided with
+#        the distribution.
+#
+#      * Neither the name of John Haddon nor the names of
+#        any other contributors to this software may be used to endorse or
+#        promote products derived from this software without specific prior
+#        written permission.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+#  IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+#  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+#  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+#  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+#  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#  PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#  LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+##########################################################################
+
+import inspect
+import imath
+
+import IECore
+
+import Gaffer
+import GafferTest
+import GafferDispatch
+import GafferDispatchTest
+
+class PythonCommandTest( GafferTest.TestCase ) :
+
+	## \todo Something like his exists in several test cases now. Move it
+	# to a new DispatchTestCase base class? If we do that, then
+	# also use it in DispatcherTest instead of abusing the registry
+	# in setUp().
+	def __dispatcher( self, frameRange = None ) :
+
+		result = GafferDispatchTest.DispatcherTest.TestDispatcher()
+		result["jobsDirectory"].setValue( self.temporaryDirectory() / "jobs" )
+
+		if frameRange is not None :
+			result["framesMode"].setValue( result.FramesMode.CustomRange )
+			result["frameRange"].setValue( frameRange )
+
+		return result
+
+	def testSelf( self ) :
+
+		n = GafferDispatch.PythonCommand()
+		n["command"].setValue( "self.executionCount += 1" )
+
+		n.executionCount = 0
+
+		n["task"].execute()
+		self.assertEqual( n.executionCount, 1 )
+
+		n["task"].execute()
+		self.assertEqual( n.executionCount, 2 )
+
+	def testVariables( self ) :
+
+		n = GafferDispatch.PythonCommand()
+		n["variables"].addChild( Gaffer.NameValuePlug( "testInt", 1 ) )
+		n["variables"].addChild( Gaffer.NameValuePlug( "testFloat", 2.5 ) )
+		n["variables"].addChild( Gaffer.NameValuePlug( "testColor", imath.Color3f( 1, 2, 3 ) ) )
+		n["variables"].addChild( Gaffer.NameValuePlug( "testFloatVector", IECore.FloatVectorData( [ 6, 7 ] ) ) )
+		n["variables"].addChild( Gaffer.NameValuePlug( "testCompoundObject", Gaffer.CompoundObjectPlug() ) )
+		n["variables"].addChild( Gaffer.NameValuePlug( "testObject", Gaffer.ObjectPlug( defaultValue = IECore.NullObject() ) ) )
+		n["variables"].addChild( Gaffer.NameValuePlug( "testObjectVector", Gaffer.ObjectVectorPlug() ) )
+		n["command"].setValue( inspect.cleandoc(
+			"""
+			self.testInt = variables["testInt"]
+			self.testFloat = variables["testFloat"]
+			self.testColor = variables["testColor"]
+			self.testFloatVector = variables["testFloatVector"]
+			self.testCompoundObject = variables["testCompoundObject"]
+			self.testObject = variables["testObject"]
+			self.testObjectVector = variables["testObjectVector"]
+			"""
+		) )
+
+		n["task"].execute()
+
+		self.assertEqual( n.testInt, 1 )
+		self.assertEqual( n.testFloat, 2.5 )
+		self.assertEqual( n.testColor, imath.Color3f( 1, 2, 3 ) )
+		self.assertEqual( n.testFloatVector, IECore.FloatVectorData( [ 6, 7 ] ) )
+		self.assertEqual( n.testCompoundObject, IECore.CompoundObject() )
+		self.assertEqual( n.testObject, IECore.NullObject() )
+		self.assertEqual( n.testObjectVector, IECore.ObjectVector() )
+
+	def testDisabledVariables( self ) :
+
+		n = GafferDispatch.PythonCommand()
+		n["variables"].addChild( Gaffer.NameValuePlug( "testEnabled", 1, defaultEnabled = True ) )
+		n["variables"].addChild( Gaffer.NameValuePlug( "testDisabled", 1, defaultEnabled = False ) )
+		n["variables"].addChild( Gaffer.NameValuePlug( "", 1 ) )
+		n["command"].setValue( inspect.cleandoc(
+			"""
+			assert( "testEnabled" in variables )
+			assert( "testDisabled" not in variables )
+			assert( "" not in variables )
+			"""
+		) )
+
+		n["task"].execute()
+
+	def testContextAccess( self ) :
+
+		n = GafferDispatch.PythonCommand()
+		n["command"].setValue( inspect.cleandoc(
+			"""
+			self.frame = context.getFrame()
+			self.testInt = context['testInt']
+			"""
+		) )
+
+		with Gaffer.Context() as c :
+			c.setFrame( 10 )
+			c["testInt"] = 2
+			n["task"].execute()
+
+		self.assertEqual( n.frame, 10 )
+		self.assertEqual( n.testInt, 2 )
+
+	def testContextAffectsHash( self ) :
+
+		# Hash should be constant if context not
+		# accessed.
+		n = GafferDispatch.PythonCommand()
+		n["command"].setValue( "a = 10")
+
+		with Gaffer.Context() as c :
+
+			h = n["task"].hash()
+
+			c.setTime( 2 )
+			self.assertEqual( n["task"].hash(), h )
+			c.setTime( 3 )
+			self.assertEqual( n["task"].hash(), h )
+
+			c["testInt"] = 10
+			self.assertEqual( n["task"].hash(), h )
+			c["testInt"] = 20
+			self.assertEqual( n["task"].hash(), h )
+
+		# If we access the frame, then we should
+		# be sensitive to the time, but not anything else
+
+		n["command"].setValue( "a = context.getFrame()" )
+
+		with Gaffer.Context() as c :
+
+			c.setTime( 1 )
+			h1 = n["task"].hash()
+
+			c.setTime( 2 )
+			h2 = n["task"].hash()
+
+			c.setTime( 3 )
+			h3 = n["task"].hash()
+
+			self.assertNotEqual( h1, h )
+			self.assertNotEqual( h2, h1 )
+			self.assertNotEqual( h3, h2 )
+			self.assertNotEqual( h3, h1 )
+
+			c["testInt"] = 10
+			self.assertEqual( n["task"].hash(), h3 )
+			c["testInt"] = 20
+			self.assertEqual( n["task"].hash(), h3 )
+
+		# The same should apply if we access the frame
+		# via subscripting rather than the method.
+
+		n["command"].setValue( "a = context['frame']" )
+
+		with Gaffer.Context() as c :
+
+			c.setTime( 1 )
+			h1 = n["task"].hash()
+
+			c.setTime( 2 )
+			h2 = n["task"].hash()
+
+			c.setTime( 3 )
+			h3 = n["task"].hash()
+
+			self.assertNotEqual( h1, h )
+			self.assertNotEqual( h2, h1 )
+			self.assertNotEqual( h3, h2 )
+			self.assertNotEqual( h3, h1 )
+
+			c["testInt"] = 10
+			self.assertEqual( n["task"].hash(), h3 )
+			c["testInt"] = 20
+			self.assertEqual( n["task"].hash(), h3 )
+
+		# Likewise, accessing other variables should
+		# affect the hash.
+
+		n["command"].setValue( "a = context['testInt']" )
+
+		with Gaffer.Context() as c :
+
+			c["testInt"] = 1
+			h1 = n["task"].hash()
+
+			c["testInt"] = 2
+			h2 = n["task"].hash()
+
+			c["testInt"] = 3
+			h3 = n["task"].hash()
+
+			self.assertNotEqual( h2, h1 )
+			self.assertNotEqual( h3, h2 )
+			self.assertNotEqual( h3, h1 )
+
+			c.setFrame( 2 )
+			self.assertEqual( n["task"].hash(), h3 )
+			c.setFrame( 3 )
+			self.assertEqual( n["task"].hash(), h3 )
+
+	def testRequiresSequenceExecution( self ) :
+
+		n = GafferDispatch.PythonCommand()
+		self.assertFalse( n.requiresSequenceExecution() )
+
+		n["framesMode"].setValue( n.FramesMode.Sequence )
+		self.assertTrue( n.requiresSequenceExecution() )
+
+		n["framesMode"].setValue( n.FramesMode.Batch )
+		self.assertFalse( n.requiresSequenceExecution() )
+
+	def testFramesNotAvailableInNonSequenceMode( self ) :
+
+		s = Gaffer.ScriptNode()
+		s["n"] = GafferDispatch.PythonCommand()
+		s["n"]["command"].setValue( "self.frames = frames" )
+
+		s["d"] = self.__dispatcher( frameRange = "1-5" )
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		self.assertRaisesRegex( RuntimeError, "NameError: name 'frames' is not defined", s["d"]["task"].execute )
+
+		s["n"]["dispatcher"]["batchSize"].setValue( 5 )
+		self.assertRaisesRegex( RuntimeError, "NameError: name 'frames' is not defined", s["d"]["task"].execute )
+
+	def testSequenceMode( self ) :
+
+		s = Gaffer.ScriptNode()
+		s["n"] = GafferDispatch.PythonCommand()
+		s["n"]["framesMode"].setValue( GafferDispatch.PythonCommand.FramesMode.Sequence )
+
+		s["n"]["command"].setValue( inspect.cleandoc(
+			"""
+			self.frames = frames
+			try :
+				self.numCalls += 1
+			except AttributeError :
+				self.numCalls = 1
+			"""
+		) )
+
+		s["d"] = self.__dispatcher( frameRange = "1-5" )
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		s["d"]["task"].execute()
+
+		self.assertEqual( s["n"].frames, [ 1, 2, 3, 4, 5 ] )
+		self.assertEqual( s["n"].numCalls, 1 )
+
+	def testSequenceModeVariable( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		s["n"] = GafferDispatch.PythonCommand()
+		s["n"]["framesMode"].setValue( GafferDispatch.PythonCommand.FramesMode.Sequence )
+		s["n"]["variables"].addChild( Gaffer.NameValuePlug( "testInt", 42 ) )
+
+		s["e"] = Gaffer.Expression()
+		s["e"].setExpression( "parent['n']['variables']['NameValuePlug']['value'] = context.getFrame() ** 2;", "python" )
+
+		commandLines = inspect.cleandoc(
+			"""
+			self.testInt = variables["testInt"]
+			self.frames = frames
+			try :
+				self.numCalls += 1
+			except AttributeError :
+				self.numCalls = 1
+			"""
+		).split( "\n" )
+		s["n"]["command"].setValue( "\n".join( commandLines ) )
+
+		s["d"] = self.__dispatcher( frameRange = "1-5" )
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		self.assertRaisesRegex( Exception, "Context has no variable named \"frame\"", s["d"]["task"].execute )
+
+		commandLines = inspect.cleandoc(
+			"""
+			self.testInt = []
+			for f in frames:
+				context.setFrame( f )
+				self.testInt.append( variables['testInt'])
+			"""
+		).split( "\n" ) + commandLines[1:]
+
+		s["n"]["command"].setValue( "\n".join( commandLines ) )
+
+		s["d"]["task"].execute()
+		self.assertEqual( s["n"].testInt, [ 1, 4, 9, 16, 25 ] )
+		self.assertEqual( s["n"].frames, [ 1, 2, 3, 4, 5 ] )
+		self.assertEqual( s["n"].numCalls, 1 )
+
+	def testSequenceModeStaticVariable( self ) :
+
+		# We shouldn't need to set a frame in order to read a variable that doesn't depend on frame
+		s = Gaffer.ScriptNode()
+
+		s["n"] = GafferDispatch.PythonCommand()
+		s["n"]["framesMode"].setValue( GafferDispatch.PythonCommand.FramesMode.Sequence )
+		s["n"]["variables"].addChild( Gaffer.NameValuePlug( "testInt", 42 ) )
+
+		commandLines = inspect.cleandoc(
+			"""
+			self.testInt = variables["testInt"]
+			self.frames = frames
+			try :
+				self.numCalls += 1
+			except AttributeError :
+				self.numCalls = 1
+			"""
+		).split( "\n" )
+		s["n"]["command"].setValue( "\n".join( commandLines ) )
+
+		s["d"] = self.__dispatcher( frameRange = "1-5" )
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		s["d"]["task"].execute()
+		self.assertEqual( s["n"].testInt, 42 )
+		self.assertEqual( s["n"].frames, [ 1, 2, 3, 4, 5 ] )
+		self.assertEqual( s["n"].numCalls, 1 )
+
+	def testBatchMode( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		s["n"] = GafferDispatch.PythonCommand()
+		s["n"]["framesMode"].setValue( GafferDispatch.PythonCommand.FramesMode.Batch )
+		s["n"]["variables"].addChild( Gaffer.NameValuePlug( "testInt", 42 ) )
+		s["n"]["dispatcher"]["batchSize"].setValue( 5 )
+		s["n"].calls = []
+
+		s["n"]["command"].setValue( "self.calls.append( frames )" )
+
+		s["d"] = self.__dispatcher( frameRange = "1-20" )
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		s["d"]["task"].execute()
+		self.assertEqual(
+			s["n"].calls,
+			[
+				[ 1, 2, 3, 4, 5 ],
+				[ 6, 7, 8, 9, 10 ],
+				[ 11, 12, 13, 14, 15 ],
+				[ 16, 17, 18, 19, 20 ]
+			]
+		)
+
+	def testCannotAccessVariablesOutsideFrameRange( self ) :
+
+		# We don't want to allow access to variables outside the frame range,
+		# because that would mean that PythonCommand.hash() was no longer accurate.
+
+		n = GafferDispatch.PythonCommand()
+		n["variables"].addChild( Gaffer.NameValuePlug( "testInt", 1 ) )
+		n["command"].setValue( inspect.cleandoc(
+			"""
+			context.setFrame( context.getFrame() + 1 )
+			self.testInt = variables["testInt"]
+			"""
+		) )
+
+		self.assertRaisesRegex( Exception, "Cannot access variables at frame outside range specified for PythonCommand", n.execute )
+
+	def testNonSequenceDispatch( self ) :
+
+		s = Gaffer.ScriptNode()
+		s["n"] = GafferDispatch.PythonCommand()
+		s["n"]["command"].setValue( inspect.cleandoc(
+			"""
+			try :
+				self.numCalls += 1
+			except AttributeError :
+				self.numCalls = 1
+			"""
+		) )
+
+		s["d"] = self.__dispatcher()
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		s["d"]["task"].execute()
+
+		self.assertEqual( s["n"].numCalls, 1 )
+
+	def testStringSubstitutions( self ) :
+
+		s = Gaffer.ScriptNode()
+		s["n"] = GafferDispatch.PythonCommand()
+		s["n"]["variables"].addChild( Gaffer.NameValuePlug( "frameString", "###" ) )
+		s["n"]["command"].setValue( 'self.frameString = variables["frameString"]' )
+
+		with Gaffer.Context() as c :
+			c.setFrame( 10 )
+			s["n"]["task"].execute()
+
+		self.assertEqual( s["n"].frameString, "010" )
+
+	def testComments( self ) :
+
+		c = GafferDispatch.PythonCommand()
+		c["command"].setValue( "self.test = 10 # this is a comment" )
+
+		c["task"].execute()
+		self.assertEqual( c.test, 10 )
+
+	def testImath( self ) :
+
+		c = GafferDispatch.PythonCommand()
+		c["command"].setValue( "self.test = imath.V2i( 1, 2 )" )
+
+		c["task"].execute()
+		self.assertEqual( c.test, imath.V2i( 1, 2 ) )
+
+	def testEmptyCommand( self ) :
+
+		c = GafferDispatch.PythonCommand()
+		self.assertEqual( c["command"].getValue(), "" )
+		self.assertEqual( c["task"].hash(), IECore.MurmurHash() )
+
+	def testContextGetNone( self ) :
+
+		command = GafferDispatch.PythonCommand()
+		command["command"].setValue( "print( context.get( 'iAmNotHere' ) )" )
+
+		with Gaffer.Context() as c :
+			h = command["task"].hash()
+			c["iAmNotHere"] = 10
+			self.assertNotEqual( command["task"].hash(), h )
+
+	def testAlternateMissingContextVariables( self ) :
+
+		command = GafferDispatch.PythonCommand()
+		command["command"].setValue( "print( 'a : ', context.get( 'a' ), 'b : ', context.get( 'b' ) )" )
+
+		neitherHash = command["task"].hash()
+
+		with Gaffer.Context() as c :
+			c["a"] = 10
+			aHash = command["task"].hash()
+
+		with Gaffer.Context() as c :
+			c["b"] = 10
+			bHash = command["task"].hash()
+			c["a"] = 10
+			bothHash = command["task"].hash()
+
+		self.assertEqual( len( { str( x ) for x in ( neitherHash, aHash, bHash, bothHash ) } ), 4 )
+
+	def testContextModificationsDontLeak( self ) :
+
+		command = GafferDispatch.PythonCommand()
+		command["command"].setValue( "context.setFrame( 2 )" )
+		command["task"].execute()
+
+		self.assertEqual( Gaffer.Context.current(), Gaffer.Context() )
+
+	def testVariablesRepr( self ) :
+
+		command = GafferDispatch.PythonCommand()
+		command["variables"].addChild( Gaffer.NameValuePlug( "testKey", "testValue" ) )
+		command["command"].setValue( "self.variablesStr = str( variables ); self.variablesRepr = repr( variables )" )
+		command["task"].execute()
+
+		self.assertEqual( command.variablesStr, str( { "testKey" : "testValue" } ) )
+		self.assertEqual( command.variablesRepr, repr( { "testKey" : "testValue" } ) )
+
+	def testIsolated( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		s["n"] = GafferDispatch.PythonCommand()
+		s["n"]["dispatcher"]["isolated"].setValue( True )
+		s["n"]["command"].setValue( inspect.cleandoc(
+			"""
+			with open( variables["fileName"], "w" ) as outFile :
+				outFile.write( str( variables["sum"] ) )
+			"""
+		) )
+		s["n"]["variables"].addChild( Gaffer.NameValuePlug( "fileName", ( self.temporaryDirectory() / "pythonCommand.txt" ).as_posix(), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
+		s["n"]["variables"].addChild( Gaffer.NameValuePlug( "sum", 2, "sum", flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
+
+		s["e"] = Gaffer.Expression()
+		s["e"].setExpression( 'parent["n"]["variables"]["sum"]["value"] = 2 + 2' )
+
+		s["d"] = GafferDispatch.LocalDispatcher( jobPool = GafferDispatch.LocalDispatcher.JobPool() )
+		s["d"]["jobsDirectory"].setValue( self.temporaryDirectory() )
+		s["d"]["executeInBackground"].setValue( True )
+		s["d"]["framesMode"].setValue( s["d"].FramesMode.CurrentFrame )
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+
+		s["d"]["task"].execute()
+		s["d"].jobPool().waitForAll()
+
+		with open( self.temporaryDirectory() / "pythonCommand.txt" ) as inFile :
+			self.assertEqual( inFile.readlines()[0].strip(), "4" )
+
+	def testScriptNodeExecute( self ) :
+
+		# PythonCommand that calls `ScriptNode.execute()` to add a plug to the script's
+		# `variables` plug. This in turn triggers `ScriptNode::plugSet()` to transfer
+		# the plug's value into the script's context. We _don't_ want any substitutions
+		# to be applied to the value at this point, which means `ScriptNode::execute()`
+		# must scope a ThreadState without the current PythonCommand's `Process`.
+
+		pythonCommand = GafferDispatch.PythonCommand()
+		pythonCommand["command"].setValue( inspect.cleandoc(
+			"""
+			import Gaffer
+			toExecute = '''
+			import Gaffer
+			parent["variables"].addChild( Gaffer.NameValuePlug( "test", "testing #", flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
+			'''
+			script = Gaffer.ScriptNode()
+			script.execute( toExecute )
+			assert( script.context()["test"] == "testing #" )
+			"""
+		) )
+
+		pythonCommand["task"].execute()

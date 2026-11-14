@@ -1,0 +1,2041 @@
+//////////////////////////////////////////////////////////////////////////
+//
+//  Copyright (c) 2014, Image Engine Design Inc. All rights reserved.
+//
+//  Redistribution and use in source and binary forms, with or without
+//  modification, are permitted provided that the following conditions are
+//  met:
+//
+//      * Redistributions of source code must retain the above
+//        copyright notice, this list of conditions and the following
+//        disclaimer.
+//
+//      * Redistributions in binary form must reproduce the above
+//        copyright notice, this list of conditions and the following
+//        disclaimer in the documentation and/or other materials provided with
+//        the distribution.
+//
+//      * Neither the name of John Haddon nor the names of
+//        any other contributors to this software may be used to endorse or
+//        promote products derived from this software without specific prior
+//        written permission.
+//
+//  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+//  IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+//  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+//  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+//  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+//  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+//  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+//  PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+//  LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+//  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+//  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+//////////////////////////////////////////////////////////////////////////
+
+#include "GafferScene/Private/RendererAlgo.h"
+
+#include "GafferScene/Capsule.h"
+#include "GafferScene/Private/IECoreScenePreview/Renderer.h"
+#include "GafferScene/Private/PointInstancerAlgo.h"
+#include "GafferScene/SceneAlgo.h"
+#include "GafferScene/SceneProcessor.h"
+#include "GafferScene/SetAlgo.h"
+#include "GafferScene/RenderManifest.h"
+
+#include "Gaffer/Context.h"
+#include "Gaffer/Metadata.h"
+#include "Gaffer/ScriptNode.h"
+#include "Gaffer/Version.h"
+
+#include "IECoreScene/Camera.h"
+#include "IECoreScene/ClippingPlane.h"
+#include "IECoreScene/CoordinateSystem.h"
+#include "IECoreScene/Output.h"
+#include "IECoreScene/Primitive.h"
+#include "IECoreScene/PointInstancer.h"
+#include "IECoreScene/Shader.h"
+#include "IECoreScene/VisibleRenderable.h"
+
+#include "IECore/Data.h"
+#include "IECore/Interpolator.h"
+#include "IECore/NullObject.h"
+
+#include "boost/algorithm/string/predicate.hpp"
+
+#include "tbb/blocked_range.h"
+#include "tbb/parallel_reduce.h"
+#include "tbb/parallel_for.h"
+#include "tbb/task.h"
+
+#include "fmt/format.h"
+
+#include <filesystem>
+
+using namespace std;
+using namespace Imath;
+using namespace IECore;
+using namespace IECoreScene;
+using namespace Gaffer;
+using namespace GafferScene;
+
+//////////////////////////////////////////////////////////////////////////
+// RenderOptions
+//////////////////////////////////////////////////////////////////////////
+
+namespace
+{
+
+const InternedString g_transformBlurOptionName( "option:render:transformBlur" );
+const InternedString g_deformationBlurOptionName( "option:render:deformationBlur" );
+const InternedString g_shutterOptionName( "option:render:shutter" );
+const InternedString g_includedPurposesOptionName( "option:render:includedPurposes" );
+const InternedString g_purposeAttributeName( "usd:purpose" );
+const InternedString g_frameOptionName( "frame" );
+const InternedString g_cameraOptionLegacyName( "option:render:camera" );
+const InternedString g_renderManShutterOptionName( "ri:Ri:Shutter" );
+const InternedString g_renderManifestFilePathOptionName( "option:render:manifestFilePath" );
+
+const ConstStringVectorDataPtr g_defaultIncludedPurposes( new StringVectorData( { "default", "render" } ) );
+const std::string g_defaultPurpose( "default" );
+
+const std::string g_optionPrefix( "option:" );
+
+InternedString optionName( const InternedString &globalsName )
+{
+	if( globalsName == g_cameraOptionLegacyName )
+	{
+		/// \todo Just rename the options themselves in StandardOptions and remove this?
+		return globalsName.string().substr( g_optionPrefix.size() + 7 );
+	}
+
+	return globalsName.string().substr( g_optionPrefix.size() );
+}
+
+} // namespace
+
+namespace GafferScene::Private::RendererAlgo
+{
+
+RenderOptions::RenderOptions()
+	:	globals( new CompoundObject ),
+		transformBlur( false ),
+		deformationBlur( false ),
+		shutter( V2f( -0.25, 0.25 ) ),
+		includedPurposes( g_defaultIncludedPurposes )
+{
+}
+
+RenderOptions::RenderOptions( const ScenePlug *scene )
+{
+	globals = scene->globals();
+
+	const BoolData *transformBlurData = globals->member<BoolData>( g_transformBlurOptionName );
+	transformBlur = transformBlurData ? transformBlurData->readable() : false;
+
+	const BoolData *deformationBlurData = globals->member<BoolData>( g_deformationBlurOptionName );
+	deformationBlur = deformationBlurData ? deformationBlurData->readable() : false;
+
+	shutter = SceneAlgo::shutter( globals.get(), scene );
+
+	const StringVectorData *includedPurposesData = globals->member<StringVectorData>( g_includedPurposesOptionName );
+	includedPurposes = includedPurposesData ? includedPurposesData : g_defaultIncludedPurposes;
+}
+
+bool RenderOptions::operator==( const RenderOptions &other ) const
+{
+	// No need to test other fields because they are all derived directly
+	// from the globals.
+	return *globals == *other.globals && shutter == other.shutter;
+}
+
+bool RenderOptions::purposeIncluded( const CompoundObject *attributes ) const
+{
+	const auto purposeData = attributes->member<StringData>( g_purposeAttributeName );
+	const std::string &purpose = purposeData ? purposeData->readable() : g_defaultPurpose;
+	const vector<string> &purposes = includedPurposes->readable();
+	return std::find( purposes.begin(), purposes.end(), purpose ) != purposes.end();
+}
+
+void RenderOptions::outputOptions( IECoreScenePreview::Renderer *renderer, const RenderOptions *previousRenderOptions )
+{
+	// Output the current frame.
+
+	renderer->option( g_frameOptionName, new IntData( (int)round( Context::current()->getFrame() ) ) );
+
+	if( boost::starts_with( renderer->name().string(), "RenderMan" ) )
+	{
+		// Work around RenderMan limitations. Riley needs the `Ri:Shutter`
+		// option to be set on creation, but we would normally only pass it
+		// along later with the render camera.
+		ConstV2fDataPtr shutterData = new V2fData( shutter );
+		renderer->option( g_renderManShutterOptionName, shutterData.get() );
+	}
+
+	// Output anything that has changed or was added since last time.
+	CompoundObject::ObjectMap::const_iterator it, eIt;
+	for( it = globals->members().begin(), eIt = globals->members().end(); it != eIt; ++it )
+	{
+		if( !boost::starts_with( it->first.string(), g_optionPrefix ) )
+		{
+			continue;
+		}
+		if( const Object *object = it->second.get() )
+		{
+			bool changedOrAdded = true;
+			if( previousRenderOptions )
+			{
+				if( const Object *previousObject = previousRenderOptions->globals->member<Object>( it->first ) )
+				{
+					changedOrAdded = *previousObject != *object;
+				}
+			}
+			if( changedOrAdded )
+			{
+				renderer->option( optionName( it->first ), object );
+			}
+		}
+		else
+		{
+			throw IECore::Exception( "Global \"" + it->first.string() + "\" is null" );
+		}
+	}
+
+	// Remove anything that has been removed since last time.
+
+	if( !previousRenderOptions )
+	{
+		return;
+	}
+
+	for( it = previousRenderOptions->globals->members().begin(), eIt = previousRenderOptions->globals->members().end(); it != eIt; ++it )
+	{
+		if( !boost::starts_with( it->first.string(), g_optionPrefix ) )
+		{
+			continue;
+		}
+		if( it->second.get() )
+		{
+			if( !globals->member<Object>( it->first ) )
+			{
+				renderer->option( optionName( it->first ), nullptr );
+			}
+		}
+	}
+}
+
+} // namespace GafferScene::Private::RendererAlgo
+
+//////////////////////////////////////////////////////////////////////////
+// RendererAlgo implementation
+//////////////////////////////////////////////////////////////////////////
+
+namespace
+{
+
+InternedString g_transformBlurAttributeName( "gaffer:transformBlur" );
+InternedString g_transformBlurSegmentsAttributeName( "gaffer:transformBlurSegments" );
+InternedString g_deformationBlurAttributeName( "gaffer:deformationBlur" );
+InternedString g_deformationBlurSegmentsAttributeName( "gaffer:deformationBlurSegments" );
+
+BoolDataPtr g_true = new BoolData( true );
+BoolDataPtr g_false = new BoolData( false );
+
+} // namespace
+
+namespace GafferScene
+{
+
+namespace Private
+{
+
+namespace RendererAlgo
+{
+
+std::string renderID( const IECoreScenePreview::Renderer *renderer )
+{
+	return fmt::format( "{}:{}", getpid(), reinterpret_cast<uintptr_t>( renderer ) );
+}
+
+void createOutputDirectories( const IECore::CompoundObject *globals )
+{
+	for( const auto &m : globals->members() )
+	{
+		if( const Output *o = runTimeCast<Output>( m.second.get() ) )
+		{
+			const std::filesystem::path fileName( o->getName() );
+			const std::filesystem::path directory = fileName.parent_path();
+			if( !directory.empty() )
+			{
+				std::filesystem::create_directories( directory );
+			}
+		}
+	}
+}
+
+
+bool hasIDOutput( const IECore::CompoundObject *globals )
+{
+	static const std::string outputPrefix( "output:" );
+	static const std::string idData( "float id" );
+	CompoundObject::ObjectMap::const_iterator it, eIt;
+	for( it = globals->members().begin(), eIt = globals->members().end(); it != eIt; ++it )
+	{
+		if( !boost::starts_with( it->first.string(), outputPrefix ) )
+		{
+			continue;
+		}
+		if( const Output *output = runTimeCast<Output>( it->second.get() ) )
+		{
+			if( output->getData() == idData )
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+bool hasInstanceIDOutput( const IECore::CompoundObject *globals )
+{
+	static const std::string outputPrefix( "output:" );
+	static const std::string instanceIDData( "float instanceID" );
+	CompoundObject::ObjectMap::const_iterator it, eIt;
+	for( it = globals->members().begin(), eIt = globals->members().end(); it != eIt; ++it )
+	{
+		if( !boost::starts_with( it->first.string(), outputPrefix ) )
+		{
+			continue;
+		}
+		if( const Output *output = runTimeCast<Output>( it->second.get() ) )
+		{
+			if( output->getData() == instanceIDData )
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+std::string renderManifestFilePath( const IECore::CompoundObject *globals )
+{
+	const StringData *renderManifestFilePathData = globals->member<StringData>( g_renderManifestFilePathOptionName );
+	if( !renderManifestFilePathData )
+	{
+		return "";
+	}
+
+	return renderManifestFilePathData->readable();
+}
+
+bool motionTimes( bool motionBlur, const V2f &shutter, const CompoundObject *attributes, const InternedString &attributeName, const InternedString &segmentsAttributeName, IECoreScenePreview::Renderer::SampleTimes &times )
+{
+	unsigned int segments = 0;
+	if( motionBlur )
+	{
+		const BoolData *enabled = attributes->member<BoolData>( attributeName );
+		if( !enabled || enabled->readable() ) // Default enabled if not found
+		{
+			const IntData *d = attributes->member<IntData>( segmentsAttributeName );
+			segments = d ? std::max( 0, d->readable() ) : 1;
+		}
+	}
+
+	bool changed = false;
+	if( segments == 0 )
+	{
+		changed = times.size() != 0;
+		times.clear();
+		return changed;
+	}
+
+	if( times.size() != segments + 1 )
+	{
+		changed = true;
+		times.resize( segments + 1 );
+	}
+	for( size_t i = 0; i < segments + 1; ++i )
+	{
+		float t = lerp( shutter[0], shutter[1], (float)i / (float)segments );
+		if( times[i] != t )
+		{
+			changed = true;
+			times[i] = t;
+		}
+	}
+	return changed;
+}
+
+bool transformMotionTimes( const RenderOptions &renderOptions, const CompoundObject *attributes, IECoreScenePreview::Renderer::SampleTimes &times )
+{
+	return motionTimes( renderOptions.transformBlur, renderOptions.shutter, attributes, g_transformBlurAttributeName, g_transformBlurSegmentsAttributeName, times );
+}
+
+bool deformationMotionTimes( const RenderOptions &renderOptions, const CompoundObject *attributes, IECoreScenePreview::Renderer::SampleTimes &times )
+{
+	return motionTimes( renderOptions.deformationBlur, renderOptions.shutter, attributes, g_deformationBlurAttributeName, g_deformationBlurSegmentsAttributeName, times );
+}
+
+M44f SampledTransform::transformAtTime( float time ) const
+{
+	if( samples.empty() )
+	{
+		return M44f();
+	}
+	else if( samples.size() == 1 )
+	{
+		return samples[0];
+	}
+
+	auto t1 = lower_bound( sampleTimes.begin(), sampleTimes.end(), time );
+	if( t1 == sampleTimes.begin() || *t1 == time )
+	{
+		return samples[t1 - sampleTimes.begin()];
+	}
+	else
+	{
+		auto t0 = t1 - 1;
+		const float l = lerpfactor( time, *t0, *t1 );
+		const M44f &s0 = samples[t0 - sampleTimes.begin()];
+		const M44f &s1 = samples[t1 - sampleTimes.begin()];
+		M44f result;
+		LinearInterpolator<M44f>()( s0, s1, l, result );
+		return result;
+	}
+}
+
+void SampledTransform::concatenate( const SampledTransform &child )
+{
+	if( child.samples.empty() )
+	{
+		return;
+	}
+
+	if( samples.empty() )
+	{
+		*this = child;
+		return;
+	}
+
+	if( child.samples.size() == 1 )
+	{
+		for( auto &sample : samples )
+		{
+			sample = child.samples.front() * sample;
+		}
+	}
+	else
+	{
+		IECoreScenePreview::Renderer::TransformSamples updatedSamples;
+		updatedSamples.reserve( child.samples.size() );
+
+		IECoreScenePreview::Renderer::SampleTimes updatedSampleTimes;
+		updatedSampleTimes.reserve( child.samples.size() );
+
+		auto s = child.samples.begin();
+		for( const float sampleTime : child.sampleTimes )
+		{
+			updatedSamples.push_back( *s++ * transformAtTime( sampleTime ) );
+			updatedSampleTimes.push_back( sampleTime );
+		}
+
+		samples = updatedSamples;
+		sampleTimes = updatedSampleTimes;
+	}
+}
+
+std::optional<SampledTransform> transformSamples( const M44fPlug *transformPlug, const IECoreScenePreview::Renderer::SampleTimes &sampleTimes, IECore::MurmurHash *hash )
+{
+	IECoreScenePreview::Renderer::Samples<IECore::MurmurHash> sampleHashes;
+	if( !sampleTimes.size() )
+	{
+		sampleHashes.push_back( transformPlug->hash() );
+	}
+	else
+	{
+		Context::EditableScope timeContext( Context::current() );
+
+		bool moving = false;
+		sampleHashes.reserve( sampleTimes.size() );
+		for( const float sampleTime : sampleTimes )
+		{
+			timeContext.setFrame( sampleTime );
+			IECore::MurmurHash h = transformPlug->hash();
+			if( !moving && !sampleHashes.empty() && h != sampleHashes.front() )
+			{
+				moving = true;
+			}
+			sampleHashes.push_back( h );
+		}
+
+		if( !moving )
+		{
+			sampleHashes.resize( 1 );
+		}
+	}
+
+	IECore::MurmurHash combinedHash;
+	if( hash )
+	{
+		if( sampleHashes.size() == 1 )
+		{
+			combinedHash = sampleHashes[0];
+		}
+		else
+		{
+			for( const IECore::MurmurHash &h : sampleHashes )
+			{
+				combinedHash.append( h );
+			}
+		}
+
+		if( combinedHash == *hash )
+		{
+			return std::nullopt;
+		}
+	}
+
+	SampledTransform result;
+
+	if( !sampleTimes.size() )
+	{
+		// No shutter to sample over
+		result.samples.push_back( transformPlug->getValue( &sampleHashes[0]) );
+		result.sampleTimes.push_back( Context::current()->getFrame() );
+	}
+	else if( sampleHashes.size() == 1 )
+	{
+		// We have a shutter, but all the samples hash the same, so just evaluate one
+		Context::EditableScope timeContext( Context::current() );
+		timeContext.setFrame( sampleTimes[0] );
+		result.samples.push_back( transformPlug->getValue( &sampleHashes[0]) );
+		result.sampleTimes.push_back( sampleTimes[0] );
+	}
+	else
+	{
+		// Motion case
+		Context::EditableScope timeContext( Context::current() );
+		bool moving = false;
+		result.samples.reserve( sampleTimes.size() );
+		result.sampleTimes.reserve( sampleTimes.size() );
+		for( size_t i = 0; i < sampleTimes.size(); i++ )
+		{
+			timeContext.setFrame( sampleTimes[i] );
+			const M44f m = transformPlug->getValue( &sampleHashes[i] );
+			if( !moving && !result.samples.empty() && m != result.samples.front() )
+			{
+				moving = true;
+			}
+			result.samples.push_back( m );
+			result.sampleTimes.push_back( sampleTimes[i] );
+		}
+
+		if( !moving )
+		{
+			result.samples.resize( 1 );
+			result.sampleTimes.resize( 1 );
+		}
+	}
+
+	if( hash )
+	{
+		*hash = combinedHash;
+	}
+
+	return result;
+}
+
+std::optional<SampledObject> objectSamples( const Gaffer::ObjectPlug *objectPlug, const IECoreScenePreview::Renderer::SampleTimes &sampleTimes, ObjectHash *hash )
+{
+	IECoreScenePreview::Renderer::Samples<IECore::MurmurHash> sampleHashes;
+	if( !sampleTimes.size() )
+	{
+		sampleHashes.push_back( objectPlug->hash() );
+	}
+	else
+	{
+		const Context *frameContext = Context::current();
+		Context::EditableScope timeContext( frameContext );
+
+		bool moving = false;
+		sampleHashes.reserve( sampleTimes.size() );
+		for( const float sampleTime : sampleTimes )
+		{
+			timeContext.setFrame( sampleTime );
+
+			const MurmurHash objectHash = objectPlug->hash();
+			if( !moving && !sampleHashes.empty() && objectHash != sampleHashes.front() )
+			{
+				moving = true;
+			}
+			sampleHashes.push_back( objectHash );
+		}
+
+		if( !moving )
+		{
+			sampleHashes.resize( 1 );
+		}
+	}
+
+	IECore::MurmurHash combinedHash;
+	if( hash )
+	{
+		if( sampleHashes.size() == 1 )
+		{
+			combinedHash = sampleHashes[0];
+		}
+		else
+		{
+			for( const IECore::MurmurHash &h : sampleHashes )
+			{
+				combinedHash.append( h );
+			}
+		}
+
+		if( hash->isPointInstancer )
+		{
+			combinedHash.append( PointInstancerAlgo::prototypesHash( objectPlug->parent<ScenePlug>() ) );
+		}
+
+		if( combinedHash == hash->value )
+		{
+			return std::nullopt;
+		}
+	}
+
+	SampledObject result;
+
+	if( sampleHashes.size() == 1 )
+	{
+		// Static case
+		ConstObjectPtr object;
+		float sampleTime;
+		if( !sampleTimes.size() )
+		{
+			// No shutter, just hash on frame
+			object = objectPlug->getValue( &sampleHashes[0]);
+			sampleTime = Context::current()->getFrame();
+		}
+		else
+		{
+			// We have a shutter, but all the samples hash the same, so just evaluate one
+			Context::EditableScope timeContext( Context::current() );
+			timeContext.setFrame( sampleTimes[0] );
+			object = objectPlug->getValue( &sampleHashes[0]);
+			sampleTime = sampleTimes[0];
+		}
+
+		if(
+			runTimeCast<const VisibleRenderable>( object.get() ) ||
+			runTimeCast<const Camera>( object.get() ) ||
+			runTimeCast<const CoordinateSystem>( object.get() )
+		)
+		{
+			result.samples.push_back( object.get() );
+			result.sampleTimes.push_back( sampleTime );
+		}
+	}
+	else
+	{
+		// Motion case
+		const Context *frameContext = Context::current();
+		Context::EditableScope timeContext( frameContext );
+
+		result.samples.reserve( sampleTimes.size() );
+		for( size_t i = 0; i < sampleTimes.size(); i++ )
+		{
+			timeContext.setFrame( sampleTimes[i] );
+
+			ConstObjectPtr object = objectPlug->getValue( &sampleHashes[i] );
+
+			if(
+				runTimeCast<const Primitive>( object.get() ) ||
+				runTimeCast<const Camera>( object.get() )
+			)
+			{
+				result.samples.push_back( object.get() );
+				result.sampleTimes.push_back( sampleTimes[i] );
+			}
+			else if(
+				runTimeCast<const VisibleRenderable>( object.get() ) ||
+				runTimeCast<const CoordinateSystem>( object.get() )
+			)
+			{
+				// We can't motion blur these chappies, so just take the one
+				// sample. This must be at the frame time rather than shutter
+				// open time so that non-interpolable objects appear in the right
+				// position relative to non-blurred objects.
+				Context::Scope frameScope( frameContext );
+
+				// Use the hash from the shutter samples. This is technically incorrect, since we are going
+				// to evaluate the object on-frame, and the on-frame sample may not have been included in the
+				// sample times - but it does mean the hash will match if we are called again without the object
+				// changing. We're seeing a 2X speedup from this, so we've decided it's worthwhile.
+				//
+				// The user facing inconsistency is that we should update whenever the on-frame data
+				// we are using changes, but if the user changes the on-frame result, while keeping the data
+				// the same at the shutter samples ( using an odd number of segments with a centered shutter,
+				// so the shutter samples don't include the on-frame time ), then we would fail to update
+				// until the render is restarted. It seems quite unlikely a user will ever actually do this
+				// ( in any normal operation, when you change something, you change it for a frame or more
+				// at a time )
+				if( hash )
+				{
+					hash->value = combinedHash;
+					hash->isPointInstancer = false;
+				}
+
+				return objectSamples( objectPlug, {} );
+			}
+			else
+			{
+				// We don't even know what these chappies are, so
+				// don't take any samples at all.
+				break;
+			}
+		}
+	}
+
+	if( hash )
+	{
+		hash->value = combinedHash;
+		const bool isPointInstancer = result.samples.size() && result.samples[0]->isInstanceOf( PointInstancer::staticTypeId() );
+		if( isPointInstancer )
+		{
+			if( !hash->isPointInstancer )
+			{
+				// Hash was either uninitialised, or we didn't find a PointInstancer last time round.
+				hash->value.append( PointInstancerAlgo::prototypesHash( objectPlug->parent<ScenePlug>() ) );
+			}
+			else
+			{
+				// We already applied the `prototypesHash` above, when testing for early return.
+			}
+		}
+		hash->isPointInstancer = isPointInstancer;
+	}
+
+	return result;
+}
+
+IECoreScenePreview::Renderer::ObjectInterfacePtr outputObject( const std::string &name, const SampledObject &sampledObject, const IECoreScenePreview::Renderer::AttributesInterface *attributes, const RenderOptions &renderOptions, const ScenePlug *scene, IECoreScenePreview::Renderer *renderer )
+{
+	if( sampledObject.samples.size() == 1 )
+	{
+		if( auto capsule = runTimeCast<const Capsule>( sampledObject.samples[0].get() ) )
+		{
+			CapsulePtr capsuleCopy = capsule->copy();
+			capsuleCopy->setRenderOptions( renderOptions );
+			return renderer->object( name, { capsuleCopy }, sampledObject.sampleTimes, attributes );
+		}
+	}
+
+	if( runTimeCast<const IECoreScene::PointInstancer>( sampledObject.samples[0].get() ) )
+	{
+		IECoreScenePreview::Renderer::PointInstancerSamples samples = IECoreScenePreview::Renderer::staticSamplesCast<IECoreScene::ConstPointInstancerPtr>( sampledObject.samples );
+		for( auto &sample : samples )
+		{
+			// We flatten PointInstancers for several reasons :
+			//
+			// - Not all our Renderer backends implement `procedural()`, which is currently
+			//   our only mechanism for instancing a group rather than a single primitive.
+			// - Flattening vs hierarchical instancing has memory and performance implications
+			//   that are highly situation specific. Therefore we prefer the user to make an
+			//   informed decision and use the Encapsulate node on the prototypes if hierarchical
+			//   instancing is preferred (and the backend supports it).
+			// - Users often unwittingly make prototypes with multiple locations but only
+			//   a single renderable object - for example by having an intermediate transform
+			//   or separate `proxy` and `render` geometry. Flattening this reduces to simple
+			//   single-primitive instancing without the overhead of additional hierarchy.
+			sample = PointInstancerAlgo::flatten( sample.get(), renderOptions, scene );
+		}
+
+		auto prototypes = PointInstancerAlgo::prototypes( samples[0].get(), renderOptions, scene, renderer );
+		if( prototypes.empty() )
+		{
+			// Warning already emitted by `pointInstancerPrototypes()`.
+			return nullptr;
+		}
+		return renderer->pointInstancer( name, samples, sampledObject.sampleTimes, prototypes, attributes );
+	}
+
+	return renderer->object( name, sampledObject.samples, sampledObject.sampleTimes, attributes );
+}
+
+} // namespace RendererAlgo
+
+} // namespace Private
+
+} // namespace GafferScene
+
+//////////////////////////////////////////////////////////////////////////
+// RenderSets class
+//////////////////////////////////////////////////////////////////////////
+
+namespace
+{
+
+InternedString g_camerasSetName( "__cameras" );
+InternedString g_lightsSetName( "__lights" );
+InternedString g_lightFiltersSetName( "__lightFilters" );
+InternedString g_soloLightsSetName( "soloLights" );
+InternedString g_setsAttributeName( "sets" );
+InternedString g_lightMuteAttributeName( "light:mute" );
+std::string g_renderSetsPrefix( "render:" );
+ConstInternedStringVectorDataPtr g_emptySetsAttribute = new InternedStringVectorData;
+
+} // namespace
+
+namespace GafferScene
+{
+
+namespace Private
+{
+
+namespace RendererAlgo
+{
+
+struct RenderSets::Updater
+{
+
+	Updater( const ScenePlug *scene, const ThreadState &threadState, RenderSets &renderSets, unsigned changed )
+		:	changed( changed ), m_scene( scene ), m_threadState( threadState ), m_renderSets( renderSets )
+	{
+	}
+
+	Updater( const Updater &updater, tbb::split )
+		:	changed( NothingChanged ), m_scene( updater.m_scene ), m_threadState( updater.m_threadState ), m_renderSets( updater.m_renderSets )
+	{
+	}
+
+	void operator()( const tbb::blocked_range<size_t> &r )
+	{
+		ScenePlug::SetScope setScope( m_threadState );
+
+		for( size_t i=r.begin(); i!=r.end(); ++i )
+		{
+			Set *s = nullptr;
+			InternedString n;
+			unsigned potentialChange = NothingChanged;
+			if( i < m_renderSets.m_sets.size() )
+			{
+				Sets::iterator it = m_renderSets.m_sets.begin() + i;
+				s = &(it->second);
+				n = it->first;
+				potentialChange = AttributesChanged;
+			}
+			else if( i == m_renderSets.m_sets.size() )
+			{
+				s = &m_renderSets.m_camerasSet;
+				n = g_camerasSetName;
+				potentialChange = CamerasSetChanged;
+			}
+			else if( i == m_renderSets.m_sets.size() + 1 )
+			{
+				s = &m_renderSets.m_lightFiltersSet;
+				n = g_lightFiltersSetName;
+				potentialChange = LightFiltersSetChanged;
+			}
+			else if( i == m_renderSets.m_sets.size() + 2 )
+			{
+				s = &m_renderSets.m_lightsSet;
+				n = g_lightsSetName;
+				potentialChange = LightsSetChanged;
+			}
+			else
+			{
+				assert( i == m_renderSets.m_sets.size() + 3 );
+				s = &m_renderSets.m_soloLightsSet;
+				n = g_soloLightsSetName;
+				potentialChange = AttributesChanged;
+			}
+
+			setScope.setSetName( &n );
+			const IECore::MurmurHash &hash = m_scene->setPlug()->hash();
+			if( s->hash != hash )
+			{
+				bool wasEmpty = s->set.isEmpty();
+
+				s->set = m_scene->setPlug()->getValue( &hash )->readable();
+				s->hash = hash;
+				if( !( wasEmpty && s->set.isEmpty() ) )
+				{
+					changed |= potentialChange;
+				}
+			}
+		}
+	}
+
+	void join( Updater &rhs )
+	{
+		changed |= rhs.changed;
+	}
+
+	unsigned changed;
+
+	private :
+
+		const ScenePlug *m_scene;
+		const ThreadState &m_threadState;
+		RenderSets &m_renderSets;
+
+};
+
+RenderSets::RenderSets()
+{
+}
+
+RenderSets::RenderSets( const ScenePlug *scene )
+{
+	m_camerasSet.unprefixedName = g_camerasSetName;
+	m_lightsSet.unprefixedName = g_lightsSetName;
+	m_lightFiltersSet.unprefixedName = g_lightFiltersSetName;
+	m_soloLightsSet.unprefixedName = g_soloLightsSetName;
+	update( scene );
+}
+
+unsigned RenderSets::update( const ScenePlug *scene )
+{
+	unsigned changed = NothingChanged;
+
+	// Figure out the names of the sets we want, and make
+	// sure we have an entry for each of them in m_renderSets.
+
+	ConstInternedStringVectorDataPtr setNamesData = scene->setNamesPlug()->getValue();
+	const vector<InternedString> &setNames = setNamesData->readable();
+
+	for( vector<InternedString>::const_iterator it = setNames.begin(), eIt = setNames.end(); it != eIt; ++it )
+	{
+		if( boost::starts_with( it->string(), g_renderSetsPrefix ) )
+		{
+			m_sets[*it].unprefixedName = it->string().substr( g_renderSetsPrefix.size() );
+		}
+	}
+
+	// Remove anything from m_renderSets that no longer exists
+	// in the scene.
+
+	for( Sets::const_iterator it = m_sets.begin(); it != m_sets.end(); )
+	{
+		if( std::find( setNames.begin(), setNames.end(), it->first ) == setNames.end() )
+		{
+			it = m_sets.erase( it );
+			changed |= AttributesChanged;
+		}
+		else
+		{
+			++it;
+		}
+	}
+
+	// Update all the sets we want in parallel.
+
+	Updater updater( scene, ThreadState::current(), *this, changed );
+	tbb::task_group_context taskGroupContext( tbb::task_group_context::isolated );
+	parallel_reduce(
+		tbb::blocked_range<size_t>( 0, m_sets.size() + 4 ),
+		updater,
+		tbb::auto_partitioner(),
+		// Prevents outer tasks silently cancelling our tasks
+		taskGroupContext
+	);
+
+	return updater.changed;
+}
+
+void RenderSets::clear()
+{
+	m_sets.clear();
+	m_camerasSet = Set();
+	m_lightsSet = Set();
+	m_lightFiltersSet = Set();
+	m_soloLightsSet = Set();
+}
+
+const PathMatcher &RenderSets::camerasSet() const
+{
+	return m_camerasSet.set;
+}
+
+const PathMatcher &RenderSets::lightsSet() const
+{
+	return m_lightsSet.set;
+}
+
+const PathMatcher &RenderSets::lightFiltersSet() const
+{
+	return m_lightFiltersSet.set;
+}
+
+const PathMatcher &RenderSets::soloLightsSet() const
+{
+	return m_soloLightsSet.set;
+}
+
+ConstInternedStringVectorDataPtr RenderSets::setsAttribute( const std::vector<IECore::InternedString> &path ) const
+{
+	InternedStringVectorDataPtr resultData = nullptr;
+	vector<InternedString> *result = nullptr;
+	for( Sets::const_iterator it = m_sets.begin(), eIt = m_sets.end(); it != eIt; ++it )
+	{
+		if( it->second.set.match( path ) & ( IECore::PathMatcher::ExactMatch | IECore::PathMatcher::AncestorMatch ) )
+		{
+			if( !result )
+			{
+				resultData = new InternedStringVectorData;
+				result = &resultData->writable();
+			}
+			result->push_back( it->second.unprefixedName );
+		}
+	}
+	return resultData ? resultData : g_emptySetsAttribute;
+}
+
+void RenderSets::attributes( CompoundObject::ObjectMap &attributes, const ScenePlug::ScenePath &path ) const
+{
+	IECore::ConstInternedStringVectorDataPtr setsAttribute = this->setsAttribute( path );
+
+	attributes[g_setsAttributeName] = boost::const_pointer_cast<InternedStringVectorData>( setsAttribute );
+
+	if( !soloLightsSet().isEmpty() && lightsSet().match( path ) & ( PathMatcher::ExactMatch | PathMatcher::AncestorMatch ) )
+	{
+		auto muteData = attributes.find( g_lightMuteAttributeName );
+		if( muteData != attributes.end() )
+		{
+			auto mute = runTimeCast<const BoolData>( muteData->second );
+			if( mute && mute->readable() )
+			{
+				return;
+			}
+		}
+
+		if( soloLightsSet().match( path ) & ( PathMatcher::ExactMatch | PathMatcher::AncestorMatch ) )
+		{
+			attributes[g_lightMuteAttributeName] = g_false;
+		}
+		else
+		{
+			attributes[g_lightMuteAttributeName] = g_true;
+		}
+	}
+}
+
+} // namespace RendererAlgo
+
+} // namespace Private
+
+} // namespace GafferScene
+
+//////////////////////////////////////////////////////////////////////////
+// LightLinks class
+///////////////////////////////////////////////////////////////////////////
+
+namespace
+{
+
+IECore::InternedString g_linkedLightsAttributeName( "linkedLights" );
+IECore::InternedString g_linkedLightsExclusionsAttributeName( "linkedLights:exclusions" );
+IECore::InternedString g_filteredLightsAttributeName( "filteredLights" );
+IECore::InternedString g_filteredLightsExclusionsAttributeName( "filteredLights:exclusions" );
+IECore::InternedString g_defaultLightsSetName( "defaultLights" );
+IECore::InternedString g_shadowedLightsAttributeName( "shadowedLights" );
+IECore::InternedString g_shadowedLightsExclusionsAttributeName( "shadowedLights:exclusions" );
+IECore::InternedString g_shadowGroupAttributeName( "ai:visibility:shadow_group" );
+IECore::InternedString g_lights( "lights" );
+IECore::InternedString g_lightFilters( "lightFilters" );
+const std::string g_shadowedLightsDefaultValue( "__lights" );
+const std::string g_linkedLightsDefaultValue( "defaultLights" );
+const std::string g_emptyString;
+
+bool isBlank( const std::string &s )
+{
+	return s.find_first_not_of( " \t\n\r" ) == std::string::npos;
+}
+
+const std::string &subtractSetExpressions( const std::string &expression, const std::string &exclusions, std::string &storage )
+{
+	if( isBlank( expression ) || isBlank( exclusions ) )
+	{
+		return expression;
+	}
+
+	storage = fmt::format( "({}) - ({})", expression, exclusions );
+	return storage;
+}
+
+} // namespace
+
+namespace GafferScene
+{
+
+namespace Private
+{
+
+namespace RendererAlgo
+{
+
+LightLinks::LightLinks( const IECoreScenePreview::Renderer *renderer )
+	:	m_shadowedLightsFallbackAttributeName( renderer->name() == "Arnold" ? &g_shadowGroupAttributeName : nullptr ),
+		m_lightLinksDirty( true ), m_lightFilterLinksDirty( true )
+{
+}
+
+void LightLinks::addLight( const std::string &path, const IECoreScenePreview::Renderer::ObjectInterfacePtr &light )
+{
+	assert( light );
+	LightMap::accessor a;
+	m_lights.insert( a, path );
+	assert( !a->second ); // We expect `removeLight()` to be called before `addLight()` is called again
+	a->second = light;
+	m_lightLinksDirty = true;
+	m_lightFilterLinksDirty = true;
+	clearLightLinks();
+}
+
+void LightLinks::removeLight( const std::string &path )
+{
+	m_lights.erase( path );
+	m_lightLinksDirty = true;
+	m_lightFilterLinksDirty = true;
+	clearLightLinks();
+}
+
+void LightLinks::addLightFilter( const IECoreScenePreview::Renderer::ObjectInterfacePtr &lightFilter, const IECore::CompoundObject *attributes )
+{
+	FilterMap::accessor a;
+	const bool inserted = m_filters.insert( a, lightFilter );
+	assert( inserted ); (void)inserted;
+
+	a->second = this->filteredLightsExpression( attributes );
+	addFilterLink( lightFilter, a->second );
+
+	m_lightFilterLinksDirty = true;
+}
+
+void LightLinks::updateLightFilter( const IECoreScenePreview::Renderer::ObjectInterfacePtr &lightFilter, const IECore::CompoundObject *attributes )
+{
+	FilterMap::accessor a;
+	const bool found = m_filters.find( a, lightFilter );
+	assert( found ); (void)found;
+
+	const string e = this->filteredLightsExpression( attributes );
+	if( e == a->second )
+	{
+		return;
+	}
+
+	removeFilterLink( lightFilter, a->second );
+	a->second = e;
+	addFilterLink( lightFilter, a->second );
+
+	m_lightFilterLinksDirty = true;
+}
+
+void LightLinks::removeLightFilter( const IECoreScenePreview::Renderer::ObjectInterfacePtr &lightFilter )
+{
+	FilterMap::accessor a;
+	const bool found = m_filters.find( a, lightFilter );
+	assert( found ); (void)found;
+
+	removeFilterLink( a->first, a->second );
+	m_filters.erase( a );
+
+	m_lightFilterLinksDirty = true;
+}
+
+void LightLinks::addFilterLink( const IECoreScenePreview::Renderer::ObjectInterfacePtr &lightFilter, const std::string &filteredLightsExpression )
+{
+	if( filteredLightsExpression == "" )
+	{
+		return;
+	}
+
+	FilterLinkMap::accessor a;
+	const bool inserted = m_filterLinks.insert( a, filteredLightsExpression );
+	if( inserted )
+	{
+		a->second.filteredLightsDirty = true;
+		a->second.lightFilters = std::make_shared<IECoreScenePreview::Renderer::ObjectSet>();
+	}
+	else if( a->second.lightFilters.use_count() > 1 )
+	{
+		// We have already published the current set to a renderer via
+		// `ObjectInterface::link()`. We don't want to mutate it in place
+		// because the Renderer has no way of knowing about the change.
+		/// \todo Redesign the Renderer API to make the immutability of
+		/// linking sets ironclad.
+		a->second.lightFilters = std::make_shared<IECoreScenePreview::Renderer::ObjectSet>( *a->second.lightFilters );
+	}
+	a->second.lightFilters->insert( lightFilter );
+}
+
+void LightLinks::removeFilterLink( const IECoreScenePreview::Renderer::ObjectInterfacePtr &lightFilter, const std::string &filteredLightsExpression )
+{
+	if( filteredLightsExpression == "" )
+	{
+		return;
+	}
+
+	FilterLinkMap::accessor a;
+	bool found = m_filterLinks.find( a, filteredLightsExpression );
+	assert( found ); (void)found;
+	if( a->second.lightFilters.use_count() > 1 )
+	{
+		// See comment in `addFilterLink()`.
+		a->second.lightFilters = std::make_shared<IECoreScenePreview::Renderer::ObjectSet>( *a->second.lightFilters );
+	}
+	const bool erased = a->second.lightFilters->erase( lightFilter );
+	assert( erased ); (void)erased;
+
+	if( a->second.lightFilters->empty() )
+	{
+		m_filterLinks.erase( a );
+	}
+}
+
+void LightLinks::setsDirtied()
+{
+	for( auto &f : m_filterLinks )
+	{
+		f.second.filteredLightsDirty = true;
+	}
+	clearLightLinks();
+	m_lightLinksDirty = true;
+	m_lightFilterLinksDirty = true;
+}
+
+bool LightLinks::lightLinksDirty() const
+{
+	return m_lightLinksDirty;
+}
+
+bool LightLinks::lightFilterLinksDirty() const
+{
+	return m_lightFilterLinksDirty;
+}
+
+void LightLinks::clean()
+{
+	m_lightLinksDirty = false;
+	m_lightFilterLinksDirty = false;
+}
+
+void LightLinks::clearLightLinks()
+{
+	// We may be called concurrently from `addLight()/removeLight()`, and
+	// `clear()` is not threadsafe - hence the mutex.
+	tbb::spin_mutex::scoped_lock l( m_lightLinksClearMutex );
+	m_lightLinks.clear();
+}
+
+std::string LightLinks::filteredLightsExpression( const IECore::CompoundObject *attributes ) const
+{
+	if( const StringData *d = attributes->member<StringData>( g_filteredLightsAttributeName ) )
+	{
+		const std::string &filteredLights = d->readable();
+		if( isBlank( filteredLights ) )
+		{
+			return "";
+		}
+
+		if( const StringData *e = attributes->member<StringData>( g_filteredLightsExclusionsAttributeName ) )
+		{
+			const std::string &exclusions = e->readable();
+			if( !isBlank( exclusions ) )
+			{
+				return fmt::format( "({}) - ({})", filteredLights, exclusions );
+			}
+		}
+		return filteredLights;
+	}
+
+	return "";
+}
+
+void LightLinks::outputLightLinks( const ScenePlug *scene, const IECore::CompoundObject *attributes, IECoreScenePreview::Renderer::ObjectInterface *object, IECore::MurmurHash *hash ) const
+{
+	const StringData *linkedLightsExpressionData = attributes->member<StringData>( g_linkedLightsAttributeName );
+	const StringData *linkedLightsExclusionsExpressionData = attributes->member<StringData>( g_linkedLightsExclusionsAttributeName );
+	const StringData *shadowedLightsExpressionData = attributes->member<StringData>( g_shadowedLightsAttributeName );
+	const StringData *shadowedLightsExclusionsExpressionData = attributes->member<StringData>( g_shadowedLightsExclusionsAttributeName );
+	if( !shadowedLightsExpressionData && m_shadowedLightsFallbackAttributeName )
+	{
+		shadowedLightsExpressionData = attributes->member<StringData>( *m_shadowedLightsFallbackAttributeName );
+	}
+	const std::string &linkedLightsExpression = linkedLightsExpressionData ? linkedLightsExpressionData->readable() : g_linkedLightsDefaultValue;
+	const std::string &linkedLightsExclusions = linkedLightsExclusionsExpressionData ? linkedLightsExclusionsExpressionData->readable() : g_emptyString;
+
+	const std::string &shadowedLightsExpression = shadowedLightsExpressionData ? shadowedLightsExpressionData->readable() : g_shadowedLightsDefaultValue;
+	const std::string &shadowedLightsExclusions = shadowedLightsExclusionsExpressionData ? shadowedLightsExclusionsExpressionData->readable() : g_emptyString;
+
+	if( hash )
+	{
+		IECore::MurmurHash h;
+		h.append( linkedLightsExpression );
+		h.append( linkedLightsExclusions );
+		h.append( shadowedLightsExpression );
+		h.append( shadowedLightsExclusions );
+		if( !m_lightLinksDirty && *hash == h )
+		{
+			// We're only being called because the attributes have changed as a whole, but the
+			// specific attributes we care about haven't changed. No need to relink anything.
+			/// \todo Investigate other optimisations. Perhaps `setExpressionHash()` is fast enough
+			/// that we could use it to avoid editing links when sets have been dirtied but the
+			/// specific sets we care about haven't changed?
+			return;
+		}
+		*hash = h;
+	}
+
+	std::string expressionStorage;
+	IECoreScenePreview::Renderer::ConstObjectSetPtr objectSet = linkedLights( subtractSetExpressions( linkedLightsExpression, linkedLightsExclusions, expressionStorage ), scene );
+	object->link( g_lights, objectSet );
+	objectSet = linkedLights( subtractSetExpressions( shadowedLightsExpression, shadowedLightsExclusions, expressionStorage ), scene );
+	object->link( g_shadowedLightsAttributeName, objectSet );
+}
+
+IECoreScenePreview::Renderer::ConstObjectSetPtr LightLinks::linkedLights( const std::string &linkedLightsExpression, const ScenePlug *scene ) const
+{
+	LightLinkMap::accessor a;
+	if( !m_lightLinks.insert( a, linkedLightsExpression ) )
+	{
+		// Already did the work
+		return a->second;
+	}
+
+	PathMatcher paths = SetAlgo::evaluateSetExpression( linkedLightsExpression, scene );
+
+	auto objectSet = std::make_shared<IECoreScenePreview::Renderer::ObjectSet>();
+	for( PathMatcher::Iterator it = paths.begin(), eIt = paths.end(); it != eIt; ++it )
+	{
+		std::string pathString;
+		ScenePlug::pathToString( *it, pathString );
+		LightMap::const_accessor a;
+		if( m_lights.find( a, pathString ) )
+		{
+			objectSet->insert( a->second );
+		}
+	}
+	if( objectSet->size() == m_lights.size() )
+	{
+		// All lights are linked, in which case we can avoid
+		// explicitly listing all the links as an optimisation.
+		objectSet = nullptr;
+	}
+
+	a->second = objectSet;
+	return a->second;
+}
+
+void LightLinks::outputLightFilterLinks( const ScenePlug *scene )
+{
+
+	// Update the `filteredLights` fields in our FilterLinks.
+
+	tbb::task_group_context taskGroupContext( tbb::task_group_context::isolated );
+	const ThreadState &threadState = ThreadState::current();
+
+	tbb::parallel_for(
+		m_filterLinks.range(),
+		[scene, &threadState]( FilterLinkMap::range_type &range )
+		{
+			ThreadState::Scope threadStateScope( threadState );
+			for( auto &f : range )
+			{
+				if( f.second.filteredLightsDirty )
+				{
+					f.second.filteredLights = SetAlgo::evaluateSetExpression( f.first, scene );
+					f.second.filteredLightsDirty = false;
+				}
+			}
+		},
+		tbb::auto_partitioner(),
+		taskGroupContext
+	);
+
+	// Loop over all our lights, outputting filter links as
+	// necessary.
+
+	tbb::parallel_for(
+		m_lights.range(),
+		[this]( const LightMap::range_type &range )
+		{
+			// No need to scope `threadState` here, as `outputLightFilterLinks()`
+			// doesn't trigger Gaffer processes.
+			for( const auto &l : range )
+			{
+				outputLightFilterLinks( l.first, l.second.get() );
+			}
+		},
+		tbb::auto_partitioner(),
+		taskGroupContext
+	);
+}
+
+void LightLinks::outputLightFilterLinks( const std::string &lightName, IECoreScenePreview::Renderer::ObjectInterface *light ) const
+{
+	// Find the filter links that apply to this light
+
+	vector<const FilterLink *> filterLinks;
+	for( const auto &filterLink : m_filterLinks )
+	{
+		if( filterLink.second.filteredLights.match( lightName ) & PathMatcher::ExactMatch )
+		{
+			filterLinks.push_back( &filterLink.second );
+		}
+	}
+
+	// Combine the filters from all the links, and output them.
+
+	IECoreScenePreview::Renderer::ObjectSetPtr linkedFilters;
+	if( filterLinks.size() == 0 )
+	{
+		static IECoreScenePreview::Renderer::ObjectSetPtr emptySet = make_shared<IECoreScenePreview::Renderer::ObjectSet>();
+		linkedFilters = emptySet;
+	}
+	else if( filterLinks.size() == 1 )
+	{
+		// Optimisation for common case - no need to combine.
+		linkedFilters = filterLinks.front()->lightFilters;
+	}
+	else
+	{
+		linkedFilters = std::make_shared<IECoreScenePreview::Renderer::ObjectSet>();
+		for( const auto &filterLink : filterLinks )
+		{
+			linkedFilters->insert( filterLink->lightFilters->begin(), filterLink->lightFilters->end() );
+		}
+	}
+
+	light->link( g_lightFilters, linkedFilters );
+}
+
+} // namespace RendererAlgo
+
+} // namespace Private
+
+} // namespace GafferScene
+
+//////////////////////////////////////////////////////////////////////////
+// Internal utilities
+///////////////////////////////////////////////////////////////////////////
+
+namespace
+{
+
+InternedString g_visibleAttributeName( "scene:visible" );
+
+// Base class for functors which output objects/lights etc.
+struct LocationOutput
+{
+
+	LocationOutput( IECoreScenePreview::Renderer *renderer, const GafferScene::Private::RendererAlgo::RenderOptions &renderOptions, const GafferScene::Private::RendererAlgo::RenderSets &renderSets, const ScenePlug::ScenePath &root, const ScenePlug *scene )
+		:	m_renderer( renderer ), m_options( renderOptions ), m_attributes( root.empty() ? SceneAlgo::globalAttributes( renderOptions.globals.get() ) : new CompoundObject ), m_renderSets( renderSets ), m_root( root )
+	{
+	}
+
+	bool operator()( const ScenePlug *scene, const ScenePlug::ScenePath &path )
+	{
+		if( path.size() > m_root.size() )
+		{
+			updateAttributes( scene, path );
+		}
+
+		if( const IECore::BoolData *d = m_attributes->member<IECore::BoolData>( g_visibleAttributeName ) )
+		{
+			if( !d->readable() )
+			{
+				return false;
+			}
+		}
+
+		if( path.size() > m_root.size() )
+		{
+			updateTransform( scene );
+		}
+
+		return true;
+	}
+
+	protected :
+
+		const GafferScene::Private::RendererAlgo::RenderOptions &renderOptions() const
+		{
+			return m_options;
+		}
+
+		bool purposeIncluded() const
+		{
+			return m_options.purposeIncluded( m_attributes.get() );
+		}
+
+		std::string name( const ScenePlug::ScenePath &path ) const
+		{
+			if( m_root.size() == path.size() )
+			{
+				return "/";
+			}
+			else
+			{
+				string result;
+				for( ScenePlug::ScenePath::const_iterator it = path.begin() + m_root.size(), eIt = path.end(); it != eIt; ++it )
+				{
+					result += "/" + it->string();
+				}
+				return result;
+			}
+		}
+
+		IECoreScenePreview::Renderer *renderer()
+		{
+			return m_renderer;
+		}
+
+		void deformationMotionTimes( IECoreScenePreview::Renderer::SampleTimes &times )
+		{
+			GafferScene::Private::RendererAlgo::deformationMotionTimes( m_options, m_attributes.get(), times );
+		}
+
+		const IECore::CompoundObject *attributes() const
+		{
+			return m_attributes.get();
+		}
+
+		IECoreScenePreview::Renderer::AttributesInterfacePtr attributesInterface()
+		{
+			/// \todo Should we keep a cache of AttributesInterfaces so we can share
+			/// them between multiple objects, or should we rely on the renderers to
+			/// do something similar? Since renderers might cache some attributes
+			/// (e.g. "ai:surface") separately from others, they can do a better job,
+			/// but perhaps there might be some value in caching here at the higher
+			/// level too?
+			return m_renderer->attributes( m_attributes.get() );
+		}
+
+		void applyTransform( IECoreScenePreview::Renderer::ObjectInterface *objectInterface )
+		{
+			if( !m_fullTransform.samples.size() )
+			{
+				return;
+			}
+			objectInterface->transform( m_fullTransform.samples, m_fullTransform.sampleTimes );
+		}
+
+	private :
+
+		void updateAttributes( const ScenePlug *scene, const ScenePlug::ScenePath &path )
+		{
+			ConstCompoundObjectPtr attributes = scene->attributesPlug()->getValue();
+			CompoundObjectPtr processedAttributes = new CompoundObject;
+
+			processedAttributes->members() = attributes->members();
+
+			m_renderSets.attributes( processedAttributes->members(), path );
+
+			if( processedAttributes->members().empty() )
+			{
+				return;
+			}
+
+			IECore::CompoundObjectPtr updatedAttributes = new IECore::CompoundObject;
+			updatedAttributes->members() = m_attributes->members();
+
+			for( const auto &a : processedAttributes->members() )
+			{
+				updatedAttributes->members()[a.first] = a.second;
+			}
+
+			m_attributes = updatedAttributes;
+		}
+
+		void updateTransform( const ScenePlug *scene )
+		{
+			IECoreScenePreview::Renderer::SampleTimes sampleTimes;
+			GafferScene::Private::RendererAlgo::transformMotionTimes( m_options, m_attributes.get(), sampleTimes );
+			auto sampledTransform = GafferScene::Private::RendererAlgo::transformSamples( scene->transformPlug(), sampleTimes );
+			m_fullTransform.concatenate( *sampledTransform );
+		}
+
+		IECoreScenePreview::Renderer *m_renderer;
+
+		const GafferScene::Private::RendererAlgo::RenderOptions m_options;
+		IECore::ConstCompoundObjectPtr m_attributes;
+		const GafferScene::Private::RendererAlgo::RenderSets &m_renderSets;
+		const ScenePlug::ScenePath &m_root;
+
+		Private::RendererAlgo::SampledTransform m_fullTransform;
+
+};
+
+struct CameraOutput : public LocationOutput
+{
+
+	CameraOutput( IECoreScenePreview::Renderer *renderer, const GafferScene::Private::RendererAlgo::RenderOptions &renderOptions, const GafferScene::Private::RendererAlgo::RenderSets &renderSets, const ScenePlug::ScenePath &root, const ScenePlug *scene )
+		:	LocationOutput( renderer, renderOptions, renderSets, root, scene ), m_globals( renderOptions.globals.get() ), m_cameraSet( renderSets.camerasSet() )
+	{
+	}
+
+	bool operator()( const ScenePlug *scene, const ScenePlug::ScenePath &path )
+	{
+		if( !LocationOutput::operator()( scene, path ) )
+		{
+			return false;
+		}
+
+		const size_t cameraMatch = m_cameraSet.match( path );
+		if( ( cameraMatch & IECore::PathMatcher::ExactMatch ) && purposeIncluded() )
+		{
+			// Sample cameras and apply globals
+			IECoreScenePreview::Renderer::SampleTimes sampleTimes;
+			deformationMotionTimes( sampleTimes );
+
+			IECoreScenePreview::Renderer::ObjectSamples samples;
+			const auto sampledObject = GafferScene::Private::RendererAlgo::objectSamples( scene->objectPlug(), sampleTimes );
+
+			IECoreScenePreview::Renderer::CameraSamples cameraSamples; cameraSamples.reserve( sampledObject->samples.size() );
+			for( const auto &sample : sampledObject->samples )
+			{
+				if( auto cameraSample = runTimeCast<const Camera>( sample.get() ) )
+				{
+					IECoreScene::CameraPtr cameraSampleCopy = cameraSample->copy();
+					GafferScene::SceneAlgo::applyCameraGlobals( cameraSampleCopy.get(), m_globals, scene );
+					cameraSamples.push_back( cameraSampleCopy );
+				}
+			}
+
+			// Create ObjectInterface
+
+			if( !sampledObject->samples.size() || cameraSamples.size() != sampledObject->samples.size() )
+			{
+				IECore::msg(
+					IECore::Msg::Warning,
+					"RendererAlgo::CameraOutput",
+					fmt::format(
+						"Camera missing for location \"{}\" at frame {}",
+						name( path ), Context::current()->getFrame()
+					)
+				);
+			}
+			else
+			{
+				IECoreScenePreview::Renderer::ObjectInterfacePtr objectInterface = renderer()->camera(
+					name( path ), cameraSamples, sampledObject->sampleTimes, attributesInterface().get()
+				);
+
+				if( objectInterface )
+				{
+					applyTransform( objectInterface.get() );
+				}
+			}
+		}
+
+		return cameraMatch & IECore::PathMatcher::DescendantMatch;
+	}
+
+	private :
+
+		const IECore::CompoundObject *m_globals;
+		const PathMatcher &m_cameraSet;
+
+};
+
+struct LightOutput : public LocationOutput
+{
+
+	LightOutput( IECoreScenePreview::Renderer *renderer, const GafferScene::Private::RendererAlgo::RenderOptions &renderOptions, const GafferScene::Private::RendererAlgo::RenderSets &renderSets, GafferScene::Private::RendererAlgo::LightLinks *lightLinks, const ScenePlug::ScenePath &root, const ScenePlug *scene )
+		:	LocationOutput( renderer, renderOptions, renderSets, root, scene ), m_lightSet( renderSets.lightsSet() ), m_lightLinks( lightLinks )
+	{
+	}
+
+	bool operator()( const ScenePlug *scene, const ScenePlug::ScenePath &path )
+	{
+		if( !LocationOutput::operator()( scene, path ) )
+		{
+			return false;
+		}
+
+		const size_t lightMatch = m_lightSet.match( path );
+		if( ( lightMatch & IECore::PathMatcher::ExactMatch ) && purposeIncluded() )
+		{
+			IECoreScenePreview::Renderer::SampleTimes sampleTimes;
+			deformationMotionTimes( sampleTimes );
+			auto sampledObject = GafferScene::Private::RendererAlgo::objectSamples( scene->objectPlug(), sampleTimes );
+
+			const std::string name = this->name( path );
+			IECoreScenePreview::Renderer::ObjectInterfacePtr objectInterface = renderer()->light(
+				name, sampledObject->samples, sampledObject->sampleTimes, attributesInterface().get()
+			);
+
+			if( objectInterface )
+			{
+				applyTransform( objectInterface.get() );
+				if( m_lightLinks )
+				{
+					m_lightLinks->addLight( name, objectInterface );
+				}
+			}
+
+		}
+
+		return lightMatch & IECore::PathMatcher::DescendantMatch;
+	}
+
+	const PathMatcher &m_lightSet;
+	GafferScene::Private::RendererAlgo::LightLinks *m_lightLinks;
+
+};
+
+struct LightFiltersOutput : public LocationOutput
+{
+
+	LightFiltersOutput( IECoreScenePreview::Renderer *renderer, const GafferScene::Private::RendererAlgo::RenderOptions &renderOptions, const GafferScene::Private::RendererAlgo::RenderSets &renderSets, GafferScene::Private::RendererAlgo::LightLinks *lightLinks, const ScenePlug::ScenePath &root, const ScenePlug *scene )
+		:	LocationOutput( renderer, renderOptions, renderSets, root, scene ), m_lightFiltersSet( renderSets.lightFiltersSet() ), m_lightLinks( lightLinks )
+	{
+	}
+
+	bool operator()( const ScenePlug *scene, const ScenePlug::ScenePath &path )
+	{
+		if( !LocationOutput::operator()( scene, path ) )
+		{
+			return false;
+		}
+
+		const size_t lightFilterMatch = m_lightFiltersSet.match( path );
+		if( lightFilterMatch & IECore::PathMatcher::ExactMatch )
+		{
+			IECore::ConstObjectPtr object = scene->objectPlug()->getValue();
+
+			IECoreScenePreview::Renderer::ObjectInterfacePtr objectInterface = renderer()->lightFilter(
+				name( path ),
+				!runTimeCast<const NullObject>( object.get() ) ? object.get() : nullptr,
+				attributesInterface().get()
+			);
+
+			if( objectInterface )
+			{
+				applyTransform( objectInterface.get() );
+				if( m_lightLinks )
+				{
+					m_lightLinks->addLightFilter( objectInterface, attributes() );
+				}
+			}
+		}
+
+		return lightFilterMatch & IECore::PathMatcher::DescendantMatch;
+	}
+
+	private :
+
+		const PathMatcher &m_lightFiltersSet;
+		GafferScene::Private::RendererAlgo::LightLinks *m_lightLinks;
+
+};
+
+struct ObjectOutput : public LocationOutput
+{
+
+	ObjectOutput( IECoreScenePreview::Renderer *renderer, const GafferScene::Private::RendererAlgo::RenderOptions &renderOptions, const GafferScene::Private::RendererAlgo::RenderSets &renderSets, const GafferScene::Private::RendererAlgo::LightLinks *lightLinks, const ScenePlug::ScenePath &root, const ScenePlug *scene, RenderManifest *renderManifest )
+
+		:	LocationOutput( renderer, renderOptions, renderSets, root, scene ), m_cameraSet( renderSets.camerasSet() ), m_lightSet( renderSets.lightsSet() ), m_lightFiltersSet( renderSets.lightFiltersSet() ), m_lightLinks( lightLinks ), m_renderManifest( renderManifest )
+	{
+	}
+
+	bool operator()( const ScenePlug *scene, const ScenePlug::ScenePath &path )
+	{
+		if( !LocationOutput::operator()( scene, path ) )
+		{
+			return false;
+		}
+
+		if( ( m_cameraSet.match( path ) & IECore::PathMatcher::ExactMatch ) || ( m_lightFiltersSet.match( path ) & IECore::PathMatcher::ExactMatch ) || ( m_lightSet.match( path ) & IECore::PathMatcher::ExactMatch ) )
+		{
+			return true;
+		}
+
+		if( !purposeIncluded() )
+		{
+			return true;
+		}
+
+		IECoreScenePreview::Renderer::SampleTimes sampleTimes;
+		deformationMotionTimes( sampleTimes );
+
+		auto sampledObject = GafferScene::Private::RendererAlgo::objectSamples( scene->objectPlug(), sampleTimes );
+		if( !sampledObject->samples.size() )
+		{
+			return true;
+		}
+
+		IECoreScenePreview::Renderer::AttributesInterfacePtr attributesInterface = this->attributesInterface();
+		IECoreScenePreview::Renderer::ObjectInterfacePtr objectInterface = outputObject( name( path ), *sampledObject, attributesInterface.get(), renderOptions(), scene, renderer() );
+
+		if( objectInterface )
+		{
+			applyTransform( objectInterface.get() );
+			if( m_lightLinks )
+			{
+				m_lightLinks->outputLightLinks( scene, attributes(), objectInterface.get() );
+			}
+
+			if( m_renderManifest )
+			{
+				int id = m_renderManifest->acquireID( path );
+				objectInterface->assignID( id );
+			}
+		}
+
+		// By convention, we don't render the children of PointInstancers. This allows prototypes to
+		// be nested without fear of them being rendered in their own right.
+		return !runTimeCast<const IECoreScene::PointInstancer>( sampledObject->samples[0].get() );
+	}
+
+	const PathMatcher &m_cameraSet;
+	const PathMatcher &m_lightSet;
+	const PathMatcher &m_lightFiltersSet;
+	const GafferScene::Private::RendererAlgo::LightLinks *m_lightLinks;
+	RenderManifest *m_renderManifest;
+
+};
+
+} // namespace
+
+//////////////////////////////////////////////////////////////////////////
+// Public methods for outputting globals.
+//////////////////////////////////////////////////////////////////////////
+
+namespace
+{
+
+ConstOutputPtr addGafferOutputParameters( const Output *output, const ScenePlug *scene, const std::string &outputID, const IECoreScenePreview::Renderer *renderer, const GafferScene::Private::RendererAlgo::RenderOptions &renderOptions )
+{
+	CompoundDataPtr param = output->parametersData()->copy();
+
+	// Add parameters that provide unique identifiers for the render and the
+	// output. This is used by the Catalogue to know when to start a new image
+	// and when to just update an existing one. If `gaffer:renderID` has been
+	// defined on the Output already then we assume the user knows what they are
+	// doing instead of replacing it - this facilitates "netrender" style workflows.
+	if( !param->member<StringData>( "gaffer:renderID" ) )
+	{
+		param->writable()["gaffer:renderID"] = new StringData( Private::RendererAlgo::renderID( renderer ) );
+	}
+	param->writable()["gaffer:outputID"] = new StringData( outputID );
+
+	const Node *node = scene->node();
+	const ScriptNode *script = node->scriptNode();
+
+	param->writable()["header:gaffer:version"] = new StringData( Gaffer::versionString() );
+
+	// Include the path to the render node to allow tools to back-track from the image
+	param->writable()["header:gaffer:sourceScene"] = new StringData( scene->relativeName( script ) );
+
+	// It's a warning to specify a renderManifestFilePath without an ID output - the manifest won't be
+	// written, so don't stamp it into the outputs. We silently skip it here, because the warning will
+	// be output by Render::executeInternal
+	if( GafferScene::Private::RendererAlgo::hasIDOutput( renderOptions.globals.get() ) )
+	{
+		std::string manifestFilePathOption = GafferScene::Private::RendererAlgo::renderManifestFilePath(
+			renderOptions.globals.get()
+		);
+		if( manifestFilePathOption != "" )
+		{
+			std::string manifestPath = std::filesystem::relative(
+				std::filesystem::path( manifestFilePathOption ),
+				std::filesystem::path( output->getName() ).parent_path()
+			).generic_string();
+			if( !manifestPath.size() )
+			{
+				// If we can't find a relative path, use an absolute path
+				manifestPath = manifestFilePathOption;
+			}
+			param->writable()["header:gaffer:renderManifestFilePath"] = new StringData( manifestPath );
+		}
+	}
+
+	// Include the current context
+	const Context *context = Context::current();
+	std::vector<IECore::InternedString> names;
+	context->names( names );
+	for( const auto &name : names )
+	{
+		DataPtr data = context->getAsData( name );
+
+		// The requires a round-trip through the renderer's native type system, as such, it requires
+		// bi-directional conversion in Cortex. Unsupported types result in a slew of warning messages
+		// in render output. As many facilities employ un-supported types in their contexts as standard,
+		// we whitelist known supported types, and bump the output for unsupported types to Debug messages
+		// to avoid noise in the log.
+		switch( data->typeId() )
+		{
+			case IECore::BoolDataTypeId :
+			case IECore::IntDataTypeId :
+			case IECore::FloatDataTypeId :
+			case IECore::V3fDataTypeId :
+			case IECore::Color3fDataTypeId :
+			case IECore::Color4fDataTypeId :
+				param->writable()["header:gaffer:context:" + name.string()] = data;
+				break;
+			case IECore::StringDataTypeId :
+				param->writable()["header:gaffer:context:" + name.string()] = new StringData(
+					context->substitute( static_cast<const StringData *>( data.get() )->readable() )
+				);
+				break;
+			default :
+				IECore::msg(
+					IECore::Msg::Debug,
+					"GafferScene::RendererAlgo",
+					fmt::format( "Unsupported data type for Context variable \"{}\" ({}), unable to add this variable to output image header", name.string(), data->typeName() )
+				);
+		};
+	}
+
+	return new Output( output->getName(), output->getType(), output->getData(), param );
+}
+
+} // namespace
+
+namespace GafferScene
+{
+
+namespace Private
+{
+
+namespace RendererAlgo
+{
+
+void outputOutputs( const ScenePlug *scene, const RenderOptions &renderOptions, IECoreScenePreview::Renderer *renderer )
+{
+	outputOutputs( scene, renderOptions, /* previousGlobals = */ nullptr, renderer );
+}
+
+void outputOutputs( const ScenePlug *scene, const RenderOptions &renderOptions, const IECore::CompoundObject *previousGlobals, IECoreScenePreview::Renderer *renderer )
+{
+	static const std::string prefix( "output:" );
+
+	// Output anything that has changed or was added since last time.
+
+	CompoundObject::ObjectMap::const_iterator it, eIt;
+	for( it = renderOptions.globals->members().begin(), eIt = renderOptions.globals->members().end(); it != eIt; ++it )
+	{
+		if( !boost::starts_with( it->first.string(), prefix ) )
+		{
+			continue;
+		}
+		if( const Output *output = runTimeCast<Output>( it->second.get() ) )
+		{
+			bool changedOrAdded = true;
+
+			if( previousGlobals )
+			{
+				if( const Output *previousOutput = previousGlobals->member<Output>( it->first ) )
+				{
+					changedOrAdded = *previousOutput != *output;
+				}
+			}
+
+			// NOTE : We don't current catch changes to the outputs caused by global changes during a render,
+			// such as changing the base script context ( which gets put in the header ), or changing the
+			// id manifest file path ( which is set by a render option ). Perhaps this is fine - these aren't
+			// the sorts of things you would usually want to change during an interactive render.
+
+			if( changedOrAdded )
+			{
+				const string outputID = it->first.string().substr( prefix.size() );
+				ConstOutputPtr updatedOutput = addGafferOutputParameters( output, scene, outputID, renderer, renderOptions );
+				renderer->output( outputID, updatedOutput.get() );
+			}
+		}
+		else
+		{
+			throw IECore::Exception( "Global \"" + it->first.string() + "\" is not an IECoreScene::Output" );
+		}
+	}
+
+	// Remove anything that has been removed since last time.
+
+	if( !previousGlobals )
+	{
+		return;
+	}
+
+	for( it = previousGlobals->members().begin(), eIt = previousGlobals->members().end(); it != eIt; ++it )
+	{
+		if( !boost::starts_with( it->first.string(), prefix ) )
+		{
+			continue;
+		}
+		if( runTimeCast<Output>( it->second.get() ) )
+		{
+			if( !renderOptions.globals->member<Output>( it->first ) )
+			{
+				renderer->output( it->first.string().substr( prefix.size() ), nullptr );
+			}
+		}
+	}
+}
+
+void outputCameras( const ScenePlug *scene, const RenderOptions &renderOptions, const RenderSets &renderSets, IECoreScenePreview::Renderer *renderer )
+{
+	const StringData *cameraOption = renderOptions.globals->member<StringData>( g_cameraOptionLegacyName );
+	if( cameraOption && !cameraOption->readable().empty() )
+	{
+		ScenePlug::ScenePath cameraPath; ScenePlug::stringToPath( cameraOption->readable(), cameraPath );
+		if( !scene->exists( cameraPath ) )
+		{
+			throw IECore::Exception( "Camera \"" + cameraOption->readable() + "\" does not exist" );
+		}
+		if( !( renderSets.camerasSet().match( cameraPath ) & IECore::PathMatcher::ExactMatch ) )
+		{
+			throw IECore::Exception( "Camera \"" + cameraOption->readable() + "\" is not in the camera set" );
+		}
+		if( !SceneAlgo::visible( scene, cameraPath ) )
+		{
+			throw IECore::Exception( "Camera \"" + cameraOption->readable() + "\" is hidden" );
+		}
+	}
+
+	const ScenePlug::ScenePath root;
+	CameraOutput output( renderer, renderOptions, renderSets, root, scene );
+	SceneAlgo::parallelProcessLocations( scene, output );
+
+	if( !cameraOption || cameraOption->readable().empty() )
+	{
+		CameraPtr defaultCamera = new IECoreScene::Camera;
+		SceneAlgo::applyCameraGlobals( defaultCamera.get(), renderOptions.globals.get(), scene );
+		IECoreScenePreview::Renderer::AttributesInterfacePtr defaultAttributes = renderer->attributes( scene->attributesPlug()->defaultValue() );
+		ConstStringDataPtr name = new StringData( "gaffer:defaultCamera" );
+		renderer->camera( name->readable(), defaultCamera.get(), defaultAttributes.get() );
+		renderer->option( "camera", name.get() );
+	}
+}
+
+void outputLightFilters( const ScenePlug *scene, const RenderOptions &renderOptions, const RenderSets &renderSets, LightLinks *lightLinks, IECoreScenePreview::Renderer *renderer )
+{
+	const ScenePlug::ScenePath root;
+	LightFiltersOutput output( renderer, renderOptions, renderSets, lightLinks, root, scene );
+	SceneAlgo::parallelProcessLocations( scene, output );
+}
+
+void outputLights( const ScenePlug *scene, const RenderOptions &renderOptions, const RenderSets &renderSets, LightLinks *lightLinks, IECoreScenePreview::Renderer *renderer )
+{
+	const ScenePlug::ScenePath root;
+	LightOutput output( renderer, renderOptions, renderSets, lightLinks, root, scene );
+	SceneAlgo::parallelProcessLocations( scene, output );
+}
+
+void outputObjects( const ScenePlug *scene, const RenderOptions &renderOptions, const RenderSets &renderSets, const LightLinks *lightLinks, IECoreScenePreview::Renderer *renderer, const ScenePlug::ScenePath &root, RenderManifest *renderManifest )
+{
+	ObjectOutput output( renderer, renderOptions, renderSets, lightLinks, root, scene, renderManifest );
+
+	SceneAlgo::parallelProcessLocations( scene, output, root );
+}
+
+} // namespace RendererAlgo
+
+} // namespace Private
+
+} // namespace GafferScene

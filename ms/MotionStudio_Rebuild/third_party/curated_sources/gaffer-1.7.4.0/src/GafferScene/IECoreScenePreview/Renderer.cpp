@@ -1,0 +1,173 @@
+//////////////////////////////////////////////////////////////////////////
+//
+//  Copyright (c) 2016, Image Engine Design Inc. All rights reserved.
+//
+//  Redistribution and use in source and binary forms, with or without
+//  modification, are permitted provided that the following conditions are
+//  met:
+//
+//      * Redistributions of source code must retain the above
+//        copyright notice, this list of conditions and the following
+//        disclaimer.
+//
+//      * Redistributions in binary form must reproduce the above
+//        copyright notice, this list of conditions and the following
+//        disclaimer in the documentation and/or other materials provided with
+//        the distribution.
+//
+//      * Neither the name of John Haddon nor the names of
+//        any other contributors to this software may be used to endorse or
+//        promote products derived from this software without specific prior
+//        written permission.
+//
+//  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+//  IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+//  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+//  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+//  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+//  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+//  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+//  PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+//  LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+//  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+//  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+//////////////////////////////////////////////////////////////////////////
+
+#include "GafferScene/Private/IECoreScenePreview/Renderer.h"
+
+#include "IECore/Exception.h"
+
+using namespace std;
+using namespace IECoreScenePreview;
+
+//////////////////////////////////////////////////////////////////////////
+// Registry
+//////////////////////////////////////////////////////////////////////////
+
+namespace
+{
+
+vector<IECore::InternedString> &types()
+{
+	static vector<IECore::InternedString> g_types;
+	return g_types;
+}
+
+using CreatorMap = map<IECore::InternedString, Renderer::Creator>;
+CreatorMap &creators()
+{
+	static CreatorMap *g_creators = new CreatorMap;
+	return *g_creators;
+}
+
+} // namespace
+
+//////////////////////////////////////////////////////////////////////////
+// Renderer
+//////////////////////////////////////////////////////////////////////////
+
+Renderer::Renderer()
+{
+
+}
+
+Renderer::~Renderer()
+{
+
+}
+
+Renderer::ObjectInterfacePtr Renderer::camera( const std::string &name, const IECoreScene::Camera *camera, const AttributesInterface *attributes )
+{
+	return this->camera( name, { camera }, { 0.0f }, attributes );
+}
+
+Renderer::ObjectInterfacePtr Renderer::light( const std::string &name, const IECore::Object *object, const AttributesInterface *attributes )
+{
+	if( object )
+	{
+		return this->light( name, { object }, { 0.0f }, attributes );
+	}
+	else
+	{
+		return this->light( name, {}, {}, attributes );
+	}
+}
+
+Renderer::ObjectInterfacePtr Renderer::lightFilter( const std::string &name, const IECore::Object *object, const AttributesInterface *attributes )
+{
+	if( object )
+	{
+		return this->lightFilter( name, { object }, { 0.0f }, attributes );
+	}
+	else
+	{
+		return this->lightFilter( name, {}, {}, attributes );
+	}
+}
+
+Renderer::ObjectInterfacePtr Renderer::object( const std::string &name, const IECore::Object *object, const AttributesInterface *attributes )
+{
+	return this->object( name, { object }, { 0.0f }, attributes );
+}
+
+Renderer::ObjectInterfacePtr Renderer::pointInstancer( const std::string &name, const PointInstancerSamples &samples, const SampleTimes &times, const std::vector<Prototype> &prototypes, const AttributesInterface *attributes )
+{
+	IECore::msg( IECore::Msg::Warning, "Renderer::pointInstancer", "Not implemented" );
+	return nullptr;
+}
+
+IECore::DataPtr Renderer::command( const IECore::InternedString name, const IECore::CompoundDataMap &parameters )
+{
+	throw IECore::NotImplementedException( "Renderer::command" );
+}
+
+Renderer::AttributesInterface::~AttributesInterface()
+{
+
+}
+
+Renderer::ObjectInterface::~ObjectInterface()
+{
+
+}
+
+void Renderer::ObjectInterface::transform( const Imath::M44f &transform )
+{
+	this->transform( { transform }, { 0.0f } );
+}
+
+const std::vector<IECore::InternedString> &Renderer::types()
+{
+	return ::types();
+}
+
+Renderer::Ptr Renderer::create( const IECore::InternedString &type, RenderType renderType, const std::string &fileName, const IECore::MessageHandlerPtr &messageHandler )
+{
+	const CreatorMap &c = creators();
+	CreatorMap::const_iterator it = c.find( type );
+	if( it == c.end() )
+	{
+		return nullptr;
+	}
+	// Take copy of creator, since it is allowed to do a switcheroo
+	// by calling `registerType( name, theRealCreator )`.
+	Creator creator = it->second;
+	return creator( renderType, fileName, messageHandler );
+}
+
+void Renderer::registerType( const IECore::InternedString &typeName, Creator creator )
+{
+	creators()[typeName] = creator;
+	::types().push_back( typeName );
+}
+
+void Renderer::deregisterType( const IECore::InternedString &typeName )
+{
+	creators().erase( typeName );
+	auto &t = ::types();
+	t.erase(
+		std::remove( t.begin(), t.end(), typeName ),
+		t.end()
+	);
+}

@@ -1,0 +1,382 @@
+//////////////////////////////////////////////////////////////////////////
+//
+//  Copyright (c) 2024, Cinesite VFX Ltd. All rights reserved.
+//
+//  Redistribution and use in source and binary forms, with or without
+//  modification, are permitted provided that the following conditions are
+//  met:
+//
+//      * Redistributions of source code must retain the above
+//        copyright notice, this list of conditions and the following
+//        disclaimer.
+//
+//      * Redistributions in binary form must reproduce the above
+//        copyright notice, this list of conditions and the following
+//        disclaimer in the documentation and/or other materials provided with
+//        the distribution.
+//
+//      * Neither the name of John Haddon nor the names of
+//        any other contributors to this software may be used to endorse or
+//        promote products derived from this software without specific prior
+//        written permission.
+//
+//  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+//  IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+//  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+//  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+//  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+//  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+//  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+//  PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+//  LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+//  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+//  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+//////////////////////////////////////////////////////////////////////////
+
+#include "GafferML/ImageToTensor.h"
+
+#include "GafferImage/BufferAlgo.h"
+#include "GafferImage/ImageAlgo.h"
+#include "GafferImage/Sampler.h"
+
+#include "Gaffer/Context.h"
+
+#include "boost/container/flat_map.hpp"
+
+#include "onnxruntime_cxx_api.h"
+
+#include <variant>
+
+using namespace std;
+using namespace Imath;
+using namespace IECore;
+using namespace Gaffer;
+using namespace GafferImage;
+using namespace GafferML;
+
+namespace
+{
+
+template<typename T>
+ConstTensorPtr typedImageTensor(
+	const ImagePlug *imagePlug,
+	const std::vector<std::string> &channels,
+	const bool interleaveChannels,
+	const Canceller *canceller
+)
+{
+	const Box2i dataWindow = imagePlug->dataWindow();
+	const size_t numPixels = dataWindow.size().x * dataWindow.size().y;
+
+	vector<int64_t> shape;
+	if( interleaveChannels )
+	{
+		shape = { 1, dataWindow.size().y, dataWindow.size().x, (int64_t)channels.size() };
+	}
+	else
+	{
+		shape = { 1, (int64_t)channels.size(), dataWindow.size().y, dataWindow.size().x };
+	}
+
+	std::variant<std::monostate, std::vector<T>, Ort::Value> bufferHolder;
+	T *dstBegin;
+	if constexpr( std::is_same_v<T, Ort::BFloat16_t> )
+	{
+		// There is no `IECore::BFloat16Data` type. Create a `Ort::Value` directly and pass
+		// it to `Tensor` after filling the tensor array.
+		Ort::AllocatorWithDefaultOptions allocator;
+		bufferHolder = Ort::Value::CreateTensor(
+			allocator, shape.data(), shape.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16
+		);
+		dstBegin = std::get<Ort::Value>( bufferHolder ).template GetTensorMutableData<Ort::BFloat16_t>();
+	}
+	else
+	{
+		bufferHolder = std::vector<T>();
+		std::get<std::vector<T>>( bufferHolder ).resize( numPixels * channels.size() );
+		dstBegin = std::get<std::vector<T>>( bufferHolder ).data();
+	}
+
+	boost::container::flat_map<std::string, size_t> channelIndices;
+	for( size_t i = 0; i < channels.size(); ++i )
+	{
+		channelIndices[channels[i]] = i;
+	}
+
+	ImageAlgo::parallelProcessTiles(
+		imagePlug,
+		channels,
+		[&] ( const ImagePlug *image, const string &channelName, const Imath::V2i &tileOrigin )
+		{
+			IECore::Canceller::check( canceller );
+
+			ConstFloatVectorDataPtr channelData = image->channelDataPlug()->getValue();
+			const Box2i tileBound( tileOrigin, tileOrigin + V2i( ImagePlug::tileSize() ) );
+			const Box2i validTileBound = BufferAlgo::intersection( tileBound, dataWindow );
+
+			const size_t channelIndex = channelIndices[channelName];
+			T *dstData = dstBegin;
+			size_t dstStride;
+			if( interleaveChannels )
+			{
+				dstData += channelIndex;
+				dstStride = channels.size();
+			}
+			else
+			{
+				dstData += numPixels * channelIndex;
+				dstStride = 1;
+			}
+
+			const float *sourceData = channelData->readable().data();
+
+			for( V2i p = validTileBound.min; p.y < validTileBound.max.y; ++p.y )
+			{
+				size_t dstIndex = BufferAlgo::index( V2i( p.x, dataWindow.max.y - p.y - 1 ), dataWindow ) * dstStride;
+				size_t srcIndex = BufferAlgo::index( p, tileBound );
+				for( int x = validTileBound.min.x; x < validTileBound.max.x; ++x )
+				{
+					dstData[dstIndex] = T{ sourceData[srcIndex++] };
+					dstIndex += dstStride;
+				}
+			}
+		}
+	);
+
+	ConstTensorPtr tensor;
+	if constexpr( std::is_same_v<T, Ort::BFloat16_t> )
+	{
+		tensor = new Tensor( std::move( std::get<Ort::Value>( bufferHolder ) ) );
+	}
+	else
+	{
+		// Create and pass the data to `Tensor` so it can hold that pointer for its own uses.
+		typename TypedData<std::vector<T>>::Ptr bufferData = new TypedData<std::vector<T>>(
+			std::move( std::get<std::vector<T>>( bufferHolder ) )
+		);
+		tensor = new Tensor( bufferData, shape );
+	}
+
+	return tensor;
+}
+
+}  // namespace
+
+GAFFER_NODE_DEFINE_TYPE( ImageToTensor );
+
+size_t ImageToTensor::g_firstPlugIndex = 0;
+
+ImageToTensor::ImageToTensor( const std::string &name )
+	:	ComputeNode( name )
+{
+	storeIndexOfNextChild( g_firstPlugIndex );
+	addChild( new ImagePlug( "image", Plug::In ) );
+	addChild( new StringPlug( "view", Plug::In, "default" ) );
+	addChild( new StringVectorDataPlug( "channels", Plug::In, new StringVectorData( { "R", "G", "B" } ) ) );
+	addChild( new BoolPlug( "interleaveChannels" ) );
+	addChild( new IntPlug( "tensorElementType", Plug::In, (int)Tensor::ElementType::Float ) );
+	addChild( new TensorPlug( "tensor", Plug::Out ) );
+}
+
+ImageToTensor::~ImageToTensor()
+{
+}
+
+GafferImage::ImagePlug *ImageToTensor::imagePlug()
+{
+	return getChild<ImagePlug>( g_firstPlugIndex );
+}
+
+const GafferImage::ImagePlug *ImageToTensor::imagePlug() const
+{
+	return getChild<ImagePlug>( g_firstPlugIndex );
+}
+
+Gaffer::StringPlug *ImageToTensor::viewPlug()
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 1 );
+}
+
+const Gaffer::StringPlug *ImageToTensor::viewPlug() const
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 1 );
+}
+
+Gaffer::StringVectorDataPlug *ImageToTensor::channelsPlug()
+{
+	return getChild<StringVectorDataPlug>( g_firstPlugIndex + 2 );
+}
+
+const Gaffer::StringVectorDataPlug *ImageToTensor::channelsPlug() const
+{
+	return getChild<StringVectorDataPlug>( g_firstPlugIndex + 2 );
+}
+
+Gaffer::BoolPlug *ImageToTensor::interleaveChannelsPlug()
+{
+	return getChild<BoolPlug>( g_firstPlugIndex + 3 );
+}
+
+const Gaffer::BoolPlug *ImageToTensor::interleaveChannelsPlug() const
+{
+	return getChild<BoolPlug>( g_firstPlugIndex + 3 );
+}
+
+Gaffer::IntPlug *ImageToTensor::tensorElementTypePlug()
+{
+	return getChild<IntPlug>( g_firstPlugIndex + 4 );
+}
+
+const Gaffer::IntPlug *ImageToTensor::tensorElementTypePlug() const
+{
+	return getChild<IntPlug>( g_firstPlugIndex + 4 );
+}
+
+TensorPlug *ImageToTensor::tensorPlug()
+{
+	return getChild<TensorPlug>( g_firstPlugIndex + 5 );
+}
+
+const TensorPlug *ImageToTensor::tensorPlug() const
+{
+	return getChild<TensorPlug>( g_firstPlugIndex + 5 );
+}
+
+void ImageToTensor::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
+{
+	ComputeNode::affects( input, outputs );
+
+	if(
+		input == imagePlug()->viewNamesPlug() ||
+		input == imagePlug()->dataWindowPlug() ||
+		input == imagePlug()->channelNamesPlug() ||
+		input == imagePlug()->channelDataPlug() ||
+		input == viewPlug() ||
+		input == channelsPlug() ||
+		input == interleaveChannelsPlug() ||
+		input == tensorElementTypePlug()
+	)
+	{
+		outputs.push_back( tensorPlug() );
+	}
+}
+
+void ImageToTensor::hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const
+{
+	if( output == tensorPlug() )
+	{
+		ComputeNode::hash( output, context, h );
+
+		ConstStringVectorDataPtr channels = channelsPlug()->getValue();
+		interleaveChannelsPlug()->hash( h );
+		tensorElementTypePlug()->hash( h );
+
+		ImagePlug::ViewScope viewScope( context );
+		const std::string view = viewPlug()->getValue();
+		viewScope.setViewNameChecked( &view, imagePlug()->viewNames().get() );
+
+		ConstStringVectorDataPtr inChannels = imagePlug()->channelNamesPlug()->getValue();
+		for( const auto &channelName : channels->readable() )
+		{
+			if( !ImageAlgo::channelExists( inChannels->readable(), channelName ) )
+			{
+				throw IECore::Exception( fmt::format( "Channel \"{}\" does not exist", channelName ) );
+			}
+		}
+
+		const Box2i dataWindow = imagePlug()->dataWindow();
+
+		ImageAlgo::parallelGatherTiles(
+			imagePlug(),
+			channels->readable(),
+			// Tile
+			[&] ( const ImagePlug *image, const string &channelName, const Imath::V2i &tileOrigin )
+			{
+				IECore::Canceller::check( context->canceller() );
+				return image->channelDataPlug()->hash();
+			},
+			// Gather
+			[&] ( const ImagePlug *image, const string &channelName, const Imath::V2i &tileOrigin, const IECore::MurmurHash &tileHash )
+			{
+				h.append( tileHash );
+			},
+			dataWindow,
+			ImageAlgo::TopToBottom
+		);
+
+		h.append( dataWindow );
+	}
+	else
+	{
+		ComputeNode::hash( output, context, h );
+	}
+}
+
+void ImageToTensor::compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const
+{
+	if( output == tensorPlug() )
+	{
+		ConstStringVectorDataPtr channelsData = channelsPlug()->getValue();
+		const auto &channels = channelsData->readable();
+		const bool interleaveChannels = interleaveChannelsPlug()->getValue();
+
+		ImagePlug::ViewScope viewScope( context );
+		const std::string view = viewPlug()->getValue();
+		viewScope.setViewNameChecked( &view, imagePlug()->viewNames().get() );
+
+		ConstStringVectorDataPtr inChannels = imagePlug()->channelNamesPlug()->getValue();
+		for( const auto &channelName : channels )
+		{
+			if( !ImageAlgo::channelExists( inChannels->readable(), channelName ) )
+			{
+				throw IECore::Exception( fmt::format( "Channel \"{}\" does not exist", channelName ) );
+			}
+		}
+
+		const int tensorElementType = tensorElementTypePlug()->getValue();
+
+		ConstTensorPtr tensor;
+		if( tensorElementType == (int)Tensor::ElementType::Float )
+		{
+			tensor = typedImageTensor<float>( imagePlug(), channels, interleaveChannels, context->canceller() );
+		}
+		else if( tensorElementType == (int)Tensor::ElementType::Float16 )
+		{
+			tensor = typedImageTensor<half>( imagePlug(), channels, interleaveChannels, context->canceller() );
+		}
+		else if( tensorElementType == (int)Tensor::ElementType::BFloat16 )
+		{
+			tensor = typedImageTensor<Ort::BFloat16_t>( imagePlug(), channels, interleaveChannels, context->canceller() );
+		}
+		else
+		{
+			throw IECore::Exception( "Invalid output data type." );
+		}
+
+		static_cast<TensorPlug *>( output )->setValue( tensor );
+	}
+	else
+	{
+		ComputeNode::compute( output, context );
+	}
+}
+
+Gaffer::ValuePlug::CachePolicy ImageToTensor::hashCachePolicy( const Gaffer::ValuePlug *output ) const
+{
+	if( output == tensorPlug() )
+	{
+		return ValuePlug::CachePolicy::TaskCollaboration;
+	}
+	return ComputeNode::hashCachePolicy( output );
+}
+
+Gaffer::ValuePlug::CachePolicy ImageToTensor::computeCachePolicy( const Gaffer::ValuePlug *output ) const
+{
+	if( output == tensorPlug() )
+	{
+		return ValuePlug::CachePolicy::TaskCollaboration;
+	}
+	return ComputeNode::computeCachePolicy( output );
+}
+

@@ -1,0 +1,603 @@
+//////////////////////////////////////////////////////////////////////////
+//
+//  Copyright (c) 2026, Cinesite VFX Ltd. All rights reserved.
+//
+//  Redistribution and use in source and binary forms, with or without
+//  modification, are permitted provided that the following conditions are
+//  met:
+//
+//      * Redistributions of source code must retain the above
+//        copyright notice, this list of conditions and the following
+//        disclaimer.
+//
+//      * Redistributions in binary form must reproduce the above
+//        copyright notice, this list of conditions and the following
+//        disclaimer in the documentation and/or other materials provided with
+//        the distribution.
+//
+//      * Neither the name of John Haddon nor the names of
+//        any other contributors to this software may be used to endorse or
+//        promote products derived from this software without specific prior
+//        written permission.
+//
+//  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+//  IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+//  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+//  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+//  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+//  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+//  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+//  PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+//  LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+//  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+//  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+//////////////////////////////////////////////////////////////////////////
+
+#include "GafferScene/Private/PointInstancerAlgo.h"
+
+#include "GafferScene/SceneAlgo.h"
+
+#include "IECore/DataAlgo.h"
+#include "IECore/NullObject.h"
+
+#include "Imath/ImathMatrixAlgo.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+using namespace std;
+using namespace Imath;
+using namespace IECore;
+using namespace IECoreScene;
+using namespace Gaffer;
+using namespace GafferScene;
+
+ScenePlug::ScenePath Private::PointInstancerAlgo::fullPrototypePath( const std::string &prototypePath, const ScenePlug::ScenePath &pointInstancerPath )
+{
+	if( prototypePath.empty() )
+	{
+		throw IECore::Exception( "Prototype path empty" );
+	}
+
+	if( prototypePath[0] == '/' )
+	{
+		return ScenePlug::stringToPath( prototypePath );
+	}
+	else
+	{
+		ScenePlug::ScenePath result;
+		if( prototypePath[0] == '.' && prototypePath.size() >= 2 && prototypePath[1] == '/' )
+		{
+			ScenePlug::stringToPath( prototypePath.substr( 2 ), result );
+		}
+		else
+		{
+			ScenePlug::stringToPath( prototypePath, result );
+		}
+		result.insert( result.begin(), pointInstancerPath.begin(), pointInstancerPath.end() );
+		return result;
+	}
+}
+
+IECore::MurmurHash Private::PointInstancerAlgo::prototypesHash( const ScenePlug *scene )
+{
+	MurmurHash result;
+	ConstObjectPtr object = scene->objectPlug()->getValue();
+	auto pointInstancer = runTimeCast<const PointInstancer>( object.get() );
+	if( !pointInstancer )
+	{
+		return result;
+	}
+
+	auto prototypePaths = pointInstancer->getPrototypes();
+	if( !prototypePaths )
+	{
+		return result;
+	}
+
+	const auto &currentPath = Context::current()->get<ScenePlug::ScenePath>( ScenePlug::scenePathContextName );
+
+	const ThreadState &threadState = ThreadState::current();
+	tbb::task_group_context taskGroupContext( tbb::task_group_context::isolated );
+
+	using PrototypeRange = tbb::blocked_range<PrimitiveVariable::IndexedView<string>::Iterator>;
+
+	return tbb::parallel_deterministic_reduce(
+
+		PrototypeRange( prototypePaths.begin(), prototypePaths.end() ),
+		MurmurHash(),
+
+		[&] ( const PrototypeRange &range, MurmurHash hash )
+		{
+			Context::EditableScope scope( threadState );
+			for( auto it = range.begin(); it != range.end(); ++it )
+			{
+				auto fullPath = fullPrototypePath( *it, currentPath );
+				if( scene->exists( fullPath ) )
+				{
+					hash.append( SceneAlgo::hierarchyHash( scene, fullPath ) );
+				}
+			}
+			return hash;
+		},
+
+		[] ( MurmurHash x, const MurmurHash &y ) {
+			x.append( y );
+			return x;
+		},
+
+		tbb::simple_partitioner(),
+		taskGroupContext
+	);
+}
+
+std::vector<IECoreScenePreview::Renderer::Prototype> Private::PointInstancerAlgo::prototypes( const IECoreScene::PointInstancer *instancer, const RendererAlgo::RenderOptions &renderOptions, const ScenePlug *scene, IECoreScenePreview::Renderer *renderer )
+{
+	auto prototypePaths = instancer->getPrototypes();
+	if( !prototypePaths )
+	{
+		return {};
+	}
+
+	std::vector<IECoreScenePreview::Renderer::Prototype> result;
+	result.resize( prototypePaths.size() );
+
+	const auto &currentPath = Context::current()->get<ScenePlug::ScenePath>( ScenePlug::scenePathContextName );
+	const ThreadState &threadState = ThreadState::current();
+	tbb::task_group_context taskGroupContext( tbb::task_group_context::isolated );
+
+	tbb::parallel_for(
+
+		tbb::blocked_range<size_t>( 0, prototypePaths.size() ),
+
+		[&]( const tbb::blocked_range<size_t> &r )
+		{
+			ScenePlug::PathScope prototypeScope( threadState );
+			IECoreScenePreview::Renderer::SampleTimes sampleTimes;
+
+			for( size_t prototypeIndex = r.begin(); prototypeIndex != r.end(); ++prototypeIndex )
+			{
+				auto fullPath = fullPrototypePath( prototypePaths[prototypeIndex], currentPath );
+				prototypeScope.setPath( &fullPath );
+				if( !scene->existsPlug()->getValue() )
+				{
+					IECore::msg(
+						IECore::Msg::Warning, "PointInstancer", "Prototype `{}` does not exist for instancer `{}`.",
+						ScenePlug::pathToString( fullPath ), ScenePlug::pathToString( currentPath )
+					);
+					continue;
+				}
+
+				ConstCompoundObjectPtr rootAttributes = scene->fullAttributes( fullPath );
+
+				IECoreScenePreview::Renderer::Prototype &prototype = result[prototypeIndex];
+
+				deformationMotionTimes( renderOptions, rootAttributes.get(), prototype.times );
+				auto sampledObject = GafferScene::Private::RendererAlgo::objectSamples( scene->objectPlug(), prototype.times );
+				prototype.samples = sampledObject->samples;
+				prototype.times = sampledObject->sampleTimes;
+				prototype.attributes = renderer->attributes( rootAttributes.get() );
+			}
+
+		},
+
+		taskGroupContext
+	);
+
+
+	return result;
+}
+
+namespace
+{
+
+struct PrototypeLocation
+{
+	string path;
+	Imath::M44f transform;
+	int index = 0;
+};
+
+using FlattenedPrototype = vector<PrototypeLocation>;
+
+M44f flattenedTransform( const ScenePlug *scene, ScenePlug::ScenePath path, size_t rootPathSize )
+{
+	ScenePlug::PathScope pathScope( Context::current() );
+
+	Imath::M44f result;
+	while( path.size() >= rootPathSize )
+	{
+		pathScope.setPath( &path );
+		result = result * scene->transformPlug()->getValue();
+		path.pop_back();
+	}
+
+	return result;
+}
+
+FlattenedPrototype flattenedPrototype( const Private::RendererAlgo::RenderOptions &renderOptions, const ScenePlug *scene, const string &rootPath, const ScenePlug::ScenePath &fullRootPath )
+{
+	FlattenedPrototype result;
+	SceneAlgo::parallelGatherLocations(
+		scene,
+		[&]( const ScenePlug *scene, const ScenePlug::ScenePath &path ) -> std::optional<PrototypeLocation> {
+
+			ConstCompoundObjectPtr fullAttributes = scene->fullAttributes( path );
+			if( !renderOptions.purposeIncluded( fullAttributes.get() ) )
+			{
+				return std::nullopt;
+			}
+
+			ConstObjectPtr o = scene->objectPlug()->getValue();
+			if( runTimeCast<const IECore::NullObject>( o.get() ) )
+			{
+				return std::nullopt;
+			}
+
+			ScenePlug::ScenePath relativePath( path.begin() + fullRootPath.size(), path.end() );
+			// Note : `PrototypeLocation::index` is filled later.
+			return PrototypeLocation{
+				relativePath.size() ? rootPath + ScenePlug::pathToString( relativePath ) : rootPath,
+				flattenedTransform( scene, path, fullRootPath.size() )
+			};
+		},
+		[&]( std::optional<PrototypeLocation> location ) {
+			if( location )
+			{
+				result.push_back( *location );
+			}
+		},
+		fullRootPath
+	);
+
+	// `parallelGatherLocations()` doesn't guarantee order - sort so we
+	// have a deterministic order for testing and debugging.
+	std::sort(
+		result.begin(), result.end(),
+		[]( const PrototypeLocation &a, const PrototypeLocation &b ) {
+			return a.path < b.path;
+		}
+	);
+
+	return result;
+}
+
+struct FlattenedPrimitiveVariable
+{
+	using FlattenFunction = std::function<void ( size_t sourceIndex, size_t flattenedIndex, size_t numFlattenedPoints )>;
+	DataPtr data;
+	FlattenFunction flattenFunction;
+};
+
+FlattenedPrimitiveVariable createFlattenedPrimitiveVariable( const PrimitiveVariable &primitiveVariable, size_t flattenedSize )
+{
+	FlattenedPrimitiveVariable result;
+	IECore::dispatch(
+
+		primitiveVariable.data.get(),
+
+		[&]( auto typedData ) -> void {
+
+			using DataType = remove_const_t<remove_pointer_t<decltype( typedData )>>;
+
+			if constexpr( TypeTraits::IsVectorTypedData<DataType>::value )
+			{
+				typename DataType::Ptr flattenedData = new DataType;
+				flattenedData->writable().resize( flattenedSize );
+				result.data = flattenedData;
+				if constexpr( TypeTraits::IsGeometricTypedData<DataType>::value )
+				{
+					flattenedData->setInterpretation( typedData->getInterpretation() );
+				}
+
+				using ElementType = typename DataType::ValueType::value_type;
+				PrimitiveVariable::IndexedView<ElementType> indexedView( primitiveVariable );
+
+				result.flattenFunction = [indexedView, &out=flattenedData->writable()] ( size_t sourceIndex, size_t flattenedIndex, size_t numFlattenedPoints ) {
+					std::fill( out.begin() + flattenedIndex, out.begin() + flattenedIndex + numFlattenedPoints, indexedView[sourceIndex] );
+				};
+			}
+		}
+
+	);
+	return result;
+}
+
+// Equivalent to Imath's `extractAndRemoveScalingAndShear()` followed by
+// `extractQuat()`, but without aborting for zero scale.
+void extractScaleAndOrientation( const M44f &m, V3f &scale, Quatf &orientation )
+{
+	V3f row[3] = {
+		V3f( m[0][0], m[0][1], m[0][2] ),
+		V3f( m[1][0], m[1][1], m[1][2] ),
+		V3f( m[2][0], m[2][1], m[2][2] )
+	};
+
+	// Normalize by the largest coefficient first, to avoid loss of precision
+	// (or underflow) in the `.length()` calls below when the matrix contains
+	// very small values. We undo this at the end by scaling `scale` back up.
+	float maxVal = 0.0f;
+	for( int i = 0; i < 3; ++i )
+	{
+		for( int j = 0; j < 3; ++j )
+		{
+			maxVal = std::max( maxVal, std::abs( row[i][j] ) );
+		}
+	}
+
+	if( maxVal > 0.0f )
+	{
+		row[0] /= maxVal;
+		row[1] /= maxVal;
+		row[2] /= maxVal;
+	}
+
+	// Compute X scale factor, and normalize first row.
+	scale.x = row[0].length();
+	const bool xScaleDegenerate = !Imath::checkForZeroScaleInRow( scale.x, row[0], /* exc = */ false );
+	if( !xScaleDegenerate )
+	{
+		row[0] /= scale.x;
+	}
+
+	// Remove XY shear by making the second row orthogonal to the first, then
+	// compute Y scale and normalize the second row.
+	row[1] -= row[0].dot( row[1] ) * row[0];
+	scale.y = row[1].length();
+	const bool yScaleDegenerate = !Imath::checkForZeroScaleInRow( scale.y, row[1], /* exc = */ false );
+	if( !yScaleDegenerate )
+	{
+		row[1] /= scale.y;
+	}
+
+	// Remove XZ and YZ shear by orthogonalizing the third row against the
+	// first two, then compute Z scale and normalize the third row.
+	row[2] -= row[0].dot( row[2] ) * row[0];
+	row[2] -= row[1].dot( row[2] ) * row[1];
+	scale.z = row[2].length();
+	const bool zScaleDegenerate = !Imath::checkForZeroScaleInRow( scale.z, row[2], /* exc = */ false );
+	if( !zScaleDegenerate )
+	{
+		row[2] /= scale.z;
+	}
+
+	scale *= maxVal;
+
+	// At most one row can be degenerate (zero length) and still leave us
+	// enough information to reconstruct a valid orientation - reconstruct it
+	// via the cross product of the other two, already-orthonormal, rows. Two
+	// or more degenerate rows leave nothing to reconstruct from, so we fall
+	// back to an identity orientation.
+	const int numDegenerate = int( xScaleDegenerate ) + int( yScaleDegenerate ) + int( zScaleDegenerate );
+	if( numDegenerate > 1 )
+	{
+		orientation = Quatf();
+		return;
+	}
+	else if( numDegenerate == 1 )
+	{
+		if( xScaleDegenerate )
+		{
+			row[0] = row[1].cross( row[2] );
+		}
+		else if( yScaleDegenerate )
+		{
+			row[1] = row[2].cross( row[0] );
+		}
+		else
+		{
+			row[2] = row[0].cross( row[1] );
+		}
+	}
+	// Check for a coordinate system flip. If the determinant is negative,
+	// negate the matrix and the scale factors to compensate.
+	else if( row[0].dot( row[1].cross( row[2] ) ) < 0.0f )
+	{
+		row[0] *= -1; row[1] *= -1; row[2] *= -1;
+		scale *= -1;
+	}
+
+	// The rows are now orthonormal, so form a pure rotation matrix from which
+	// we can extract the orientation.
+	orientation = extractQuat(
+		M44f(
+			row[0].x, row[0].y, row[0].z, 0.0f,
+			row[1].x, row[1].y, row[1].z, 0.0f,
+			row[2].x, row[2].y, row[2].z, 0.0f,
+			0.0f, 0.0f, 0.0f, 1.0f
+		)
+	);
+}
+
+} // namespace
+
+IECoreScene::PointInstancerPtr Private::PointInstancerAlgo::flatten( const IECoreScene::PointInstancer *instancer, const RendererAlgo::RenderOptions &renderOptions, const ScenePlug *scene )
+{
+	auto prototypePaths = instancer->getPrototypes();
+	auto prototypeIndex = instancer->getPrototypeIndex();
+
+	if( !prototypePaths || !prototypeIndex )
+	{
+		return instancer->copy();
+	}
+
+	// For each prototype, get a flattened list of descendant locations
+	// with non-empty objects.
+
+	vector<FlattenedPrototype> flattenedPrototypes;
+	flattenedPrototypes.resize( prototypePaths.size() );
+
+	const auto &currentPath = Context::current()->get<ScenePlug::ScenePath>( ScenePlug::scenePathContextName );
+	const ThreadState &threadState = ThreadState::current();
+	tbb::task_group_context taskGroupContext( tbb::task_group_context::isolated );
+
+	tbb::parallel_for(
+
+		tbb::blocked_range<size_t>( 0, prototypePaths.size() ),
+
+		[&]( const tbb::blocked_range<size_t> &r )
+		{
+			ScenePlug::PathScope prototypeScope( threadState );
+
+			for( size_t prototypeIndex = r.begin(); prototypeIndex != r.end(); ++prototypeIndex )
+			{
+				auto fullPath = fullPrototypePath( prototypePaths[prototypeIndex], currentPath );
+				prototypeScope.setPath( &fullPath );
+				if( !scene->existsPlug()->getValue() )
+				{
+					IECore::msg(
+						IECore::Msg::Warning, "PointInstancer", "Prototype `{}` does not exist for instancer `{}`.",
+						ScenePlug::pathToString( fullPath ), ScenePlug::pathToString( currentPath )
+					);
+					continue;
+				}
+
+				flattenedPrototypes[prototypeIndex] = flattenedPrototype( renderOptions, scene, prototypePaths[prototypeIndex], fullPath );
+			}
+
+		},
+
+		taskGroupContext
+	);
+
+	// Assign indices to flattened prototypes.
+
+	StringVectorDataPtr flattenedPrototypeRootsData = new StringVectorData;
+	auto &flattenedPrototypeRoots = flattenedPrototypeRootsData->writable();
+	int offset = 0;
+	for( auto &flattenedPrototype : flattenedPrototypes )
+	{
+		for( auto &location : flattenedPrototype )
+		{
+			location.index = offset++;
+			flattenedPrototypeRoots.push_back( location.path );
+		}
+	}
+
+	// Figure out how many points we'll have after flattening and allocate
+	// vertex data for them. Also calculate per-point offsets into the data so
+	// we can fill it in parallel.
+
+	PointInstancer::VisibilityQuery visibilityQuery( *instancer );
+
+	vector<size_t> pointOffsets; pointOffsets.reserve( prototypeIndex.size() );
+	size_t numFlattenedPoints = 0;
+	const size_t hiddenPointOffset = std::numeric_limits<size_t>::max(); // Sentinel to indicate a point has been hidden.
+	for( size_t pointIndex = 0; pointIndex < prototypeIndex.size(); ++pointIndex )
+	{
+		if(
+			prototypeIndex[pointIndex] >= 0 &&
+			(size_t)prototypeIndex[pointIndex] < flattenedPrototypes.size() &&
+			visibilityQuery.visible( pointIndex )
+		)
+		{
+			pointOffsets[pointIndex] = numFlattenedPoints;
+			numFlattenedPoints += flattenedPrototypes[prototypeIndex[pointIndex]].size();
+		}
+		else
+		{
+			pointOffsets[pointIndex] = hiddenPointOffset;
+		}
+	}
+
+	PointInstancerPtr result = new PointInstancer( numFlattenedPoints );
+	result->setPrototypes( flattenedPrototypeRootsData );
+
+	IntVectorDataPtr flattenedPrototypeIndicesData = new IntVectorData;
+	result->setPrototypeIndex( flattenedPrototypeIndicesData );
+	auto &flattenedPrototypeIndices = flattenedPrototypeIndicesData->writable();
+	flattenedPrototypeIndices.resize( numFlattenedPoints );
+
+	V3fVectorDataPtr flattenedPositionData = new V3fVectorData;
+	result->setPosition( flattenedPositionData );
+	auto &flattenedPosition = flattenedPositionData->writable();
+	flattenedPosition.resize( numFlattenedPoints );
+
+	V3fVectorDataPtr flattenedScaleData = new V3fVectorData;
+	result->setScale( flattenedScaleData );
+	auto &flattenedScale = flattenedScaleData->writable();
+	flattenedScale.resize( numFlattenedPoints );
+
+	QuatfVectorDataPtr flattenedOrientationData = new QuatfVectorData;
+	result->setOrientation( flattenedOrientationData );
+	auto &flattenedOrientation = flattenedOrientationData->writable();
+	flattenedOrientation.resize( numFlattenedPoints );
+
+	Int64VectorDataPtr flattenedIDData;
+	vector<int64_t> *flattenedID = nullptr;
+	auto id = instancer->getID();
+	if( id )
+	{
+		flattenedIDData = new Int64VectorData();
+		result->setID( flattenedIDData );
+		flattenedID = &flattenedIDData->writable();
+		flattenedID->resize( numFlattenedPoints );
+	}
+
+	vector<FlattenedPrimitiveVariable::FlattenFunction> primitiveVariableFunctions;
+	for( const auto &[name, primitiveVariable] : instancer->instanceAttributes() )
+	{
+		FlattenedPrimitiveVariable f = createFlattenedPrimitiveVariable( primitiveVariable, numFlattenedPoints );
+		if( f.data )
+		{
+			primitiveVariableFunctions.push_back( f.flattenFunction );
+			result->variables[name] = PrimitiveVariable( primitiveVariable.interpolation, f.data );
+		}
+	}
+
+	// Fill the vertex data, parallelising across points.
+
+	PointInstancer::TransformQuery transformQuery( *instancer );
+
+	tbb::parallel_for(
+
+		tbb::blocked_range<size_t>( 0, prototypeIndex.size() ),
+
+		[&]( const tbb::blocked_range<size_t> &r )
+		{
+
+			for( size_t pointIndex = r.begin(); pointIndex < r.end(); ++pointIndex )
+			{
+				if( pointOffsets[pointIndex] == hiddenPointOffset )
+				{
+					continue;
+				}
+
+				size_t flattenedPointIndex = pointOffsets[pointIndex];
+				for( const auto &location : flattenedPrototypes[prototypeIndex[pointIndex]] )
+				{
+					flattenedPrototypeIndices[flattenedPointIndex] = location.index;
+
+					M44f m = location.transform * transformQuery.transform( pointIndex );
+					flattenedPosition[flattenedPointIndex] = m.translation();
+
+					extractScaleAndOrientation( m, flattenedScale[flattenedPointIndex], flattenedOrientation[flattenedPointIndex] );
+
+					if( flattenedID )
+					{
+						(*flattenedID)[flattenedPointIndex] = id[pointIndex];
+					}
+
+					flattenedPointIndex++;
+				}
+
+				for( const auto &f : primitiveVariableFunctions )
+				{
+					/// \todo Investigate the `std::function` call overhead,
+					/// which we are paying for each source point. We might be
+					/// faster dispatching per primitive variable instead, but
+					/// then we would need a different approach to the
+					/// threading.
+					f( pointIndex, pointOffsets[pointIndex], flattenedPrototypes[prototypeIndex[pointIndex]].size() );
+				}
+			}
+
+		},
+
+		taskGroupContext
+	);
+
+	return result;
+}

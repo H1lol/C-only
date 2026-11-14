@@ -1,0 +1,537 @@
+##########################################################################
+#
+#  Copyright (c) 2012, John Haddon. All rights reserved.
+#
+#  Redistribution and use in source and binary forms, with or without
+#  modification, are permitted provided that the following conditions are
+#  met:
+#
+#      * Redistributions of source code must retain the above
+#        copyright notice, this list of conditions and the following
+#        disclaimer.
+#
+#      * Redistributions in binary form must reproduce the above
+#        copyright notice, this list of conditions and the following
+#        disclaimer in the documentation and/or other materials provided with
+#        the distribution.
+#
+#      * Neither the name of John Haddon nor the names of
+#        any other contributors to this software may be used to endorse or
+#        promote products derived from this software without specific prior
+#        written permission.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+#  IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+#  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+#  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+#  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+#  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#  PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#  LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+##########################################################################
+
+import contextlib
+import locale
+import math
+import os
+import sys
+import unittest
+import inspect
+import subprocess
+import types
+import shutil
+import tempfile
+import traceback
+import functools
+import pathlib
+import stat
+import time
+
+import imath
+
+import IECore
+
+import Gaffer
+
+## A useful base class for creating test cases for nodes.
+class TestCase( unittest.TestCase ) :
+
+	# If any messages of this level (or lower) are emitted during a test, it
+	# will automatically be failed. Set to None to disable message checking.
+	failureMessageLevel = IECore.MessageHandler.Level.Warning
+
+	def setUp( self ) :
+
+		self.__temporaryDirectory = None
+		self.__alternateMountTemporaryDirectory = None
+		self.__messagesToIgnore = set()
+
+		# Set up a capturing message handler so that `tearDown()` can assert
+		# that no undesired messages are triggered by the tests. If any such
+		# messages are actually expected during testing, the relevant tests
+		# should use their own CapturingMessageHandler to grab them and then
+		# assert that they are as expected, or call `self.ignoreMessage()`. We
+		# also set up a tee to the default message handler, which is useful as
+		# it allows errors to be seen at the time they occur, rather than after
+		# the test has completed.
+		self.__defaultMessageHandler = IECore.MessageHandler.getDefaultHandler()
+		testMessageHandler = IECore.CompoundMessageHandler()
+		testMessageHandler.addHandler( self.__defaultMessageHandler )
+
+		self.__failureMessageHandler = IECore.CapturingMessageHandler()
+		if self.failureMessageLevel is not None :
+			testMessageHandler.addHandler( IECore.LevelFilteredMessageHandler( self.__failureMessageHandler, self.failureMessageLevel ) )
+
+		IECore.MessageHandler.setDefaultHandler( testMessageHandler )
+
+		# Clear the cache and hash cache so that each test starts afresh. This is
+		# important for tests which use monitors to assert that specific
+		# processes are being invoked as expected.
+		Gaffer.ValuePlug.clearCache()
+		Gaffer.ValuePlug.clearHashCache()
+
+		# Stash a copy of the current environment, so we can restore it
+		# in `tearDown()`. This allows tests to make temporary modifications
+		# without needing to do manual cleanup.
+		self.__originalEnv = os.environ.copy()
+
+	def tearDown( self ) :
+
+		# Restore the original environment.
+
+		for key, value in self.__originalEnv.items() :
+			if os.environ.get( key ) != value :
+				os.environ[key] = value
+
+		for key in list( os.environ.keys() ) :
+			if key not in self.__originalEnv :
+				del os.environ[key]
+
+		assert( os.environ == self.__originalEnv )
+
+		# Clear any previous exceptions, as they can be holding
+		# references to resources we would like to die. This is
+		# important for both the UI tests where we wish to check
+		# that all widgets have been destroyed, and also for the
+		# shutdown tests that are run when the test application
+		# exits.
+
+		if self._outcome.expectedFailure is not None :
+			# Clear the references to local variables in
+			# the traceback associated with the expected
+			# failure.
+			traceback.clear_frames( self._outcome.expectedFailure[1].__traceback__ )
+
+		# Garbage collect any wrapped RefCounted classes (they have an internal
+		# circular reference from C++->Python->C++), so they are destroyed now
+		# rather than potentially polluting other tests. Note that we're _not_
+		# also calling `gc.collect()` because our intention is to never create
+		# circular references in Python code, and
+		# `GafferUITest.TestCast.tearDown()` is checking for them in all Widget
+		# subclasses.
+		## \todo Fix Cortex so that wrapped classes don't require garbage collection.
+		IECore.RefCounted.collectGarbage()
+
+		if self.__temporaryDirectory is not None :
+			if os.name == "nt" :
+				def makeWritable( p ) :
+					subprocess.check_call(
+						[ "icacls", p, "/grant", "Users:(OI)(CI)(W)" ],
+						stdout = subprocess.DEVNULL,
+						stderr = subprocess.STDOUT
+					)
+				makeWritable( self.__temporaryDirectory )
+				for root, dirs, files in os.walk( self.__temporaryDirectory ) :
+					for fileName in files + dirs :
+						makeWritable( pathlib.Path( root ) / fileName )
+
+			for root, dirs, files in os.walk( self.__temporaryDirectory ) :
+				for fileName in [ p for p in files + dirs if not ( pathlib.Path( root ) / p ).is_symlink() ] :
+					( pathlib.Path( root ) / fileName ).chmod( stat.S_IRWXU )
+
+			shutil.rmtree( self.__temporaryDirectory )
+
+		if self.__alternateMountTemporaryDirectory is not None :
+			# For the moment, just do the simple version here. I assume we'd only need to do the
+			# complicated stuff we do for __temporaryDirectory if we were putting non-writable files in it.
+			shutil.rmtree( self.__alternateMountTemporaryDirectory )
+
+
+		IECore.MessageHandler.setDefaultHandler( self.__defaultMessageHandler )
+
+		for message in self.__failureMessageHandler.messages :
+			message = "{} : {} : {}".format( IECore.Msg.levelAsString( message.level ), message.context, message.message )
+			if message not in self.__messagesToIgnore :
+				self.fail( f"Unexpected message : {message}" )
+
+	@classmethod
+	def setUpClass( cls ) :
+
+		unittest.TestCase.setUpClass()
+
+		cls.__alternateMountRootDirectory = None
+
+
+	@classmethod
+	def tearDownClass( cls ) :
+
+		unittest.TestCase.tearDownClass()
+
+		if not cls.__alternateMountRootDirectory is None:
+			if sys.platform == "darwin" :
+				subprocess.check_call( [ "hdiutil", "detach", cls.__alternateMountRootDirectory ] )
+			elif sys.platform == "linux" :
+				shutil.rmtree( cls.__alternateMountRootDirectory )
+			elif sys.platform == "win32" :
+				subprocess.check_call( [ "net", "share", "gafferTestLocalShare", "/delete" ] )
+				shutil.rmtree( cls.__windowsMountSource )
+			cls.__alternateMountRootDirectory = None
+
+	## Registers a message that will be ignored if it is emitted during the
+	# test run, instead of triggering a failure.
+	def ignoreMessage( self, level, context, message ) :
+
+		self.__messagesToIgnore.add( "{} : {} : {}".format( IECore.Msg.levelAsString( level ), context, message ) )
+
+	## Returns a path to a directory the test may use for temporary
+	# storage. This will be cleaned up automatically after the test
+	# has been run.
+	def temporaryDirectory( self ) :
+
+		if self.__temporaryDirectory is None :
+			self.__temporaryDirectory = pathlib.Path( tempfile.mkdtemp( prefix = "gafferTest" ) )
+
+		return self.__temporaryDirectory
+
+	@classmethod
+	def __alternateMount( cls ) :
+		if cls.__alternateMountRootDirectory is None:
+			if sys.platform == "darwin" :
+				cls.__alternateMountRootDirectory = pathlib.Path( "/Volumes/GafferTest" )
+				assert( not cls.__alternateMountRootDirectory.exists() )
+				image = subprocess.check_output( [ "hdiutil", "attach", "-nomount", "ram://1024" ] ).strip()
+				subprocess.check_call( [ "diskutil", "erasevolume", "HFS+", "GafferTest", image ] )
+			elif sys.platform == "linux" :
+				cls.__alternateMountRootDirectory = pathlib.Path( "/dev/shm/GafferTest" )
+				assert( not cls.__alternateMountRootDirectory.exists() )
+				cls.__alternateMountRootDirectory.mkdir()
+			elif sys.platform == "win32" :
+				cls.__windowsMountSource = pathlib.Path( tempfile.mkdtemp( prefix = "gafferTest" ) )
+				subprocess.check_call( [ "net", "share", "gafferTestLocalShare=" + str( cls.__windowsMountSource ), "/grant:Everyone,FULL" ] )
+				cls.__alternateMountRootDirectory = pathlib.Path( "//localhost/gafferTestLocalShare" )
+			else :
+				raise IECore.Exception( "Unknown platform " + sys.platform )
+
+		return cls.__alternateMountRootDirectory
+
+	## Returns a path to a directory the test may use for temporary
+	# storage. This directory is on a different physical disk than the regular temporaryDirectory(),
+	# allowing for testing situations where we can't rename or hardlink files ( currently achieved
+	# by using a RAM disk on Mac and Linux, and a net share on Windows ).
+	# This will be cleaned up automatically after the test has been run.
+	def alternateMountTemporaryDirectory( self ) :
+
+		if self.__alternateMountTemporaryDirectory is None :
+			if not self.__alternateMount() is None :
+				self.__alternateMountTemporaryDirectory = pathlib.Path( tempfile.mkdtemp( prefix = "gafferTest", dir = self.__alternateMount()  ) )
+
+		return self.__alternateMountTemporaryDirectory
+
+	## Returns a context manager that sets the locale
+	# on enter and restores it on exit.
+	@staticmethod
+	@contextlib.contextmanager
+	def scopedLocale( l, category = locale.LC_CTYPE ) :
+
+		previousLocale = locale.getlocale( category )
+		locale.setlocale( category, l )
+		yield
+		locale.setlocale( category, previousLocale )
+
+	## Similar to `assertAlmostEqual( delta = error )` but works with Imath
+	# types like `V3f` etc.
+	## \todo Use more widely - there are lots of existing tests that could
+	# be more concise and/or give better failure messages if they used this.
+	def assertEqualWithAbsError( self, x, y, error, message = "" ) :
+
+		if hasattr( x, "equalWithAbsError" ) :
+			equal = x.equalWithAbsError( y, error )
+		elif isinstance( x, imath.Color4f ) :
+			equal = True
+			for i in range( 0, 4 ) :
+				equal = equal and math.fabs( x[i] - y[i] ) <= error
+		elif isinstance( x, imath.Quatf ) :
+			equal = x.v().equalWithAbsError( y.v(), error )
+			equal = equal and math.fabs( x.r() - y.r() ) <= error
+		else :
+			equal = math.fabs( x - y ) <= error
+
+		if not equal :
+			message = f" : {message}" if message else ""
+			raise self.failureException(
+				f"{x} != {y} with error of {error}{message}"
+			)
+
+	## Runs `fn` repeatedly until it no longer asserts or `timeout` is
+	# reached. Useful for polling the output of an interactive render
+	# while waiting for a condition to be reached.
+	def assertEventually( self, fn, timeout = 10.0, interval = 0.1, delayFn = time.sleep ) :
+
+		if not callable( fn ) :
+			raise TypeError( "assertEventually requires a callable" )
+
+		start = time.time()
+		errors = []
+
+		while True :
+			try :
+				fn()
+				return
+			except AssertionError as e :
+				elapsed = time.time() - start
+				errors.append( ( elapsed, f"{e}" ) )
+				if elapsed >= timeout :
+					break
+				delayFn( min( interval, timeout - elapsed ) )
+				interval *= 2.0
+
+		attempts = "\n".join( f"{timestamp:8.2f}s : {error}" for timestamp, error in errors )
+		raise AssertionError(
+			f"Timed out after {elapsed:.2f}s : {errors[-1][1]}\n\nAttempts:\n{attempts}"
+		)
+
+	## Attempts to ensure that the hashes for a node
+	# are reasonable by jiggling around input values
+	# and checking that the hash changes when it should.
+	def assertHashesValid( self, node, inputsToIgnore=[], outputsToIgnore=[] ) :
+
+		# find all input ValuePlugs
+		inputPlugs = []
+		def __walkInputs( parent ) :
+			for child in parent.children() :
+				if len( child ) :
+					__walkInputs( child )
+				elif isinstance( child, Gaffer.ValuePlug ) :
+					if child not in inputsToIgnore :
+						inputPlugs.append( child )
+		__walkInputs( node )
+
+		self.assertGreater( len( inputPlugs ), 0 )
+
+		numTests = 0
+		for inputPlug in inputPlugs :
+			for outputPlug in node.affects( inputPlug ) :
+
+				if outputPlug in outputsToIgnore :
+					continue
+
+				hash = outputPlug.hash()
+
+				value = inputPlug.getValue()
+				if isinstance( value, float ) :
+					increment = 0.1
+				elif isinstance( value, int ) :
+					increment = 1
+				elif isinstance( value, str ) :
+					increment = "a"
+				else :
+					# don't know how to deal with this
+					# value type.
+					continue
+
+				inputPlug.setValue( value + increment )
+				if inputPlug.getValue() == value :
+					inputPlug.setValue( value - increment )
+				if inputPlug.getValue() == value :
+					continue
+
+				self.assertNotEqual( outputPlug.hash(), hash, outputPlug.fullName() + " hash not affected by " + inputPlug.fullName() )
+
+				# Set value back to the input value
+				# ( The calling code may have set up plugs in a specific state, because some plugs may
+				# have no affect in certain states )
+				inputPlug.setValue( value )
+
+				numTests += 1
+
+		self.assertGreater( numTests, 0 )
+
+	def assertTypeNamesArePrefixed( self, module, namesToIgnore = () ) :
+
+		incorrectTypeNames = []
+		for name in dir( module ) :
+
+			cls = getattr( module, name )
+			if not inspect.isclass( cls ) :
+				continue
+
+			if issubclass( cls, IECore.RunTimeTyped ) :
+				if cls.staticTypeName() in namesToIgnore :
+					continue
+				if cls.staticTypeName() != module.__name__.replace( ".", "::" ) + "::" + cls.__name__ :
+					incorrectTypeNames.append( cls.staticTypeName() )
+
+		self.assertEqual( incorrectTypeNames, [] )
+
+	def assertDefaultNamesAreCorrect( self, module, namesToIgnore = () ) :
+
+		for name in dir( module ) :
+
+			cls = getattr( module, name )
+			if not inspect.isclass( cls ) or not issubclass( cls, Gaffer.GraphComponent ) :
+				continue
+
+			try :
+				instance = cls()
+			except :
+				continue
+
+			if instance.getName() in namesToIgnore :
+				continue
+
+			self.assertEqual( instance.getName(), cls.staticTypeName().rpartition( ":" )[2] )
+
+	def __nodeHasDescription( self, node ) :
+
+		description = Gaffer.Metadata.value( node, "description" )
+		if (not description) or description.isspace() :
+			# No description.
+			return False
+
+		try :
+			baseNode = [x for x in cls.__bases__ if issubclass( x, Gaffer.Node )][0]()
+		except :
+			return True
+
+		return description != Gaffer.Metadata.value( baseNode, "description" )
+
+	def __undocumentedPlugs( self, node, additionalTerminalPlugTypes = () ) :
+
+		terminalPlugTypes = (
+			Gaffer.ArrayPlug,
+			Gaffer.V2fPlug, Gaffer.V3fPlug,
+			Gaffer.V2iPlug, Gaffer.V3iPlug,
+			Gaffer.Color3fPlug, Gaffer.Color4fPlug,
+			Gaffer.RampffPlug, Gaffer.RampfColor3fPlug, Gaffer.RampfColor4fPlug,
+			Gaffer.Box2iPlug, Gaffer.Box3iPlug,
+			Gaffer.Box2fPlug, Gaffer.Box3fPlug,
+			Gaffer.TransformPlug, Gaffer.Transform2DPlug,
+			Gaffer.CompoundDataPlug.MemberPlug,
+			Gaffer.OptionalValuePlug,
+			additionalTerminalPlugTypes
+		)
+
+		result = []
+		def checkPlugs( graphComponent ) :
+
+			if isinstance( graphComponent, Gaffer.Plug ) and not graphComponent.getName().startswith( "__" ) :
+				description = Gaffer.Metadata.value( graphComponent, "description" )
+				if (not description) or description.isspace() :
+					result.append( graphComponent.fullName() )
+
+			if not isinstance( graphComponent, terminalPlugTypes ) :
+				for plug in graphComponent.children( Gaffer.Plug ) :
+					checkPlugs( plug )
+
+		checkPlugs( node )
+		return result
+
+	def assertNodeIsDocumented( self, node, additionalTerminalPlugTypes = () ) :
+
+		self.assertTrue( self.__nodeHasDescription( node ) )
+		self.assertEqual( self.__undocumentedPlugs( node, additionalTerminalPlugTypes ), [] )
+
+	def assertNodesAreDocumented( self, module, additionalTerminalPlugTypes = (), nodesToIgnore = None ) :
+
+		undocumentedNodes = []
+		undocumentedPlugs = []
+		for name in dir( module ) :
+
+			cls = getattr( module, name )
+			if not inspect.isclass( cls ) or not issubclass( cls, Gaffer.Node ) :
+				continue
+
+			if nodesToIgnore is not None and cls in nodesToIgnore :
+				continue
+
+			if not cls.__module__.startswith( module.__name__ + "." ) :
+				# Skip nodes which look like they've been injected from
+				# another module by one of the compatibility config files.
+				# We use this same test in `DocumentationAlgo.exportNodeReference()`.
+				continue
+
+			try :
+				node = cls()
+			except :
+				continue
+
+			if not self.__nodeHasDescription( node ) :
+				undocumentedNodes.append( node.getName() )
+
+			undocumentedPlugs.extend( self.__undocumentedPlugs( node, additionalTerminalPlugTypes ) )
+
+		self.assertEqual( undocumentedPlugs, [] )
+		self.assertEqual( undocumentedNodes, [] )
+
+	## We don't serialise plug values when they're at their default, so
+	# newly constructed nodes _must_ have all their plugs be at the default value.
+	# Use `nodesToIgnore` with caution : the only good reason for using it is to
+	# ignore compatibility stubs used to load old nodes and convert them into new
+	# ones. If you have an issue that requires ignoring, consider localizing the
+	# problem by using `plugsToIgnore` instead.
+	# Use `plugsToIgnore` with caution : the only good reason for using it is to
+	# allow existing issues to be ignored while still strictly testing the rest of
+	# a particular node. The expected format is a dict mapping node-class to python
+	# plug-identifiers (eg `{ Gaffer.ScriptNode : ( "frameRange.start", ) }` )
+	def assertNodesConstructWithDefaultValues( self, module, nodesToIgnore = None, plugsToIgnore = None ) :
+
+		nonDefaultPlugs = []
+
+		for name in dir( module ) :
+
+			cls = getattr( module, name )
+			if not inspect.isclass( cls ) or not issubclass( cls, Gaffer.Node ) :
+				continue
+
+			if nodesToIgnore is not None and cls in nodesToIgnore :
+				continue
+
+			try :
+				node = cls()
+			except :
+				continue
+
+			for plug in Gaffer.Plug.RecursiveRange( node ) :
+
+				if plugsToIgnore is not None and cls in plugsToIgnore and plug.relativeName( node ) in plugsToIgnore[cls] :
+					continue
+
+				if plug.source().direction() != plug.Direction.In or not isinstance( plug, Gaffer.ValuePlug ) :
+					continue
+
+				if not plug.getFlags( plug.Flags.Serialisable ) :
+					continue
+
+				if not plug.isSetToDefault() :
+					nonDefaultPlugs.append( plug.fullName() + " not at default value following construction" )
+
+		self.assertEqual( nonDefaultPlugs, [] )
+
+	def assertModuleDoesNotImportUI( self, moduleName ) :
+
+		script = self.temporaryDirectory() / "test.py"
+		with open( script, "w", encoding = "utf-8" ) as f :
+			f.write( "import {}\n".format( moduleName ) )
+			f.write( "import sys\n" )
+			f.write( "assert( 'GafferUI' not in sys.modules )\n" )
+
+		subprocess.check_call( [ str( Gaffer.executablePath() ), "python", str( script ) ] )
+
+	def assertFloat32Equal( self, value0, value1 ) :
+
+		from GafferTest import asFloat32
+		self.assertEqual( asFloat32( value0 ), asFloat32( value1 ) )

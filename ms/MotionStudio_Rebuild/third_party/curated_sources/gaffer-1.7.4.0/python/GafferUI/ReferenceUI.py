@@ -1,0 +1,219 @@
+##########################################################################
+#
+#  Copyright (c) 2013, Image Engine Design Inc. All rights reserved.
+#
+#  Redistribution and use in source and binary forms, with or without
+#  modification, are permitted provided that the following conditions are
+#  met:
+#
+#      * Redistributions of source code must retain the above
+#        copyright notice, this list of conditions and the following
+#        disclaimer.
+#
+#      * Redistributions in binary form must reproduce the above
+#        copyright notice, this list of conditions and the following
+#        disclaimer in the documentation and/or other materials provided with
+#        the distribution.
+#
+#      * Neither the name of John Haddon nor the names of
+#        any other contributors to this software may be used to endorse or
+#        promote products derived from this software without specific prior
+#        written permission.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+#  IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+#  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+#  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+#  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+#  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#  PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#  LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+##########################################################################
+
+import os
+import functools
+
+import IECore
+
+import Gaffer
+import GafferUI
+
+Gaffer.Metadata.registerNode(
+
+	Gaffer.Reference,
+
+	"description",
+	"""
+	References a node network stored in another file. This can be used
+	to share resources among scripts, build powerful non-linear workflows,
+	and as the basis for custom asset management.
+
+	To generate a file to be referenced, build a network inside a Box
+	node and then export it for referencing.
+	""",
+
+	"icon", "referenceNode.png",
+
+	"ui:childNodesAreViewable", True,
+	## \todo Deprecate and remove in favour of `ui:childNodesAreViewable`.
+	"graphEditor:childrenViewable", True,
+
+	"layout:customWidget:fileName:widgetType", "GafferUI.ReferenceUI._FileNameWidget"
+
+)
+
+##########################################################################
+# Public functions
+##########################################################################
+
+## A command suitable for use with NodeMenu.append(), to add a menu
+# item for the creation of a Reference by selecting a file. We don't
+# actually append it automatically, but instead let the startup files
+# for particular applications append it if it suits their purposes.
+def nodeMenuCreateCommand( menu ) :
+
+	graphEditor = menu.ancestor( GafferUI.GraphEditor )
+	assert( graphEditor is not None )
+
+	filePath = _waitForFileName( parentWindow = menu.ancestor( GafferUI.Window ) )
+
+	node = Gaffer.Reference()
+	graphEditor.graphGadget().getRoot().addChild( node )
+
+	if filePath :
+		_load( node, filePath, parentWindow = graphEditor.ancestor( GafferUI.Window ) )
+
+	return node
+
+##########################################################################
+# Custom widget for the filename - this forms the header for the node ui.
+##########################################################################
+
+class _FileNameWidget( GafferUI.Widget ) :
+
+	def __init__( self, node, **kw ) :
+
+		row = GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal, spacing = 4 )
+
+		GafferUI.Widget.__init__( self, row, **kw )
+
+		self.__node = node
+
+		with row :
+
+			label = GafferUI.Label( "File", horizontalAlignment = GafferUI.Label.HorizontalAlignment.Right )
+			label._qtWidget().setFixedWidth( GafferUI.PlugWidget.labelWidth() )
+
+			self.__textWidget = GafferUI.TextWidget( node.fileName().as_posix() if node.fileName() is not None else "", editable = False )
+
+			loadButton = GafferUI.Button( image = "pathChooser.png", hasFrame=False )
+			loadButton.setToolTip( "Load" )
+			loadButton.clickedSignal().connect( Gaffer.WeakMethod( self.__loadClicked ) )
+
+			self.__reloadButton = GafferUI.Button( image = "refresh.png", hasFrame=False )
+			self.__reloadButton.setToolTip( "Reload" )
+			self.__reloadButton.clickedSignal().connect( Gaffer.WeakMethod( self.__reloadClicked ) )
+
+		node.referenceLoadedSignal().connect( Gaffer.WeakMethod( self.__referenceLoaded ) )
+
+	def __loadClicked( self, button ) :
+
+		filePath = _waitForFileName( self.__node.fileName(), parentWindow = self.ancestor( GafferUI.Window ) )
+		if filePath is None :
+			return
+
+		with Gaffer.UndoScope( self.__node.scriptNode() ) :
+			_load( self.__node, filePath, self.ancestor( GafferUI.Window ) )
+
+	def __reloadClicked( self, button ) :
+
+		with Gaffer.UndoScope( self.__node.scriptNode() ) :
+			_load( self.__node, self.__node.fileName(), self.ancestor( GafferUI.Window ) )
+
+	def __referenceLoaded( self, node ) :
+
+		self.__textWidget.setText( node.fileName().as_posix() if node.fileName() is not None else "" )
+
+##########################################################################
+# Utilities
+##########################################################################
+
+def _waitForFileName( initialFilePath=None, parentWindow=None ) :
+
+	bookmarks = None
+	if parentWindow is not None :
+		bookmarks = GafferUI.Bookmarks.acquire( parentWindow, category="reference" )
+
+	if initialFilePath is not None :
+		path = Gaffer.FileSystemPath( initialFilePath.absolute().parent )
+	else :
+		path = Gaffer.FileSystemPath( bookmarks.getDefault( parentWindow ) if bookmarks is not None else os.getcwd() )
+
+	path.setFilter( Gaffer.FileSystemPath.createStandardFilter( [ "grf" ] ) )
+
+	dialogue = GafferUI.PathChooserDialogue( path, title = "Load reference", confirmLabel = "Load", valid = True, leaf = True, bookmarks = bookmarks )
+	path = dialogue.waitForPath( parentWindow = parentWindow )
+
+	if not path :
+		return None
+
+	return path.standardPath()
+
+def _load( node, filePath, parentWindow ) :
+
+	with GafferUI.ErrorDialogue.ErrorHandler( title = "Errors Occurred During Loading", closeLabel = "Oy vey", parentWindow = parentWindow ) :
+		node.load( filePath )
+
+##########################################################################
+# GraphEditor node context menu
+##########################################################################
+
+def __duplicateAsBox( graphGadget, nodeList ) :
+
+	script = nodeList[0].scriptNode()
+	with Gaffer.UndoScope( script ) :
+
+		script.selection().clear()
+		for node in nodeList :
+			box = Gaffer.Box( node.getName() + "Copy" )
+			# We don't want to parent the box to `script` until it is
+			# fully loaded (we don't want to emit signals in an intermediate
+			# state). But we need a ScriptNode to be able to perform the loading,
+			# so we use a temporary script for that.
+			temporaryScript = Gaffer.ScriptNode()
+			temporaryScript.addChild( box )
+
+			with GafferUI.ErrorDialogue.ErrorHandler(
+				title = "Errors Occurred During Loading",
+				closeLabel = "Oy vey",
+				parentWindow = GafferUI.ScriptWindow.acquire( graphGadget.getRoot().scriptNode(), createIfNecessary = False ),
+			) :
+				sp = IECore.SearchPath( os.environ.get( "GAFFER_REFERENCE_PATHS", "" ) )
+				temporaryScript.executeFile( sp.find( str( node.fileName() ) ), parent = box, continueOnError = True )
+
+			node.parent().addChild( box )
+
+			graphGadget.getLayout().positionNode(
+				graphGadget, box, fallbackPosition = graphGadget.getNodePosition( node )
+			)
+
+			script.selection().add( box )
+
+def __graphEditorNodeContextMenu( graphEditor, nodeList, menuDefinition ) :
+
+	if not any( isinstance( n, Gaffer.Reference ) for n in nodeList ) :
+		return
+
+	menuDefinition.append(
+		"/Duplicate as Box",
+		{
+			"command" : functools.partial( __duplicateAsBox, graphEditor.graphGadget(), nodeList ),
+			"active" : all( isinstance( n, Gaffer.Reference ) and bool( n.fileName() ) for n in nodeList ),
+		}
+	)
+
+GafferUI.GraphEditor.nodeContextMenuSignal( True ).connect( __graphEditorNodeContextMenu )

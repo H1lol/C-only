@@ -20,10 +20,8 @@ local.properties
 .idea/
 *.iml
 
-# Vendored upstream reference dumps: 292 MB across ~19k files, and the build
-# does not read them (stb_truetype was copied into native/cpp/third_party).
-# See THIRD_PARTY.md for what they are and where they came from.
-third_party/curated_sources/
+# Vendored upstream reference sources are committed on purpose (see
+# THIRD_PARTY.md); they are reference material, not build inputs.
 
 # OS noise
 .DS_Store

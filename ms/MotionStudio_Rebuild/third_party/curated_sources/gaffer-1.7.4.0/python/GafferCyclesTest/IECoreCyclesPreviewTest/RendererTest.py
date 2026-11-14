@@ -1,0 +1,3718 @@
+##########################################################################
+#
+#  Copyright (c) 2022, Cinesite VFX Ltd. All rights reserved.
+#
+#  Redistribution and use in source and binary forms, with or without
+#  modification, are permitted provided that the following conditions are
+#  met:
+#
+#      * Redistributions of source code must retain the above
+#        copyright notice, this list of conditions and the following
+#        disclaimer.
+#
+#      * Redistributions in binary form must reproduce the above
+#        copyright notice, this list of conditions and the following
+#        disclaimer in the documentation and/or other materials provided with
+#        the distribution.
+#
+#      * Neither the name of John Haddon nor the names of
+#        any other contributors to this software may be used to endorse or
+#        promote products derived from this software without specific prior
+#        written permission.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+#  IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+#  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+#  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+#  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+#  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#  PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#  LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+##########################################################################
+
+import pathlib
+import math
+import time
+
+import imath
+import OpenImageIO
+
+import IECore
+import IECoreScene
+import IECoreImage
+import IECoreVDB
+
+import GafferScene
+import GafferCycles
+
+import GafferTest
+
+class RendererTest( GafferTest.TestCase ) :
+
+	@staticmethod
+	def createRenderer( renderType = GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch, extraOptions = {} ) :
+
+		options = {
+			"cycles:session:samples" : IECore.IntData( 16 ),
+		} | extraOptions
+
+		renderer = GafferScene.Private.IECoreScenePreview.Renderer.create( "Cycles", renderType )
+		for name, value in options.items() :
+			renderer.option( name, value )
+
+		return renderer
+
+	@staticmethod
+	def devices() :
+
+		result = []
+
+		for device in GafferCycles.devices.values() :
+			# Cycles fails to render with the virtual metal devices available on CI.
+			if device["type"].value == "METAL" and device["description"].value.startswith( "Apple Paravirtual device" ) :
+				continue
+
+			result.append( device )
+
+		return result
+
+	def testObjectColor( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testObjectColor",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"render:displayColor" : IECore.Color3fData( imath.Color3f( 1, 0.5, 0.25 ) ),
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "emission_strength" : 1 } ),
+						"info" : IECoreScene.Shader( "object_info", "cycles:shader" )
+					},
+					connections = [
+						( ( "info", "color" ), ( "output", "emission_color" ) )
+					],
+					output = "output",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		renderer.render()
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testObjectColor" )
+		self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+
+		# Slightly off-centre, to avoid triangle edge artifact in centre of image.
+		testPixel = self.__colorAtUV( image, imath.V2f( 0.55 ) )
+		self.assertEqual( testPixel.r, 1 )
+		self.assertEqual( testPixel.g, 0.5 )
+		self.assertEqual( testPixel.b, 0.25 )
+
+		del plane
+
+	def testInstancesWithDifferentShaders( self ) :
+
+		renderer = self.createRenderer()
+
+		fileName = self.temporaryDirectory() / "test.exr"
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				str( fileName ),
+				"exr",
+				"rgba",
+				{}
+			)
+		)
+
+		meshPrimitive = IECoreScene.MeshPrimitive.createPlane(
+			imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+		)
+
+		for name, colour, translation in [
+			( "plane1", imath.Color3f( 1, 0, 0 ), imath.V3f( -1, 0, -1 ) ),
+			( "plane2", imath.Color3f( 0, 1, 0 ), imath.V3f( 1, 0, -1 ) ),
+		] :
+
+			plane = renderer.object(
+				name, meshPrimitive,
+				renderer.attributes( IECore.CompoundObject ( {
+					"cycles:surface" : IECoreScene.ShaderNetwork(
+						shaders = {
+							"output" : IECoreScene.Shader( "emission", "cycles:surface", { "strength" : 1, "color" : colour } ),
+						},
+						output = "output",
+					)
+				} ) )
+			)
+			plane.transform( imath.M44f().translate( translation ) )
+			del plane
+
+		renderer.render()
+
+		image = OpenImageIO.ImageBuf( str( fileName ) )
+
+		plane1Color = self.__colorAtUV( image, imath.V2f( 0.25, 0.5 ) )
+		self.assertEqualWithAbsError( plane1Color, imath.Color4f( 1, 0, 0, 1 ), error = 0.01 )
+
+		plane2Color = self.__colorAtUV( image, imath.V2f( 0.75, 0.5 ) )
+		self.assertEqualWithAbsError( plane2Color, imath.Color4f( 0, 1, 0, 1 ), error = 0.01 )
+
+	def testQuadLightColorTexture( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testQuadLightColorTexture",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface" )
+					},
+					output = "output",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		# Pure red light, with the colour being provided by an input shader, _not_
+		# a direct parameter value. This requires some translation in the renderer backend.
+
+		light = renderer.light(
+			"/light",
+			None,
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:light" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "quad_light", "cycles:light", { "exposure" : 5.0 } ),
+						"color" : IECoreScene.Shader( "color", "cycles:shader", { "value" : imath.Color3f( 1, 0, 0 ) } ),
+					},
+					connections = [
+						( "color", ( "output", "color" ) )
+					],
+					output = "output",
+				),
+			} ) )
+		)
+
+		renderer.render()
+
+		# Check that we have a pure red image.
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testQuadLightColorTexture" )
+		self.assertTrue( isinstance( image, IECoreImage.ImagePrimitive ) )
+
+		# Slightly off-centre, to avoid triangle edge artifact in centre of image.
+		testPixel = self.__colorAtUV( image, imath.V2f( 0.55 ) )
+		self.assertGreater( testPixel.r, 0 )
+		self.assertEqual( testPixel.g, 0 )
+		self.assertEqual( testPixel.b, 0 )
+
+		del plane, light
+
+	def testRecycleLightGroups( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testRecycleLightGroups",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface" )
+					},
+					output = "output",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		# Cycles only has 64 distinct light groups, so if more than 64 unique
+		# sets of light links are used, we can't translate the scene accurately.
+		# So for interactive use, we need to be careful to recycle old light
+		# groups to make way for new ones. Here we make 200 unique light sets,
+		# but with only a single one in use at the end, to check that the
+		# recycling works.
+
+		for i in range( 0, 200 ) :
+
+			redLight = renderer.light(
+				"/redLight",
+				None,
+				renderer.attributes( IECore.CompoundObject ( {
+					"cycles:light" : IECoreScene.ShaderNetwork(
+						shaders = {
+							"output" : IECoreScene.Shader( "distant_light", "cycles:light", { "color" : imath.Color3f( 1, 0, 0 ) } ),
+						},
+						output = "output",
+					),
+				} ) )
+			)
+
+			greenLight = renderer.light(
+				"/redLight",
+				None,
+				renderer.attributes( IECore.CompoundObject ( {
+					"cycles:light" : IECoreScene.ShaderNetwork(
+						shaders = {
+							"output" : IECoreScene.Shader( "distant_light", "cycles:light", { "color" : imath.Color3f( 0, 1, 0 ) } ),
+						},
+						output = "output",
+					),
+				} ) )
+			)
+
+			plane.link( "lights", { redLight } )
+
+		# Render, and check that we have a pure red image. If green has crept in,
+		# then we know the light linking was broken.
+
+		renderer.render()
+
+		def assertRed() :
+
+			# Slightly off-centre, to avoid triangle edge artifact in centre of image.
+			testPixel = self.__colorAtUV( "testRecycleLightGroups", imath.V2f( 0.55 ) )
+			self.assertGreater( testPixel.r, 0 )
+			self.assertEqual( testPixel.g, 0 )
+			self.assertEqual( testPixel.b, 0 )
+
+		self.assertEventually( lambda : assertRed() )
+
+		del plane, redLight, greenLight
+
+	def testLightWithoutAttribute( self ) :
+
+		renderer = self.createRenderer()
+
+		# Light destined for another renderer - we want to ignore this, and not crash.
+
+		light = renderer.light(
+			"/light",
+			None,
+			renderer.attributes( IECore.CompoundObject ( {
+				"ai:light" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "quad_light", "ai:light" ),
+					},
+					output = "output",
+				),
+			} ) )
+		)
+		light.transform( imath.M44f().rotate( imath.V3f( 0, math.pi, 0 ) ) )
+
+	def testBackgroundLightWithoutTexture( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testBackgroundLightWithoutTexture",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface" )
+					},
+					output = "output",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		# Pure red light, with the colour being provided by a parameter value,
+		# not an input connection. This requires workarounds for the fact that
+		# Cycles will ignore the light's strength unless a texture is connected.
+
+		light = renderer.light(
+			"/light",
+			None,
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:light" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "background_light", "cycles:light", { "color" : imath.Color3f( 1, 0, 0 ) } ),
+					},
+					output = "output",
+				),
+			} ) )
+		)
+		light.transform( imath.M44f().rotate( imath.V3f( 0, math.pi, 0 ) ) )
+
+		renderer.render()
+
+		# Check that we have a pure red image.
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testBackgroundLightWithoutTexture" )
+		self.assertTrue( isinstance( image, IECoreImage.ImagePrimitive ) )
+
+		middlePixel = self.__colorAtUV( image, imath.V2f( 0.5 ) )
+		self.assertGreater( middlePixel.r, 0 )
+		self.assertEqual( middlePixel.g, 0 )
+		self.assertEqual( middlePixel.b, 0 )
+
+		del plane
+
+	def testCrashWhenNoBackgroundLight( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.option( "cycles:shadingsystem", IECore.StringData( "SVM" ) )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testCrashWhenNoBackgroundLight",
+				}
+			)
+		)
+
+		# This used to crash. If it doesn't crash now, then we are happy.
+		renderer.render()
+
+	def testBackgroundLightBatchRender( self ) :
+
+		renderer = self.createRenderer()
+
+		fileName = self.temporaryDirectory() / "test.exr"
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				str( fileName ),
+				"exr",
+				"rgba",
+				{}
+			)
+		)
+
+		# Set an option that requires a re-created cycles session before rendering starts
+		renderer.option( "cycles:session:use_auto_tile", IECore.BoolData( False ) )
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "base_color" : imath.Color3f( 1, 1, 1 ) } ),
+					},
+					output = "output",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		light = renderer.light(
+			"/light",
+			None,
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:light" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "background_light", "cycles:light", { "color" : imath.Color3f( 1, 0, 0 ) } ),
+					},
+					output = "output",
+				),
+			} ) )
+		)
+		light.transform( imath.M44f().rotate( imath.V3f( 0, math.pi, 0 ) ) )
+
+		renderer.render()
+
+		# Check that we have a pure red image.
+
+		image = OpenImageIO.ImageBuf( str( fileName ) )
+
+		middlePixel = self.__colorAtUV( image, imath.V2f( 0.5 ) )
+		self.assertGreater( middlePixel.r, 0 )
+		self.assertEqual( middlePixel.g, 0 )
+		self.assertEqual( middlePixel.b, 0 )
+
+		del plane
+
+	def testBackgroundLightEdits( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testBackgroundLightEdits",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface" )
+					},
+					output = "output",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		def lightAttributes( color ) :
+
+			return renderer.attributes( IECore.CompoundObject ( {
+				"cycles:light" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "background_light", "cycles:light", { "color" : color } ),
+					},
+					output = "output",
+				),
+			} ) )
+
+		# Render with a red light.
+
+		light = renderer.light( "/light", None, lightAttributes( imath.Color3f( 1, 0, 0 ) ) )
+		renderer.render()
+
+		# Check that we have a pure red image.
+
+		def assertRed() :
+
+			middlePixel = self.__colorAtUV( "testBackgroundLightEdits", imath.V2f( 0.5 ) )
+			self.assertGreater( middlePixel.r, 0 )
+			self.assertEqual( middlePixel.g, 0 )
+			self.assertEqual( middlePixel.b, 0 )
+
+		self.assertEventually( lambda : assertRed() )
+
+		# Rerender with a green light.
+
+		renderer.pause()
+		light.attributes( lightAttributes( imath.Color3f( 0, 1, 0 ) ) )
+		renderer.render()
+
+		# Check that we have a pure green image.
+
+		def assertGreen() :
+
+			middlePixel = self.__colorAtUV( "testBackgroundLightEdits", imath.V2f( 0.5 ) )
+			self.assertEqual( middlePixel.r, 0 )
+			self.assertGreater( middlePixel.g, 0 )
+			self.assertEqual( middlePixel.b, 0 )
+
+		self.assertEventually( lambda : assertGreen() )
+
+		# Rerender with a blue light.
+
+		renderer.pause()
+		light.attributes( lightAttributes( imath.Color3f( 0, 0, 1 ) ) )
+		renderer.render()
+
+		# Check that we have a pure blue image.
+
+		def assertBlue() :
+
+			middlePixel = self.__colorAtUV( "testBackgroundLightEdits", imath.V2f( 0.5 ) )
+			self.assertEqual( middlePixel.r, 0 )
+			self.assertEqual( middlePixel.g, 0 )
+			self.assertGreater( middlePixel.b, 0 )
+
+		self.assertEventually( lambda : assertBlue() )
+
+		# Rerender without the light.
+
+		renderer.pause()
+		del light
+		renderer.render()
+
+		# Check that we have a pure black image.
+
+		self.assertEventually(
+			lambda : self.assertEqual( self.__colorAtUV( "testBackgroundLightEdits", imath.V2f( 0.55 ) ), imath.Color4f( 0, 0, 0, 1 ) )
+		)
+
+		renderer.pause()
+		del plane
+
+	def testBackgroundShader( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testBackgroundShader",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface" )
+					},
+					output = "output",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		def backgroundShader( color ) :
+
+			return IECoreScene.ShaderNetwork(
+				shaders = {
+					"output" : IECoreScene.Shader( "checker_texture", "cycles:shader", { "color1" : color, "color2" : color } ),
+				},
+				output = "output",
+			)
+
+		# Render with no background, and check we have a black image.
+
+		renderer.render()
+
+		self.assertEventually(
+			lambda : self.assertEqual( self.__colorAtUV( "testBackgroundShader", imath.V2f( 0.55 ) ), imath.Color4f( 0, 0, 0, 1 ) )
+		)
+
+		# Render with a red background.
+
+		renderer.pause()
+		renderer.option( "cycles:background:shader", backgroundShader( imath.Color3f( 1, 0, 0 ) ) )
+		renderer.render()
+
+		# Check that we have a pure red image.
+
+		def assertRed() :
+
+			middlePixel = self.__colorAtUV( "testBackgroundShader", imath.V2f( 0.5 ) )
+			self.assertGreater( middlePixel.r, 0 )
+			self.assertEqual( middlePixel.g, 0 )
+			self.assertEqual( middlePixel.b, 0 )
+
+		self.assertEventually( lambda : assertRed() )
+
+		# Render with a green background.
+
+		renderer.pause()
+		renderer.option( "cycles:background:shader", backgroundShader( imath.Color3f( 0, 1, 0 ) ) )
+		renderer.render()
+
+		# Check that we have a pure green image.
+
+		def assertGreen() :
+
+			middlePixel = self.__colorAtUV( "testBackgroundShader", imath.V2f( 0.5 ) )
+			self.assertEqual( middlePixel.r, 0 )
+			self.assertGreater( middlePixel.g, 0 )
+			self.assertEqual( middlePixel.b, 0 )
+
+		self.assertEventually( lambda : assertGreen() )
+
+		# Render with a red background again.
+
+		renderer.pause()
+		renderer.option( "cycles:background:shader", backgroundShader( imath.Color3f( 1, 0, 0 ) ) )
+		renderer.render()
+
+		# Check that we have gone back to a pure red image.
+
+		self.assertEventually( lambda : assertRed() )
+
+		# Remove background, and check we have a black image.
+
+		renderer.pause()
+		renderer.option( "cycles:background:shader", None )
+		renderer.render()
+
+		self.assertEventually(
+			lambda : self.assertEqual( self.__colorAtUV( "testBackgroundShader", imath.V2f( 0.55 ) ), imath.Color4f( 0, 0, 0, 1 ) )
+		)
+
+		renderer.pause()
+		del plane
+
+	def testMultipleOutputs( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.output(
+			"testOutput:beauty",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testMultipleOutputs:beauty",
+				}
+			)
+		)
+
+		renderer.output(
+			"testOutput:normal",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"normal",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testMultipleOutputs:normal",
+				}
+			)
+		)
+
+		renderer.render()
+
+		beauty = IECoreImage.ImageDisplayDriver.storedImage( "testMultipleOutputs:beauty" )
+		self.assertTrue( isinstance( beauty, IECoreImage.ImagePrimitive ) )
+
+		normal = IECoreImage.ImageDisplayDriver.storedImage( "testMultipleOutputs:normal" )
+		self.assertTrue( isinstance( normal, IECoreImage.ImagePrimitive ) )
+
+	def testCommand( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		# Unknown commands that claim to be for Cycles should emit a warning.
+
+		with IECore.CapturingMessageHandler() as mh :
+			self.assertIsNone( renderer.command( "cycles:thisCommandDoesNotExist", {} ) )
+
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].level, IECore.MessageHandler.Level.Warning )
+		self.assertEqual( mh.messages[0].context, "CyclesRenderer::command" )
+		self.assertEqual( mh.messages[0].message, 'Unknown command "cycles:thisCommandDoesNotExist"' )
+
+		# Unknown commands without a renderer prefix should also emit a warning.
+
+		with IECore.CapturingMessageHandler() as mh :
+			self.assertIsNone( renderer.command( "thisCommandDoesNotExist", {} ) )
+
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].level, IECore.MessageHandler.Level.Warning )
+		self.assertEqual( mh.messages[0].context, "CyclesRenderer::command" )
+		self.assertEqual( mh.messages[0].message, 'Unknown command "thisCommandDoesNotExist"' )
+
+		# Unknown commands for some other renderer should be silently ignored.
+
+		with IECore.CapturingMessageHandler() as mh :
+			self.assertIsNone( renderer.command( "gl:renderToCurrentContext", {} ) )
+
+		self.assertEqual( len( mh.messages ), 0 )
+
+	def testUnconvertibleObject( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		# We don't expect renderers other than OpenGL to have any support
+		# for the Placeholder object. Here we're just checking that the Cycles
+		# renderer doesn't crash if given a placeholder.
+
+		o = renderer.object(
+			"/test",
+			GafferScene.Private.IECoreScenePreview.Placeholder(),
+			renderer.attributes( IECore.CompoundObject ( {} ) )
+		)
+
+		del o
+
+		# Likewise for CoordinateSystems and NullObjects.
+
+		o = renderer.object(
+			"/coordinateSystem",
+			IECoreScene.CoordinateSystem(),
+			renderer.attributes( IECore.CompoundObject ( {} ) )
+		)
+		del o
+
+		o = renderer.object(
+			"/nullObject",
+			IECore.NullObject.defaultNullObject(),
+			renderer.attributes( IECore.CompoundObject ( {} ) )
+		)
+		del o
+
+	def testCameraAttributeEdits( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		camera = renderer.camera( "test", IECoreScene.Camera() )
+
+		# Edit should succeed.
+		self.assertTrue( camera.attributes(
+			renderer.attributes( IECore.CompoundObject( { "user:test" : IECore.IntData( 10 ) } ) )
+		) )
+
+		del camera
+
+	def testDisplayDriverCropWindow( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.camera(
+			"testCamera",
+			IECoreScene.Camera(
+				parameters = {
+					"resolution" : imath.V2i( 2000, 1000 ),
+					"cropWindow" : imath.Box2f( imath.V2f( 0.25 ), imath.V2f( 0.75 ) ),
+				}
+			)
+		)
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					# This driver type will throw if it receives tiles
+					# outside the data window.
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testCropWindow",
+				}
+			)
+		)
+
+		renderer.option( "camera", IECore.StringData( "testCamera" ) )
+		renderer.render()
+		del renderer
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testCropWindow" )
+		self.assertIsNotNone( image )
+		self.assertEqual( image.dataWindow, imath.Box2i( imath.V2i( 500, 250 ), imath.V2i( 1499, 749 ) ) )
+		self.assertEqual( image.displayWindow, imath.Box2i( imath.V2i( 0 ), imath.V2i( 1999, 999 ) ) )
+
+	def testOutputFileCropWindow( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.camera(
+			"testCamera",
+			IECoreScene.Camera(
+				parameters = {
+					"resolution" : imath.V2i( 2000, 1000 ),
+					"cropWindow" : imath.Box2f( imath.V2f( 0.25 ), imath.V2f( 0.75 ) ),
+				}
+			)
+		)
+
+		fileName = self.temporaryDirectory() / "test.exr"
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				str( fileName ),
+				"exr",
+				"rgba",
+				{}
+			)
+		)
+
+		renderer.option( "camera", IECore.StringData( "testCamera" ) )
+		renderer.render()
+
+		imageSpec = OpenImageIO.ImageInput.open( str( fileName ) ).spec()
+		self.assertEqual( ( imageSpec.x, imageSpec.y ), ( 500, 250 ) )
+		self.assertEqual( ( imageSpec.width, imageSpec.height ), ( 1000, 500 ) )
+
+		self.assertEqual( ( imageSpec.full_x, imageSpec.full_y ), ( 0, 0 ) )
+		self.assertEqual( ( imageSpec.full_width, imageSpec.full_height ), ( 2000, 1000 ) )
+
+	def testPointsWithNormals( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.output(
+			"pointsWithNormals",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "pointsWithNormals",
+				}
+			)
+		)
+
+		# Render a point with a custom normal.
+
+		points = IECoreScene.PointsPrimitive(
+			IECore.V3fVectorData( [ imath.V3f( 0 ) ] )
+		)
+		points["N"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Vertex,
+			IECore.V3fVectorData(
+				[ imath.V3f( 1, 0.5, 0.25 ) ],
+				IECore.GeometricData.Interpretation.Normal
+			)
+		)
+
+		pointsObject = renderer.object(
+			"/pointsWithNormals",
+			points,
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "emission_strength" : 1 } ),
+						"attribute" : IECoreScene.Shader( "attribute", "cycles:shader", { "attribute" : "N" } ),
+					},
+					connections = [
+						( ( "attribute", "color" ), ( "output", "emission_color" ) ),
+					],
+					output = "output",
+				)
+			} ) )
+		)
+		pointsObject.transform( imath.M44f().translate( imath.V3f( 0, 0, -2 ) ) )
+
+		renderer.render()
+
+		del pointsObject
+		del renderer
+
+		# Check that the shader was able to read the normal.
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "pointsWithNormals" )
+		self.assertTrue( isinstance( image, IECoreImage.ImagePrimitive ) )
+
+		color = self.__colorAtUV( image, imath.V2f( 0.5 ) )
+		self.assertEqualWithAbsError( imath.Color3f( color.r, color.g, color.b ), points["N"].data[0].normalize(), 0.0001 )
+
+	@GafferTest.TestRunner.CategorisedTestMethod( { "pointInstancer" } )
+	def testPointInstancerWithEmptyPrototype( self ) :
+
+		renderer = GafferScene.Private.IECoreScenePreview.Renderer.create(
+			"Cycles",
+			GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch
+		)
+
+		pointInstancer = IECoreScene.PointInstancer( 1 )
+		pointInstancer.setPosition( IECore.V3fVectorData( [ imath.V3f( 0 ) ] ) )
+		pointInstancer.setPrototypeIndex( IECore.IntVectorData( [ 0 ] ) )
+
+		attributes = renderer.attributes( IECore.CompoundObject() )
+
+		prototype = GafferScene.Private.IECoreScenePreview.Renderer.Prototype(
+			[], [], attributes
+		)
+
+		# We're just happy if this doesn't crash - no need to assert anything.
+		renderer.pointInstancer( "test", [ pointInstancer ], [ 0.0 ], [ prototype ], attributes )
+		renderer.render()
+
+		del attributes
+		del renderer
+
+	@GafferTest.TestRunner.CategorisedTestMethod( { "pointInstancer" } )
+	def testPointInstancerWithMissingPrototypeIndices( self ) :
+
+		renderer = GafferScene.Private.IECoreScenePreview.Renderer.create(
+			"Cycles",
+			GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch
+		)
+
+		pointInstancer = IECoreScene.PointInstancer( 1 )
+		pointInstancer.setPosition( IECore.V3fVectorData( [ imath.V3f( 0 ) ] ) )
+
+		attributes = renderer.attributes( IECore.CompoundObject() )
+
+		prototype = GafferScene.Private.IECoreScenePreview.Renderer.Prototype(
+			[ IECoreScene.SpherePrimitive() ], [ 0.0 ], attributes
+		)
+
+		# We're just happy if this doesn't crash - no need to assert anything.
+		renderer.pointInstancer( "test", [ pointInstancer ], [ 0.0 ], [ prototype ], attributes )
+		renderer.render()
+
+		del attributes
+		del renderer
+
+	def __testMeshSmoothing( self, cube, smoothingExpected ) :
+
+		renderer = self.createRenderer()
+
+		renderer.output(
+			"meshSmoothing",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "meshSmoothing",
+				}
+			)
+		)
+
+		# Render the cube, rotated so an edge faces the camera, shaded with the
+		# standard facing-ratio shader.
+
+		cubeObject = renderer.object( "/cube", cube, renderer.attributes( IECore.CompoundObject() ) )
+		cubeObject.transform( imath.M44f().translate( imath.V3f( 0, 0, -2 ) ).rotate( imath.V3f( 0, math.pi / 4.0, 0 ) ) )
+
+		renderer.render()
+
+		del cubeObject
+		del renderer
+
+		# Check the shading on the center edge, and close to the back left and right edges.
+		# If normals have been smoothed, then the back edges should be close to zero.
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "meshSmoothing" )
+		self.assertTrue( isinstance( image, IECoreImage.ImagePrimitive ) )
+
+		center = self.__colorAtUV( image, imath.V2f( 0.5, 0.5 ) )
+		left = self.__colorAtUV( image, imath.V2f( 0.15, 0.5 ) )
+		right = self.__colorAtUV( image, imath.V2f( 0.85, 0.5 ) )
+
+		# Everything should have solid alpha.
+
+		self.assertEqual( center[3], 1 )
+		self.assertEqual( left[3], 1 )
+		self.assertEqual( right[3], 1 )
+
+		# Shading is down to whether the normals are smoothed or not.
+
+		if smoothingExpected :
+			# Center normal faces straight at us
+			self.assertGreater( center[0], 0.95 )
+			# Outer normals are close to perpendicular.
+			self.assertLess( left[0], 0.015 )
+			self.assertLess( right[0], 0.015 )
+		else :
+			# Everything faces towards and to the side of us.
+			self.assertGreater( center[0], 0.4 )
+			self.assertGreater( left[0], 0.4 )
+			self.assertGreater( right[0], 0.4 )
+
+	def testNoMeshNormals( self ) :
+
+		cube = IECoreScene.MeshPrimitive.createBox( imath.Box3f( imath.V3f( -0.5 ), imath.V3f( 0.5 ) ) )
+		del cube["N"]
+		self.__testMeshSmoothing( cube, smoothingExpected = False )
+
+	def testFaceVaryingMeshNormals( self ) :
+
+		cube = IECoreScene.MeshPrimitive.createBox( imath.Box3f( imath.V3f( -0.5 ), imath.V3f( 0.5 ) ) )
+		self.__testMeshSmoothing( cube, smoothingExpected = False )
+
+	def testVertexMeshNormals( self ) :
+
+		cube = IECoreScene.MeshPrimitive.createBox( imath.Box3f( imath.V3f( -0.5 ), imath.V3f( 0.5 ) ) )
+		cube["N"] = IECoreScene.MeshAlgo.calculateVertexNormals( cube, IECoreScene.MeshAlgo.NormalWeighting.Equal )
+		self.__testMeshSmoothing( cube, smoothingExpected = True )
+
+	def testUniformMeshNormals( self ) :
+
+		cube = IECoreScene.MeshPrimitive.createBox( imath.Box3f( imath.V3f( -0.5 ), imath.V3f( 0.5 ) ) )
+		cube["N"] = IECoreScene.MeshAlgo.calculateUniformNormals( cube )
+		self.__testMeshSmoothing( cube, smoothingExpected = False )
+
+	def testUnsupportedMeshNormals( self ) :
+
+		renderer = self.createRenderer()
+		attributes = renderer.attributes( IECore.CompoundObject() )
+
+		cube = IECoreScene.MeshPrimitive.createBox( imath.Box3f( imath.V3f( -0.5 ), imath.V3f( 0.5 ) ) )
+
+		for interpolation in (
+			IECoreScene.PrimitiveVariable.Interpolation.Uniform,
+			IECoreScene.PrimitiveVariable.Interpolation.Vertex,
+			IECoreScene.PrimitiveVariable.Interpolation.FaceVarying,
+		) :
+			with self.subTest( interpolation = interpolation ) :
+
+				cube = cube.copy()
+				cube["N"] = IECoreScene.PrimitiveVariable(
+					interpolation,
+					IECore.V3iVectorData( [ imath.V3i( 0, 1, 0 ) ] * cube.variableSize( interpolation ), IECore.GeometricData.Interpretation.Normal )
+				)
+
+				with IECore.CapturingMessageHandler() as mh :
+
+					renderer.object( str( interpolation ), cube, attributes )
+
+					self.assertEqual( len( mh.messages ), 1 )
+					self.assertEqual(
+						mh.messages[0].message,
+						"Primitive variable \"N\" has unsupported type \"V3iVectorData\" (expected V3fVectorData)."
+					)
+
+	def testUnsupportedPrimitiveVariables( self ) :
+
+		renderer = self.createRenderer()
+		attributes = renderer.attributes( IECore.CompoundObject() )
+
+		primitive = IECoreScene.PointsPrimitive( IECore.V3fVectorData( [ imath.V3f( 0 ) ] ) )
+
+		for data in [
+			IECore.StringData(),
+			IECore.StringVectorData(),
+			IECore.Box3fData(),
+			IECore.Box3fVectorData()
+		] :
+
+			primitive = primitive.copy()
+			primitive["test"] = IECoreScene.PrimitiveVariable(
+				IECoreScene.PrimitiveVariable.Interpolation.Constant, data
+			)
+
+			with IECore.CapturingMessageHandler() as mh :
+
+				renderer.object( data.typeName(), primitive, attributes )
+
+				self.assertEqual( len( mh.messages ), 1 )
+				self.assertRegex(
+					mh.messages[0].message,
+					"Primitive variable \"test\" has unsupported type \"{}\"".format( data.typeName() )
+				)
+
+	def __testPrimitiveVariableInterpolation( self, primitive, primitiveVariable, expectedPixels, maxDifference = 0.0, attributeName = None ) :
+
+		attributeName = primitiveVariable if attributeName is None else attributeName
+
+		renderer = self.createRenderer(
+			extraOptions = { "cycles:session:samples" : IECore.IntData( 512 ) } if isinstance( primitive, IECoreScene.CurvesPrimitive ) else {}
+		)
+
+		# Frame the primitive so it fills the entire image.
+
+		renderer.camera(
+			"testCamera",
+			IECoreScene.Camera(
+				parameters = {
+					"resolution" : imath.V2i( 100, 100 ),
+					"projection" : "orthographic",
+					"screenWindow" : imath.Box2f( imath.V2f( -0.5 ), imath.V2f( 0.5 ) )
+				}
+			)
+		)
+		renderer.option( "camera", IECore.StringData( "testCamera" ) )
+
+		fileName = self.temporaryDirectory() / "test.exr"
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				str( fileName ),
+				"exr",
+				"rgba",
+				{}
+			)
+		)
+
+		# Render with a constant shader showing the primitive variable
+
+		shader = IECoreScene.ShaderNetwork(
+			shaders = {
+				"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "base_color" : imath.Color3f( 0 ), "emission_strength" : 1 } ),
+				"attribute" : IECoreScene.Shader( "attribute", "cycles:shader", { "attribute" : attributeName } ),
+			},
+			connections = [
+				( ( "attribute", "color" ), ( "output", "emission_color" ) ),
+			],
+			output = "output",
+		)
+
+		primitiveHandle = renderer.object( "primitive", primitive, renderer.attributes( IECore.CompoundObject( { "cycles:surface" : shader } ) ) )
+		primitiveHandle.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		renderer.render()
+		del primitiveHandle
+
+		# Check we got what we expected
+
+		image = OpenImageIO.ImageBuf( str( fileName ) )
+
+		for uv, expectedColor in expectedPixels.items() :
+
+			if isinstance( expectedColor, imath.V3f ) :
+				expectedColor = imath.Color4f( expectedColor[0], expectedColor[1], expectedColor[2], 1 )
+			elif isinstance( expectedColor, ( imath.V2f, imath.V2i ) ) :
+				expectedColor = imath.Color4f( expectedColor[0], expectedColor[1], 0, 1 )
+			elif isinstance( expectedColor, ( int, float ) ) :
+				expectedColor = imath.Color4f( expectedColor, expectedColor, expectedColor, 1 )
+
+			color = self.__colorAtUV( image, uv )
+			self.assertEqualWithAbsError( color, expectedColor, maxDifference )
+
+	def testMeshPrimitiveVariableInterpolation( self ) :
+
+		# Plane with 3x3 faces and primitive variables with various interpolations.
+
+		plane = IECoreScene.MeshPrimitive.createPlane(
+			imath.Box2f( imath.V2f( -0.5 ), imath.V2f( 0.5 ) ),
+			imath.V2i( 3 )
+		)
+
+		plane["constantColor"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Constant,
+			IECore.Color3fData( imath.Color3f( 0, 0.5, 1 ) ),
+		)
+
+		plane["constantInt"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Constant,
+			IECore.IntData( 1 ),
+		)
+
+		plane["uniformColor"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Uniform,
+			IECore.Color3fVectorData( [
+				imath.Color3f( i, i, i )
+				for i in range( 0, plane.variableSize( IECoreScene.PrimitiveVariable.Interpolation.Uniform ) )
+			] )
+		)
+
+		plane["uniformIndexedColor"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Uniform,
+			IECore.Color3fVectorData( [ imath.Color3f( 1, 0, 0 ), imath.Color3f( 0, 1, 0 ) ] ),
+			IECore.IntVectorData( [
+				i % 2
+				for i in range( 0, plane.variableSize( IECoreScene.PrimitiveVariable.Interpolation.Uniform ) )
+			] )
+		)
+
+		plane["vertexColor"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Vertex,
+			IECore.Color3fVectorData( [
+				imath.Color3f( uv.x, uv.y, 0 ) for uv in plane["uv"].data
+			] )
+		)
+
+		plane["varyingColor"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Varying,
+			plane["vertexColor"].data
+		)
+
+		# Image UV coordinates of the center of particular faces.
+
+		topLeft = imath.V2f( 1/6.0, 1/6.0 )
+		topCenter = imath.V2f( 0.5, 1/6.0 )
+		center = imath.V2f( 0.5, 0.5 )
+		bottomRight = imath.V2f( 5/6.0 )
+
+		# Tests for each of the primitive variables.
+
+		for interpolation in [ "linear", "catmullClark" ] :
+
+			for triangulate in [ False, True ] :
+
+				with self.subTest( interpolation = interpolation, triangulate = triangulate ) :
+
+					if triangulate :
+						testPlane = IECoreScene.MeshAlgo.triangulate( plane )
+					else :
+						testPlane = plane.copy()
+
+					testPlane.setInterpolation( interpolation )
+
+					self.__testPrimitiveVariableInterpolation(
+						testPlane, "constantColor",
+						{
+							topLeft : plane["constantColor"].data.value,
+							topCenter : plane["constantColor"].data.value,
+							center : plane["constantColor"].data.value,
+							bottomRight : plane["constantColor"].data.value,
+						}
+					)
+
+					self.__testPrimitiveVariableInterpolation(
+						testPlane, "constantInt",
+						{
+							topLeft : plane["constantInt"].data.value,
+							topCenter : plane["constantInt"].data.value,
+							center : plane["constantInt"].data.value,
+							bottomRight : plane["constantInt"].data.value,
+						}
+					)
+
+					self.__testPrimitiveVariableInterpolation(
+						testPlane, "uniformColor",
+						{
+							topLeft : imath.Color4f( 6, 6, 6, 1 ),
+							topCenter : imath.Color4f( 7, 7, 7, 1 ),
+							center : imath.Color4f( 4, 4, 4, 1 ),
+							bottomRight : imath.Color4f( 2, 2, 2, 1 ),
+						}
+					)
+
+					self.__testPrimitiveVariableInterpolation(
+						testPlane, "uniformIndexedColor",
+						{
+							topLeft : imath.Color4f( 1, 0, 0, 1 ),
+							topCenter : imath.Color4f( 0, 1, 0, 1 ),
+							center : imath.Color4f( 1, 0, 0, 1 ),
+							bottomRight : imath.Color4f( 1, 0, 0, 1 ),
+						}
+					)
+
+					self.__testPrimitiveVariableInterpolation(
+						testPlane, "vertexColor",
+						{
+							topLeft : imath.Color4f( topLeft.x, 1.0 - topLeft.y, 0, 1 ),
+							topCenter : imath.Color4f( topCenter.x, 1.0 - topCenter.y, 0, 1 ),
+							center : imath.Color4f( center.x, 1.0 - center.y, 0, 1 ),
+							bottomRight : imath.Color4f( bottomRight.x, 1.0 - bottomRight.y, 0, 1 ),
+						},
+						maxDifference = 0.01
+					)
+
+					self.__testPrimitiveVariableInterpolation(
+						testPlane, "varyingColor",
+						{
+							topLeft : imath.Color4f( topLeft.x, 1.0 - topLeft.y, 0, 1 ),
+							topCenter : imath.Color4f( topCenter.x, 1.0 - topCenter.y, 0, 1 ),
+							center : imath.Color4f( center.x, 1.0 - center.y, 0, 1 ),
+							bottomRight : imath.Color4f( bottomRight.x, 1.0 - bottomRight.y, 0, 1 ),
+						},
+						maxDifference = 0.01
+					)
+
+	def testPointsPrimitiveVariableInterpolation( self ) :
+
+		# 3 points diagonally
+
+		points = IECoreScene.PointsPrimitive(
+			IECore.V3fVectorData( [ imath.V3f( -0.5, 0.5, 0 ), imath.V3f( 0 ), imath.V3f( 0.5, -0.5, 0 ) ] )
+		)
+		points["width"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Constant,
+			IECore.FloatData( 0.1 )
+		)
+
+		points["uniformColor"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Uniform,
+			IECore.Color3fVectorData( [ imath.Color3f( 1, 0.5, 0.25 ) ] )
+		)
+
+		points["vertexColor"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Vertex,
+			IECore.Color3fVectorData( [
+				imath.Color3f( p.x + 0.5, p.y + 0.5, 0 ) for p in points["P"].data
+			] )
+		)
+
+		points["varyingColor"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Varying,
+			points["vertexColor"].data
+		)
+
+		# Image UV coordinates of each point
+
+		topLeft = imath.V2f( 0, 0 )
+		center = imath.V2f( 0.5 )
+		bottomRight = imath.V2f( 1, 1 )
+
+		# Tests for each of the primitive variables.
+
+		## \todo Fix and enable. As far as I can tell, we're passing the data
+		# to Cycles correctly, but it just doesn't make it through to the shader.
+		if False :
+			self.__testPrimitiveVariableInterpolation(
+				points, "uniformColor",
+				{
+					topLeft : points["uniformColor"].data[0],
+					center : points["uniformColor"].data[0],
+					bottomRight : points["uniformColor"].data[0],
+				}
+			)
+
+		self.__testPrimitiveVariableInterpolation(
+			points, "vertexColor",
+			{
+				topLeft : imath.Color4f( 0, 1, 0, 1 ),
+				center : imath.Color4f( 0.5, 0.5, 0, 1 ),
+				bottomRight : imath.Color4f( 1, 0, 0, 1 ),
+			}
+		)
+
+		self.__testPrimitiveVariableInterpolation(
+			points, "varyingColor",
+			{
+				topLeft : imath.Color4f( 0, 1, 0, 1 ),
+				center : imath.Color4f( 0.5, 0.5, 0, 1 ),
+				bottomRight : imath.Color4f( 1, 0, 0, 1 ),
+			}
+		)
+
+	def testCurvesPrimitiveVariableInterpolation( self ) :
+
+		# 3 vertical curves
+
+		curves = IECoreScene.CurvesPrimitive(
+			verticesPerCurve = IECore.IntVectorData( [ 2, 2, 2 ] ),
+			p = IECore.V3fVectorData( [
+				imath.V3f( -0.5, 0.5, 0 ), imath.V3f( -0.5, -0.5, 0 ),
+				imath.V3f( 0, 0.5, 0 ), imath.V3f( 0, -0.5, 0 ),
+				imath.V3f( 0.5, 0.5, 0 ), imath.V3f( 0.5, -0.5, 0 ),
+			] )
+		)
+		curves["width"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Constant,
+			IECore.FloatData( 0.1 )
+		)
+
+		curves["uniformColor"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Uniform,
+			IECore.Color3fVectorData( [ imath.Color3f( i + 1 ) for i in range( 0, 3 ) ] )
+		)
+
+		curves["uniformInt"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Uniform,
+			IECore.IntVectorData( range( 0, 3 ) )
+		)
+
+		curves["uniformV2f"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Uniform,
+			IECore.V2fVectorData( [ imath.V2f( i ) for i in range( 0, 3 ) ] )
+		)
+
+		curves["uniformV2i"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Uniform,
+			IECore.V2iVectorData( [ imath.V2i( i ) for i in range( 0, 3 ) ] )
+		)
+
+		curves["vertexColor"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Vertex,
+			IECore.Color3fVectorData( [
+				imath.Color3f( p.x + 0.5, p.y + 0.5, 0 ) for p in curves["P"].data
+			] )
+		)
+
+		# Image UV coordinates of top and bottom of each curve
+
+		leftTop = imath.V2f( 0, 0 )
+		leftBottom = imath.V2f( 0, 1 )
+		centerTop = imath.V2f( 0.5, 0 )
+		centerBottom = imath.V2f( 0.5, 1 )
+		rightTop = imath.V2f(1, 0 )
+		rightBottom = imath.V2f( 1, 1 )
+
+		# Tests for each of the primitive variables.
+
+		self.__testPrimitiveVariableInterpolation(
+			curves, "uniformColor",
+			{
+				leftTop : curves["uniformColor"].data[0],
+				leftBottom : curves["uniformColor"].data[0],
+				centerTop : curves["uniformColor"].data[1],
+				centerBottom : curves["uniformColor"].data[1],
+				rightTop : curves["uniformColor"].data[2],
+				rightBottom : curves["uniformColor"].data[2],
+			},
+			maxDifference = 0.0003
+		)
+
+		self.__testPrimitiveVariableInterpolation(
+			curves, "uniformInt",
+			{
+				leftTop : imath.Color3f( 0 ),
+				leftBottom : imath.Color3f( 0 ),
+				centerTop : imath.Color3f( 1 ),
+				centerBottom : imath.Color3f( 1 ),
+				rightTop : imath.Color3f( 2 ),
+				rightBottom : imath.Color3f( 2 ),
+			}
+		)
+
+		self.__testPrimitiveVariableInterpolation(
+			curves, "uniformV2f",
+			{
+				leftTop : curves["uniformV2f"].data[0],
+				leftBottom : curves["uniformV2f"].data[0],
+				centerTop : curves["uniformV2f"].data[1],
+				centerBottom : curves["uniformV2f"].data[1],
+				rightTop : curves["uniformV2f"].data[2],
+				rightBottom : curves["uniformV2f"].data[2],
+			}
+		)
+
+		self.__testPrimitiveVariableInterpolation(
+			curves, "uniformV2i",
+			{
+				leftTop : curves["uniformV2i"].data[0],
+				leftBottom : curves["uniformV2i"].data[0],
+				centerTop : curves["uniformV2i"].data[1],
+				centerBottom : curves["uniformV2i"].data[1],
+				rightTop : curves["uniformV2i"].data[2],
+				rightBottom : curves["uniformV2i"].data[2],
+			}
+		)
+
+		self.__testPrimitiveVariableInterpolation(
+			curves, "vertexColor",
+			{
+				leftTop : imath.Color4f( 0, 1, 0, 1 ),
+				leftBottom : imath.Color4f( 0, 0, 0, 1 ),
+				centerTop : imath.Color4f( 0.5, 1, 0, 1 ),
+				centerBottom : imath.Color4f( 0.5, 0, 0, 1 ),
+				rightTop : imath.Color4f( 1, 1, 0, 1 ),
+				rightBottom : imath.Color4f( 1, 0, 0, 1 ),
+			},
+			maxDifference = 0.01
+		)
+
+	def testMeshUVs( self ) :
+
+		plane = IECoreScene.MeshPrimitive.createPlane(
+			imath.Box2f( imath.V2f( -0.5 ), imath.V2f( 0.5 ) ),
+			imath.V2i( 3 )
+		)
+
+		# Image UV coordinates of the center of particular faces.
+
+		topLeft = imath.V2f( 1/6.0, 1/6.0 )
+		topCenter = imath.V2f( 0.5, 1/6.0 )
+		center = imath.V2f( 0.5, 0.5 )
+		bottomRight = imath.V2f( 5/6.0 )
+
+		# Test FaceVarying
+
+		self.assertEqual(
+			plane["uv"].interpolation, IECoreScene.PrimitiveVariable.Interpolation.FaceVarying
+		)
+
+		for interpolation in [ "linear", "catmullClark" ] :
+
+			plane.setInterpolation( interpolation )
+			self.__testPrimitiveVariableInterpolation(
+				plane, "uv",
+				{
+					topLeft : imath.Color4f( topLeft.x, 1.0 - topLeft.y, 0, 1 ),
+					topCenter : imath.Color4f( topCenter.x, 1.0 - topCenter.y, 0, 1 ),
+					center : imath.Color4f( center.x, 1.0 - center.y, 0, 1 ),
+					bottomRight : imath.Color4f( bottomRight.x, 1.0 - bottomRight.y, 0, 1 ),
+				},
+				maxDifference = 0.01
+			)
+
+		# Test Vertex
+
+		uv = plane["uv"]
+		IECoreScene.MeshAlgo.resamplePrimitiveVariable(
+			plane, uv, IECoreScene.PrimitiveVariable.Interpolation.Vertex
+		)
+		plane["uv"] = uv
+
+		self.assertEqual(
+			plane["uv"].interpolation, IECoreScene.PrimitiveVariable.Interpolation.Vertex
+		)
+
+		for interpolation in [ "linear", "catmullClark" ] :
+
+			plane.setInterpolation( interpolation )
+			self.__testPrimitiveVariableInterpolation(
+				plane, "uv",
+				{
+					topLeft : imath.Color4f( topLeft.x, 1.0 - topLeft.y, 0, 1 ),
+					topCenter : imath.Color4f( topCenter.x, 1.0 - topCenter.y, 0, 1 ),
+					center : imath.Color4f( center.x, 1.0 - center.y, 0, 1 ),
+					bottomRight : imath.Color4f( bottomRight.x, 1.0 - bottomRight.y, 0, 1 ),
+				},
+				maxDifference = 0.01
+			)
+
+	def testShaderSubstitutions( self ) :
+
+		renderer = self.createRenderer()
+
+		fileName = self.temporaryDirectory() / "test.exr"
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				str( fileName ),
+				"exr",
+				"rgba",
+				{}
+			)
+		)
+
+		# Render two planes, with the same shader on them both. Each
+		# plane has a different value for the `textureFileName` attribute,
+		# which should be successfully substituted in to make a unique shader
+		# per plane.
+
+		shader = IECoreScene.ShaderNetwork(
+			shaders = {
+				"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "emission_strength" : 1 } ),
+				"texture" : IECoreScene.Shader( "image_texture", "cycles:shader", { "filename" : "<attr:textureFileName>" } )
+			},
+			connections = [
+				( ( "texture", "color" ), ( "output", "emission_color" ) )
+			],
+			output = "output",
+		)
+
+		for translateX, name, color in [
+			( -0.1, "red", imath.Color3f( 1, 0, 0 ) ),
+			( 0.1, "green", imath.Color3f( 0, 1, 0 ) ),
+		] :
+
+			displayWindow = imath.Box2i( imath.V2i( 0 ), imath.V2i( 16 ) )
+			textureImage = IECoreImage.ImagePrimitive.createRGBFloat( color, displayWindow, displayWindow )
+			textureFileName = self.temporaryDirectory() / f"{name}.png"
+			IECoreImage.ImageWriter( textureImage, str( textureFileName ) ).write()
+
+			plane = IECoreScene.MeshPrimitive.createPlane( imath.Box2f( imath.V2f( -0.1 ), imath.V2f( 0.1 ) ) )
+			# Workaround for #4890
+			plane["uniquefier"] = IECoreScene.PrimitiveVariable(
+				IECoreScene.PrimitiveVariable.Interpolation.Constant,
+				IECore.FloatData( translateX ),
+			)
+
+			cyclesPlane = renderer.object(
+				"{}Plane".format( name ), plane,
+				renderer.attributes( IECore.CompoundObject( {
+					"cycles:surface" : shader,
+					"textureFileName" : IECore.StringData( textureFileName.as_posix() ),
+				} ) )
+			)
+			cyclesPlane.transform( imath.M44f().translate( imath.V3f( translateX, 0, -1 ) ) )
+
+		renderer.render()
+		del cyclesPlane
+
+		image = OpenImageIO.ImageBuf( str( fileName ) )
+		self.assertEqual( self.__colorAtUV( image, imath.V2f( 0.48, 0.5 ) ), imath.Color4f( 1, 0, 0, 1 ) )
+		self.assertEqual( self.__colorAtUV( image, imath.V2f( 0.52, 0.5 ) ), imath.Color4f( 0, 1, 0, 1 ) )
+
+	def __colorAtUV( self, image, uv, channelName = "" ) :
+
+		if isinstance( image, OpenImageIO.ImageBuf ) :
+
+			pixel = image.getpixel( int( uv.x * (image.spec().width - 1) ), int( uv.y * (image.spec().height - 1) ) )
+			return imath.Color4f( *pixel )
+
+		else :
+
+			if isinstance( image, str ) :
+				image = IECoreImage.ImageDisplayDriver.storedImage( image )
+
+			self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+			dimensions = image.dataWindow.size() + imath.V2i( 1 )
+
+			ix = int( uv.x * ( dimensions.x - 1 ) )
+			iy = int( uv.y * ( dimensions.y - 1 ) )
+			i = iy * dimensions.x + ix
+
+			c = channelName
+			if c != "":
+				c = "%s." % channelName
+
+			return imath.Color4f( image[c+"R"][i], image[c+"G"][i], image[c+"B"][i], image[c+"A"][i] if c+"A" in image.keys() else 0.0 )
+
+	def __testCustomAttributeType( self, primitive, prefix, customAttribute, outputPlug, data, expectedResult, maxDifference = 0.0 ) :
+
+		renderer = self.createRenderer( extraOptions = { "cycles:session:samples" : IECore.IntData( 32 ) } )
+
+		# Frame the primitive so it fills the entire image.
+
+		renderer.camera(
+			"testCamera",
+			IECoreScene.Camera(
+				parameters = {
+					"resolution" : imath.V2i( 100, 100 ),
+					"projection" : "orthographic",
+					"screenWindow" : imath.Box2f( imath.V2f( -0.5 ), imath.V2f( 0.5 ) )
+				}
+			)
+		)
+		renderer.option( "camera", IECore.StringData( "testCamera" ) )
+
+		fileName = self.temporaryDirectory() / "test.exr"
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				str( fileName ),
+				"exr",
+				"rgba",
+				{}
+			)
+		)
+
+		# Render with a constant shader showing the custom attribute
+
+		attribute = customAttribute
+		if prefix != "render:" :
+			attribute = prefix + attribute
+
+		shader = IECoreScene.ShaderNetwork(
+			shaders = {
+				"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "base_color" : imath.Color3f( 0 ), "emission_strength" : 1 } ),
+				"attribute" : IECoreScene.Shader( "attribute", "cycles:shader", { "attribute" : attribute } ),
+			},
+			connections = [
+				( ( "attribute", outputPlug ), ( "output", "emission_color" ) ),
+				( ( "attribute", "alpha" ), ( "output", "alpha" ) )
+			],
+			output = "output",
+		)
+
+		primitiveHandle = renderer.object( "/primitive", primitive, renderer.attributes( IECore.CompoundObject( { prefix + customAttribute : data, "cycles:surface" : shader } ) ) )
+		primitiveHandle.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		renderer.render()
+		del primitiveHandle
+
+		image = OpenImageIO.ImageBuf( str( fileName ) )
+		self.assertEqualWithAbsError( self.__colorAtUV( image, imath.V2f( 0.55 ) ), expectedResult, maxDifference )
+
+	def testCustomAttributes( self ) :
+
+		testData = [
+			{ "name" : "testBool", "outputPlug" : "fac", "data" : IECore.BoolData( True ), "expectedResult" : imath.Color4f( 1, 1, 1, 1 ), "maxDifference" : 0.0 },
+			{ "name" : "testInt", "outputPlug" : "fac", "data" : IECore.IntData( 7 ), "expectedResult" : imath.Color4f( 7, 7, 7, 1 ), "maxDifference" : 0.0 },
+			{ "name" : "testFloat", "outputPlug" : "fac", "data" : IECore.FloatData( 2.5 ), "expectedResult" : imath.Color4f( 2.5, 2.5, 2.5, 1 ), "maxDifference" : 0.0 },
+			{ "name" : "testV2f", "outputPlug" : "vector", "data" : IECore.V2fData( imath.V2f( 1, 2 ) ), "expectedResult" : imath.Color4f( 1, 2, 0, 1 ), "maxDifference" : 0.0 },
+			{ "name" : "testV3f", "outputPlug" : "vector", "data" : IECore.V3fData( imath.V3f( 1, 2, 3 ) ), "expectedResult" : imath.Color4f( 1, 2, 3, 1 ), "maxDifference" : 0.0 },
+			{ "name" : "testColor3f", "outputPlug" : "color", "data" : IECore.Color3fData( imath.Color3f( 4, 5, 6 ) ), "expectedResult" : imath.Color4f( 4, 5, 6, 1 ), "maxDifference" : 0.0 },
+			{ "name" : "testColor4f", "outputPlug" : "color", "data" : IECore.Color4fData( imath.Color4f( 7, 8, 9, 0.5 ) ), "expectedResult" : imath.Color4f( 3.5, 4, 4.5, 0.5 ), "maxDifference" : 0.01 },
+		]
+
+		plane = IECoreScene.MeshPrimitive.createPlane(
+			imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			imath.V2i( 1 )
+		)
+
+		for attribute in testData:
+			for prefix in [ "user:", "render:" ] :
+				self.__testCustomAttributeType(
+					plane, prefix, attribute["name"], attribute['outputPlug'], attribute["data"], attribute["expectedResult"], attribute["maxDifference"]
+				)
+
+	def testCustomAttributePrecedence( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testCustomAttributePrecedence",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"user:testColor" : IECore.Color3fData( imath.Color3f( 1, 0, 0 ) ),
+				"render:user:testColor" : IECore.Color3fData( imath.Color3f( 0, 1, 0 ) ),
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "base_color" : imath.Color3f( 0 ), "emission_strength" : 1 } ),
+						"attribute" : IECoreScene.Shader( "attribute", "cycles:shader", { "attribute" : "user:testColor" } ),
+					},
+					connections = [
+						( ( "attribute", "color" ), ( "output", "emission_color" ) )
+					],
+					output = "output",
+				)
+			} ) )
+		)
+
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		renderer.render()
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testCustomAttributePrecedence" )
+		self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+
+		self.assertEqual( self.__colorAtUV( image, imath.V2f( 0.55 ) ), imath.Color4f( 0, 1, 0, 1 ) )
+
+		del plane
+
+	def testMissingOSLShader( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		with IECore.CapturingMessageHandler() as mh :
+
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "NonExistentShader", "osl:surface" ),
+					},
+					output = "output",
+				)
+			} ) )
+
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].message, "Couldn't load shader \"NonExistentShader\"" )
+
+	def testMissingCyclesShader( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		with IECore.CapturingMessageHandler() as mh :
+
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "NonExistentShader", "cycles:surface" ),
+					},
+					output = "output",
+				)
+			} ) )
+
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].message, "Couldn't load shader \"NonExistentShader\"" )
+
+	def testMissingShaderParameter( self ) :
+
+		renderer = self.createRenderer()
+
+		with IECore.CapturingMessageHandler() as mh :
+			dodgyNetwork = IECoreScene.ShaderNetwork(
+				shaders = {
+					"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "bad_parameter" : 10 } )
+				},
+				output = "output"
+			)
+			renderer.attributes( IECore.CompoundObject( { "cycles:surface" : dodgyNetwork } ) )
+
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].context, "Cycles::SocketAlgo" )
+		self.assertEqual( mh.messages[0].level, IECore.Msg.Level.Warning )
+		self.assertRegex(
+			mh.messages[0].message,
+			"Socket `bad_parameter` on node .* does not exist"
+		)
+
+	def testOSLComponentConnections( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testOSLComponentConnections",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "base_color" : imath.Color3f( 0 ), "emission_strength" : 1 } ),
+						"multiplyColor" : IECoreScene.Shader( "Maths/MultiplyColor", "osl:shader", { "b" : imath.Color3f( 0, 0, 0 ) } ),
+						"multiplyFloat" : IECoreScene.Shader( "Maths/MultiplyFloat", "osl:shader" ),
+					},
+					connections = [
+						( ( "multiplyFloat", "out" ), ( "multiplyColor", "b.b" ) ),
+						( ( "multiplyColor", "out" ), ( "output", "emission_color" ) ),
+					],
+					output = "output",
+				)
+			} ) )
+		)
+
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		renderer.render()
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testOSLComponentConnections" )
+		self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+		self.assertEqual( self.__colorAtUV( image, imath.V2f( 0.55 ) ), imath.Color4f( 0, 0, 1, 1 ) )
+
+		del plane
+
+	def testSurfaceAttributeWithGenericShaderType( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testSurfaceAttributeWithGenericShaderType",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader(
+							"principled_bsdf", "cycles:shader",
+							{ "emission_color" : imath.Color3f( 1, 0, 1 ), "emission_strength" : 1 }
+						),
+					},
+					output = "output",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		renderer.render()
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testSurfaceAttributeWithGenericShaderType" )
+		self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+
+		# Slightly off-centre, to avoid triangle edge artifact in centre of image.
+		testPixel = self.__colorAtUV( image, imath.V2f( 0.55 ) )
+		self.assertEqual( testPixel.r, 1 )
+		self.assertEqual( testPixel.g, 0 )
+		self.assertEqual( testPixel.b, 1 )
+
+		del plane
+
+	def __valueAtUV( self, image, uv, channelName ) :
+
+		dimensions = image.dataWindow.size() + imath.V2i( 1 )
+
+		ix = int( uv.x * ( dimensions.x - 1 ) )
+		iy = int( uv.y * ( dimensions.y - 1 ) )
+		i = iy * dimensions.x + ix
+
+		return image[channelName][i]
+
+	def testCustomAOV( self ) :
+
+		renderer = self.createRenderer()
+
+		# Custom AOVs are currently not supported in OSL mode.
+		# See https://developer.blender.org/T73266 for further updates
+		# for when OSL will eventually support custom AOVs.
+		renderer.option( "cycles:shadingsystem", IECore.StringData( "SVM" ) )
+
+		renderer.output(
+			"testValueOutput",
+			IECoreScene.Output(
+				"testValue",
+				"ieDisplay",
+				"float myValueAOV",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testCustomValueAOV",
+				}
+			)
+		)
+
+		renderer.output(
+			"testColorOutput",
+			IECoreScene.Output(
+				"testColor",
+				"ieDisplay",
+				"color myColorAOV",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testCustomColorAOV",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader(
+							"principled_bsdf", "cycles:shader",
+						),
+					},
+					output = "output",
+				),
+				"cycles:aov:myValueAOV" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"aov_value" : IECoreScene.Shader(
+							"aov_output", "cycles:shader",
+							{ "name" : "myValueAOV", "value" : 0.5 }
+						),
+					},
+					output = "aov_value",
+				),
+				"cycles:aov:myColorAOV" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"aov_color" : IECoreScene.Shader(
+							"aov_output", "cycles:shader",
+							{ "name" : "myColorAOV", "color" : imath.Color3f( 1, 0, 1 ) }
+						),
+					},
+					output = "aov_color",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		renderer.render()
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testCustomValueAOV" )
+		self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+
+		# Slightly off-centre, to avoid triangle edge artifact in centre of image.
+		testPixel = self.__valueAtUV( image, imath.V2f( 0.55 ), "myValueAOV" )
+		self.assertEqual( testPixel, 0.5 )
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testCustomColorAOV" )
+		self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+
+		# Slightly off-centre, to avoid triangle edge artifact in centre of image.
+		testPixel = self.__colorAtUV( image, imath.V2f( 0.55 ), "myColorAOV" )
+		self.assertEqual( testPixel.r, 1 )
+		self.assertEqual( testPixel.g, 0 )
+		self.assertEqual( testPixel.b, 1 )
+
+		del plane
+
+	def __testShaderResults( self, shader, expectedResults, maxDifference = 0.0 ) :
+
+		renderer = self.createRenderer()
+
+		# Frame so our plane fills the entire image.
+
+		renderer.camera(
+			"testCamera",
+			IECoreScene.Camera(
+				parameters = {
+					"resolution" : imath.V2i( 100, 100 ),
+					"projection" : "orthographic",
+					"screenWindow" : imath.Box2f( imath.V2f( -0.5 ), imath.V2f( 0.5 ) )
+				}
+			)
+		)
+		renderer.option( "camera", IECore.StringData( "testCamera" ) )
+
+		fileName = self.temporaryDirectory() / "test.exr"
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				str( fileName ),
+				"exr",
+				"rgba",
+				{}
+			)
+		)
+
+		# Render the plane with the shader provided.
+
+		primitiveHandle = renderer.object(
+			"/primitive",
+			IECoreScene.MeshPrimitive.createPlane( imath.Box2f( imath.V2f( -0.5 ), imath.V2f( 0.5 ) ) ),
+			renderer.attributes( IECore.CompoundObject( { "cycles:surface" : shader } ) )
+		)
+		primitiveHandle.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		renderer.render()
+		del primitiveHandle
+
+		# Check we got what we expected.
+
+		image = OpenImageIO.ImageBuf( str( fileName ) )
+		for uv, expectedResult in expectedResults :
+			self.assertEqualWithAbsError( self.__colorAtUV( image, uv ), expectedResult, maxDifference )
+
+	def testNumericParameters( self ) :
+
+		for value in [
+			IECore.IntData( 1 ),
+			IECore.UIntData( 1 ),
+			IECore.FloatData( 1 ),
+			IECore.DoubleData( 1 ),
+			IECore.FloatData( 1 ),
+		] :
+
+			shader = IECoreScene.ShaderNetwork(
+				shaders = {
+					"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "base_color" : imath.Color3f( 0 ), "emission_strength" : 1 } ),
+					"value" : IECoreScene.Shader( "value", "cycles:shader", { "value" : value } ),
+					"converter" : IECoreScene.Shader( "convert_float_to_color", "cycles:shader" ),
+				},
+				connections = [
+					( ( "value", "value" ), ( "converter", "value_float" ) ),
+					( ( "converter", "value_color" ), ( "output", "emission_color" ) ),
+				],
+				output = "output",
+			)
+
+			self.__testShaderResults( shader, [ ( imath.V2f( 0.55 ), imath.Color4f( value.value, value.value, value.value, 1 ) ) ] )
+
+	def testColorParameters( self ) :
+
+		for value in [
+			IECore.Color3fData( imath.Color3f( 1, 2, 3 ) ),
+			IECore.Color4fData( imath.Color4f( 1, 2, 3, 4 ) ),
+			IECore.V3fData( imath.V3f( 1, 2, 3 ) ),
+			IECore.V3iData( imath.V3i( 1, 2, 3 ) ),
+		] :
+
+			shader = IECoreScene.ShaderNetwork(
+				shaders = {
+					"output" : IECoreScene.Shader(
+						"principled_bsdf", "cycles:surface",
+						{ "base_color" : imath.Color3f( 0 ), "emission_color" : value, "emission_strength" : 1 }
+					),
+				},
+				output = "output",
+			)
+
+			self.__testShaderResults( shader, [ ( imath.V2f( 0.55 ), imath.Color4f( 1, 2, 3, 1 ) ) ] )
+
+	def testVectorParameters( self ) :
+
+		for value in [
+			IECore.Color3fData( imath.Color3f( 1, 2, 3 ) ),
+			IECore.Color4fData( imath.Color4f( 1, 2, 3, 4 ) ),
+			IECore.V3fData( imath.V3f( 1, 2, 3 ) ),
+			IECore.V3iData( imath.V3i( 1, 2, 3 ) ),
+		] :
+
+			shader = IECoreScene.ShaderNetwork(
+				shaders = {
+					"converter" : IECoreScene.Shader(
+						"convert_vector_to_color", "cycles:shader", { "value_vector" : value }
+					),
+					"output" : IECoreScene.Shader(
+						"principled_bsdf", "cycles:surface", { "base_color" : imath.Color3f( 0 ), "emission_strength" : 1 }
+					),
+				},
+				connections = [
+					( ( "converter", "value_color" ), ( "output", "emission_color" ) )
+				],
+				output = "output",
+			)
+
+			self.__testShaderResults( shader, [ ( imath.V2f( 0.55 ), imath.Color4f( 1, 2, 3, 1 ) ) ] )
+
+	def testColorArrayParameters( self ) :
+
+		shader = IECoreScene.ShaderNetwork(
+			shaders = {
+				"coordinates" : IECoreScene.Shader( "texture_coordinate", "cycles:shader" ),
+				"ramp" : IECoreScene.Shader(
+					"rgb_ramp", "cycles:shader", {
+						"interpolate" : False,
+						"ramp" : IECore.Color3fVectorData( [
+							imath.Color3f( 0.0, 1.0, 0.25 ),
+							imath.Color3f( 0.25, 0.75, 0.25 ),
+							imath.Color3f( 0.5, 0.5, 0.25 ),
+							imath.Color3f( 0.75, 0.25, 0.25 ),
+						] ),
+						"ramp_alpha" : IECore.FloatVectorData( [ 1, 1, 1, 1 ] ),
+					}
+				),
+				"output" : IECoreScene.Shader(
+					"principled_bsdf", "cycles:surface", { "base_color" : imath.Color3f( 0 ), "emission_strength" : 1 }
+				),
+			},
+			connections = [
+				( ( "coordinates", "UV.x" ), ( "ramp", "fac" ) ),
+				( ( "ramp", "color" ), ( "output", "emission_color" ) ),
+			],
+			output = "output",
+		)
+
+		self.__testShaderResults(
+			shader,
+			[
+				( imath.V2f( 0.25, 0.5 ), imath.Color4f( 0, 1.0, 0.25, 1 ) ),
+				( imath.V2f( 0.5, 0.5 ), imath.Color4f( 0.25, 0.75, 0.25, 1 ) ),
+				( imath.V2f( 0.75, 0.5 ), imath.Color4f( 0.5, 0.5, 0.25, 1 ) ),
+			]
+		)
+
+	def testTransformParameters( self ) :
+
+		shader = IECoreScene.ShaderNetwork(
+			shaders = {
+				"output" : IECoreScene.Shader( "emission", "cycles:surface", { "strength" : 1.0 } ),
+				"coordinates" : IECoreScene.Shader(
+					"texture_coordinate", "cycles:shader",
+					{ "use_transform" : True, "ob_tfm" : imath.M44f().translate( imath.V3f( 1, 2, 3 ) ) }
+				),
+			},
+			connections = [
+				( ( "coordinates", "object" ), ( "output", "color" ) )
+			],
+			output = "output"
+		)
+
+		self.__testShaderResults(
+			shader,
+			[
+				( imath.V2f( 0.5, 0.5 ), imath.Color4f( -1, -2, -4, 1 ) ),
+			],
+			maxDifference = 0.01
+		)
+
+	def testComponentConnections( self ) :
+
+		shader = IECoreScene.ShaderNetwork(
+			shaders = {
+				"input" : IECoreScene.Shader(
+					"convert_point_to_color", "cycles:shader",
+					{
+						"value_point" : imath.V3f( 1, 0.5, 0.25 ),
+					}
+				),
+				"output" : IECoreScene.Shader(
+					"emission", "cycles:surface",
+					{
+						"color" : imath.Color3f( 0 ),
+						"strength" : 1.0,
+					}
+				),
+			},
+			connections = [
+				( ( "input", "value_color.r" ), ( "output", "color.g" ) ),
+				( ( "input", "value_color.g" ), ( "output", "color.b" ) ),
+				( ( "input", "value_color.b" ), ( "output", "color.r" ) ),
+			],
+			output = "output",
+		)
+
+		self.__testShaderResults(
+			shader,
+			[
+				( imath.V2f( 0.5, 0.5 ), imath.Color4f( 0.25, 1, 0.5, 1 ) ),
+			]
+		)
+
+	def testInvalidShaderParameterValues( self ) :
+
+		renderer = self.createRenderer()
+
+		for name, value in {
+			"sheen_weight" : IECore.StringData( "iShouldBeAFloat" ),
+			"base_color" : IECore.StringData( "iShouldBeAColor" ),
+			"normal" : IECore.StringData( "iShouldBeAV3f" ),
+			"subsurface_method" : IECore.Color3fData( imath.Color3f( 10 ) ),
+		}.items() :
+
+			with IECore.CapturingMessageHandler() as mh :
+
+				attributes = renderer.attributes(
+					IECore.CompoundObject( {
+						"cycles:surface" : IECoreScene.ShaderNetwork(
+							shaders = {
+								"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { name : value } )
+							},
+							output = "output"
+						)
+					} )
+				)
+
+				self.assertEqual( len( mh.messages ), 1 )
+				self.assertEqual( mh.messages[0].context, "Cycles::SocketAlgo" )
+				self.assertEqual( mh.messages[0].level, IECore.Msg.Level.Warning )
+				self.assertRegex(
+					mh.messages[0].message,
+					"Unsupported type `{}` for socket `{}` on node .*".format(
+						value.typeName(), name
+					)
+				)
+
+	def testInvalidShaderEnumValue( self ) :
+
+		renderer = self.createRenderer()
+
+		with IECore.CapturingMessageHandler() as mh :
+
+			attributes = renderer.attributes(
+				IECore.CompoundObject( {
+					"cycles:surface" : IECoreScene.ShaderNetwork(
+						shaders = {
+							"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "subsurface_method" : "missing" } )
+						},
+						output = "output"
+					)
+				} )
+			)
+
+			self.assertEqual( len( mh.messages ), 1 )
+			self.assertEqual( mh.messages[0].context, "Cycles::SocketAlgo" )
+			self.assertEqual( mh.messages[0].level, IECore.Msg.Level.Warning )
+			self.assertRegex(
+				mh.messages[0].message,
+				"Invalid enum value \"missing\" for socket `subsurface_method` on node .*"
+			)
+
+	def testUSDLightColorTemperature( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testUsdLightColorTemperature",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface" )
+					},
+					output = "output",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		# Pure red light, with the colour being provided by an input shader, _not_
+		# a direct parameter value. This requires some translation in the renderer backend.
+
+		light = renderer.light(
+			"/light",
+			None,
+			renderer.attributes( IECore.CompoundObject ( {
+				"light" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "SphereLight", "light", { "enableColorTemperature" : True, "colorTemperature" : 3000.0, "exposure" : 6.0 } ),
+					},
+					output = "output",
+				),
+			} ) )
+		)
+		light.transform( imath.M44f().rotate( imath.V3f( 0, math.pi, 0 ) ) )
+
+		renderer.render()
+
+		# Check that the color temperature has tinted the image red.
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testUsdLightColorTemperature" )
+		self.assertTrue( isinstance( image, IECoreImage.ImagePrimitive ) )
+
+		testPixel = self.__colorAtUV( image, imath.V2f( 0.55 ) )
+		testPixel /= testPixel.r # Normalise, to negate impact of noise
+		self.assertAlmostEqual( testPixel.r, 1.0, delta = 0.01 )
+		self.assertAlmostEqual( testPixel.g, 0.476725, delta = 0.01 )
+		self.assertAlmostEqual( testPixel.b, 0.153601, delta = 0.01 )
+
+		del plane, light
+
+	def testOSLInSVMShadingSystem( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.option( "cycles:shadingsystem", IECore.StringData( "SVM" ) )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testOSLInSVMShadingSystem",
+				}
+			)
+		)
+
+		with IECore.CapturingMessageHandler() as mh :
+			attributes = renderer.attributes( IECore.CompoundObject ( {
+					"cycles:surface" : IECoreScene.ShaderNetwork(
+						shaders = {
+							"output" : IECoreScene.Shader(
+								"Surface/Constant", "osl:shader",
+								{ "Cs" : imath.Color3f( 0, 1, 0 ) }
+							),
+						},
+						output = "output",
+					)
+				} ) )
+
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].message, """Couldn't load OSL shader "Surface/Constant" as the shading system is not set to OSL.""" )
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			attributes
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		renderer.render()
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testOSLInSVMShadingSystem" )
+		self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+
+		# Slightly off-centre, to avoid triangle edge artifact in centre of image.
+		testPixel = self.__colorAtUV( image, imath.V2f( 0.55 ) )
+		# Shader should be black and not crash.
+		self.assertEqual( testPixel.r, 0 )
+		self.assertEqual( testPixel.g, 0 )
+		self.assertEqual( testPixel.b, 0 )
+
+		del plane
+
+	def testFilmOptions( self ) :
+
+		renderer = self.createRenderer()
+
+		# Get default values
+
+		defaults = renderer.command( "cycles:queryFilm", {} )
+
+		# Set some values of our own and check they have taken hold.
+
+		options = IECore.CompoundData( {
+			"cycles:film:exposure" : 10.0,
+			"cycles:film:show_active_pixels" : True,
+			"cycles:film:filter_type" : "gaussian",
+			"cycles:film:filter_width" : 2.5,
+		} )
+		for name, value in options.items() :
+			renderer.option( name, value )
+
+		film = renderer.command( "cycles:queryFilm", {} )
+		for name, value in options.items() :
+			with self.subTest( name = name ) :
+				name = name.replace( "cycles:film:", "" )
+				self.assertIn( name, film )
+				self.assertEqual( film[name], value )
+
+		# Remove all our options and check that we get back to the
+		# original defaults.
+
+		for name in options.keys() :
+			renderer.option( name, None )
+
+		film = renderer.command( "cycles:queryFilm", {} )
+		for name in options.keys() :
+			with self.subTest( name = name ) :
+				name = name.replace( "cycles:film:", "" )
+				self.assertEqual( film[name], defaults[name] )
+
+	def testIntegratorOptions( self ) :
+
+		renderer = self.createRenderer()
+
+		# Get default values
+
+		defaults = renderer.command( "cycles:queryIntegrator", {} )
+
+		# Set some values of our own and check they have taken hold.
+
+		options = IECore.CompoundData( {
+			"cycles:integrator:min_bounce" : 1,
+			"cycles:integrator:max_bounce" : 4,
+			"cycles:integrator:use_light_tree" : False,
+			"cycles:integrator:use_adaptive_sampling" : False,
+		} )
+		for name, value in options.items() :
+			renderer.option( name, value )
+
+		film = renderer.command( "cycles:queryIntegrator", {} )
+		for name, value in options.items() :
+			with self.subTest( name = name ) :
+				name = name.replace( "cycles:integrator:", "" )
+				self.assertIn( name, film )
+				self.assertEqual( film[name], value )
+
+		# Remove all our options and check that we get back to the
+		# original defaults.
+
+		for name in options.keys() :
+			renderer.option( name, None )
+
+		film = renderer.command( "cycles:queryIntegrator", {} )
+		for name in options.keys() :
+			with self.subTest( name = name ) :
+				name = name.replace( "cycles:integrator:", "" )
+				self.assertEqual( film[name], defaults[name] )
+
+	def testUnknownOptions( self ) :
+
+		renderer = self.createRenderer()
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testUnknownOptions",
+				}
+			)
+		)
+
+		with IECore.CapturingMessageHandler() as mh :
+			renderer.option( "cycles:invalid", IECore.IntData( 10 ) )
+			renderer.option( "someOtherRenderer:unknown", IECore.IntData( 10 ) )
+			renderer.render()
+
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].level, IECore.Msg.Level.Warning )
+		self.assertEqual( mh.messages[0].message, 'Unknown option "cycles:invalid".' )
+
+	def testThreads( self ) :
+
+		for threads, expectedThreads in [
+			( 1, 1 ),
+			( 2, 2 ),
+			( -1, max( IECore.hardwareConcurrency() -1, 1 ) ),
+			( -10, max( IECore.hardwareConcurrency() -10, 1 ) ),
+			( -10000, 1 ),
+		] :
+
+			with self.subTest( threads = threads ) :
+
+				renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+				renderer.option( "cycles:session:threads", IECore.IntData( threads ) )
+				self.assertEqual( renderer.command( "cycles:querySession", {} )["threads"].value, expectedThreads )
+
+	def testDevices( self ) :
+
+		typeIndices = {}
+		for device in self.devices() :
+
+			deviceType = device["type"]
+			typeIndex = typeIndices.setdefault( deviceType, 0 )
+			typeIndices[device["type"]] += 1
+
+			with self.subTest( device = device["id"] ) :
+
+				renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+				# Ideally we want clients to emit all options before doing anything else,
+				# to simplify our internal session management. But certain important clients
+				# (SceneGadget, RenderController, I'm looking at you) like to create a camera
+				# first, and we need to accommodate them while preserving the ability to specify
+				# `cycles:device` afterwards.
+				renderer.camera( "camera", IECoreScene.Camera() )
+
+				renderer.option( "cycles:shadingsystem", IECore.StringData( "SVM" ) )
+				renderer.option( "cycles:device", IECore.StringData( f"{deviceType}:{typeIndex:02d}" ) )
+				self.assertEqual( renderer.command( "cycles:querySession", {} )["device"], device["id"] )
+
+	def testExposureEdit( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testExposureEdit",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "emission_strength" : 1 } ),
+					},
+					output = "output",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		renderer.render()
+
+		# Slightly off-centre, to avoid triangle edge artifact in centre of image.
+		self.assertEventually(
+			lambda : self.assertEqualWithAbsError( self.__colorAtUV( "testExposureEdit", imath.V2f( 0.55 ) ), imath.Color4f( 1 ), 1e-6 )
+		)
+
+		# Edit exposure and re-render. We should get an image twice as bright.
+
+		renderer.pause()
+		renderer.option( "cycles:film:exposure", IECore.FloatData( 2 ) )
+
+		renderer.render()
+
+		self.assertEventually(
+			lambda : self.assertEqualWithAbsError( self.__colorAtUV( "testExposureEdit", imath.V2f( 0.55 ) ), imath.Color4f( 2, 2, 2, 1 ), 1e-6 )
+		)
+
+		renderer.pause()
+		del plane
+
+	def testDisplacementEdit( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		camera = renderer.camera(
+			"testCamera",
+			IECoreScene.Camera(
+				parameters = {
+					"resolution" : imath.V2i( 256, 256 ),
+					"projection" : "orthographic",
+					"aperture" : imath.V2f( 1, 1 )
+				}
+			)
+		)
+		renderer.option( "camera", IECore.StringData( "testCamera" ) )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testDisplacementEdit",
+				}
+			)
+		)
+
+		planePrimitive = IECoreScene.MeshPrimitive.createPlane(
+			imath.Box2f( imath.V2f( -0.1 ), imath.V2f( 0.1 ) ),
+		)
+
+		plane = renderer.object( "/plane", planePrimitive, renderer.attributes( IECore.CompoundObject() ) )
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		renderer.render()
+
+		displacementDirections = [
+			imath.V3f( 1, 0, 0 ),
+			imath.V3f( 0, 1, 0 ),
+			imath.V3f( -1, 0, 0 ),
+			imath.V3f( 0, -1, 0 ),
+		]
+
+		def imageUV( displacementDirection ) :
+
+			return imath.V2f( 0.5 ) + imath.V2f( displacementDirection.x, -displacementDirection.y ) * 0.49
+
+		for direction in displacementDirections :
+
+			# Assign displacement shader.
+
+			renderer.pause()
+
+			displacementAttributes = renderer.attributes(
+				IECore.CompoundObject( {
+					"cycles:displacement" : IECoreScene.ShaderNetwork(
+						shaders = {
+							"output" : IECoreScene.Shader( "displacement", "cycles:displacement", { "height" : 1.0 } ),
+							"normal" : IECoreScene.Shader( "convert_color_to_normal", "cycles:shader", { "value_color" : imath.Color3f( direction.x, direction.y, 0 ) } ),
+						},
+						connections = [
+							( ( "normal", "value_normal" ), ( "output", "normal" ) ),
+						],
+						output = "output",
+					),
+					"cycles:shader:displacement_method" : IECore.StringData( "true" ),
+				} )
+			)
+
+			# Edit should fail, requesting geometry to be resent.
+
+			self.assertFalse( plane.attributes( displacementAttributes ) )
+
+			# Resend geometry
+
+			del plane
+			plane = renderer.object( "/plane", planePrimitive, displacementAttributes )
+			plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+			renderer.render()
+
+			# Check the plane has been displaced to where we expect it to be.
+
+			self.assertEventually(
+				lambda : self.assertEqualWithAbsError( self.__colorAtUV( "testDisplacementEdit", imageUV( direction ) ), imath.Color4f( 1 ), 1e-6 )
+			)
+
+			# And that it doesn't appear in any of the other positions.
+
+			for otherDirection in displacementDirections :
+
+				if otherDirection == direction :
+					continue
+
+				self.assertEventually(
+					lambda : self.assertEqualWithAbsError( self.__colorAtUV( "testDisplacementEdit", imageUV( otherDirection ) ), imath.Color4f( 0 ), 1e-6 )
+				)
+
+		renderer.pause()
+		del plane, camera
+
+	def testUnsupportedSessionEdit( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		renderer.option( "cycles:session:threads", IECore.IntData( 1 ) )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testUnsupportedSessionEdit",
+				}
+			)
+		)
+
+		renderer.render()
+		self.assertEqual( renderer.command( "cycles:querySession", {} )["threads"].value, 1 )
+
+		with IECore.CapturingMessageHandler() as mh :
+			renderer.pause()
+			renderer.option( "cycles:session:threads", IECore.IntData( 2 ) )
+			renderer.render()
+
+		self.assertEqual( renderer.command( "cycles:querySession", {} )["threads"].value, 1 )
+
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].context, "CyclesRenderer::option" )
+		self.assertEqual( mh.messages[0].message, "Option edit requires a manual render restart" )
+
+	def testUnsupportedSessionEdit( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		renderer.option( "cycles:session:threads", IECore.IntData( 1 ) )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testUnsupportedSessionEdit",
+				}
+			)
+		)
+
+		renderer.render()
+		self.assertEqual( renderer.command( "cycles:querySession", {} )["threads"].value, 1 )
+
+		with IECore.CapturingMessageHandler() as mh :
+			renderer.pause()
+			renderer.option( "cycles:session:threads", IECore.IntData( 2 ) )
+			renderer.render()
+
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].context, "CyclesRenderer::option" )
+		self.assertEqual( mh.messages[0].message, "Option edit requires a manual render restart" )
+
+	def testUnsupportedSceneEdit( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testUnsupportedSessionEdit",
+				}
+			)
+		)
+
+		renderer.render()
+
+		with IECore.CapturingMessageHandler() as mh :
+			renderer.pause()
+			renderer.option( "cycles:scene:use_bvh_spatial_split", IECore.BoolData( True ) )
+			renderer.render()
+
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].context, "CyclesRenderer::option" )
+		self.assertEqual( mh.messages[0].message, "Option edit requires a manual render restart" )
+
+	def testBackgroundLightgroup( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testOutput",
+				}
+			)
+		)
+
+		renderer.output(
+			"testEnvOutput",
+			IECoreScene.Output(
+				"env",
+				"ieDisplay",
+				"lg env",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testEnvOutput",
+				}
+			)
+		)
+
+		renderer.output(
+			"testOtherOutput",
+			IECoreScene.Output(
+				"env",
+				"ieDisplay",
+				"lg other",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testOtherOutput",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader(
+							"principled_bsdf", "cycles:shader",
+							{ "base_color" : imath.Color3f( 1, 1, 1 ) }
+						),
+					},
+					output = "output",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		def lightAttributes( lightgroup ) :
+
+			return renderer.attributes( IECore.CompoundObject ( {
+				"cycles:light" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "background_light", "cycles:light", { "color" : imath.Color3f( 0, 1, 0 ) } ),
+					},
+					output = "output",
+				),
+				"cycles:lightgroup" : IECore.StringData( lightgroup ),
+			} ) )
+
+		# Render with a background light in the "env" lightgroup.
+		light = renderer.light( "/light", None, lightAttributes( "env" ) )
+
+		renderer.render()
+
+		def assertGreen( handle, layer = "" ) :
+
+			# Slightly off-centre, to avoid triangle edge artifact in centre of image.
+			testPixel = self.__colorAtUV( IECoreImage.ImageDisplayDriver.storedImage( handle ), imath.V2f( 0.55 ), layer )
+			self.assertEqual( testPixel.r, 0 )
+			self.assertGreater( testPixel.g, 0.99 )
+			self.assertEqual( testPixel.b, 0 )
+
+		self.assertEventually( lambda : assertGreen( "testOutput" ) )
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testEnvOutput" )
+		self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+
+		testPixel = self.__colorAtUV( image, imath.V2f( 0.55 ), "env" )
+		self.assertEqual( testPixel.r, 0 )
+		self.assertGreater( testPixel.g, 0.99 )
+		self.assertEqual( testPixel.b, 0 )
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testOtherOutput" )
+		self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+
+		testPixel = self.__colorAtUV( image, imath.V2f( 0.55 ), "other" )
+		self.assertEqual( testPixel.r, 0 )
+		self.assertEqual( testPixel.g, 0 )
+		self.assertEqual( testPixel.b, 0 )
+
+		# Edit the lightgroup and re-render, we should see the light's contribution
+		# change to the other lightgroup output.
+		renderer.pause()
+		light.attributes( lightAttributes( "other" ) )
+		renderer.render()
+
+		self.assertEventually( lambda : assertGreen( "testOtherOutput", "other" ) )
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testOutput" )
+		self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+
+		testPixel = self.__colorAtUV( image, imath.V2f( 0.55 ) )
+		self.assertEqual( testPixel.r, 0 )
+		self.assertGreater( testPixel.g, 0.99 )
+		self.assertEqual( testPixel.b, 0 )
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testEnvOutput" )
+		self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+
+		testPixel = self.__colorAtUV( image, imath.V2f( 0.55 ), "env" )
+		self.assertEqual( testPixel.r, 0 )
+		self.assertEqual( testPixel.g, 0 )
+		self.assertEqual( testPixel.b, 0 )
+
+		# Clear the lightgroup and re-render, we shouldn't see the light's contribution
+		# in either lightgroup output.
+		renderer.pause()
+		light.attributes( lightAttributes( "" ) )
+		renderer.render()
+
+		self.assertEventually( lambda : assertGreen( "testOutput" ) )
+
+		self.assertEventually(
+			lambda : self.assertEqual( self.__colorAtUV( "testOtherOutput", imath.V2f( 0.55 ), "other" ), imath.Color4f( 0, 0, 0, 0 ) )
+		)
+
+		image = IECoreImage.ImageDisplayDriver.storedImage( "testEnvOutput" )
+		self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+
+		testPixel = self.__colorAtUV( image, imath.V2f( 0.55 ), "env" )
+		self.assertEqual( testPixel.r, 0 )
+		self.assertEqual( testPixel.g, 0 )
+		self.assertEqual( testPixel.b, 0 )
+
+		renderer.pause()
+		del light, plane
+
+	def testBackgroundLightEnvironmentTextureOrientation( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		renderer.camera(
+			"testCamera",
+			IECoreScene.Camera(
+				parameters = {
+					"resolution" : imath.V2i( 320, 240 ),
+					"projection" : "perspective",
+					"fieldOfView" : 170,
+				}
+			)
+		)
+		renderer.option( "camera", IECore.StringData( "testCamera" ) )
+		renderer.option( "cycles:background:transparent", IECore.BoolData( False ) )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testEnvironmentTexture",
+				}
+			)
+		)
+
+		def lightAttributes( exposure ) :
+
+			return renderer.attributes( IECore.CompoundObject ( {
+				"cycles:light" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"texture" : IECoreScene.Shader( "environment_texture", "cycles:shader", {
+							# Our texture has a green side, a red side, and a blue strip across the top.
+							"filename" : IECore.StringData( str( pathlib.Path( __file__ ).parent.parent / "images" / "background.exr" ) ),
+							# Reproduce the flip introduced by userDefault metadata in `startup/GafferCyclesUI/metadata.py`
+							"tex_mapping__scale" : IECore.V3fData( imath.V3f( -1, 1, 1 ) ),
+							"tex_mapping__y_mapping" : IECore.StringData( "z" ),
+							"tex_mapping__z_mapping" : IECore.StringData( "y" ),
+						} ),
+						"output" : IECoreScene.Shader( "background_light", "cycles:light", { "exposure" : exposure } ),
+					},
+					connections = [
+						( ( "texture", "color" ), ( "output", "color" ) ),
+					],
+					output = "output",
+				),
+			} ) )
+
+		light = renderer.light( "/light", None, lightAttributes( 0.0 ) )
+		light.transform( imath.M44f() )
+
+		def assertGreen( handle, exposure ) :
+
+			# Slightly off-centre, to avoid triangle edge artifact in centre of image.
+			self.assertEqualWithAbsError(
+				self.__colorAtUV( IECoreImage.ImageDisplayDriver.storedImage( handle ), imath.V2f( 0.55 ) ),
+				imath.Color4f( 0, pow( 2, exposure ), 0, 1 ), error = 0.01
+			)
+
+		def assertBlueTop( handle, exposure ) :
+
+			self.assertEqualWithAbsError(
+				self.__colorAtUV( IECoreImage.ImageDisplayDriver.storedImage( handle ), imath.V2f( 0.5, 0.05 ) ),
+				imath.Color4f( 0, 0, pow( 2, exposure ), 1 ), error = 0.01
+			)
+
+		renderer.render()
+
+		# We should begin viewing the green side of the environment texture, with blue at the top.
+		self.assertEventually( lambda : assertGreen( "testEnvironmentTexture", 0 ) )
+		self.assertEventually( lambda : assertBlueTop( "testEnvironmentTexture", 0 ) )
+
+		renderer.pause()
+
+		# Adjust light attributes and ensure we're still viewing the green side.
+		light.attributes( lightAttributes( 1.0 ) )
+
+		renderer.render()
+
+		self.assertEventually( lambda : assertGreen( "testEnvironmentTexture", 1 ) )
+		self.assertEventually( lambda : assertBlueTop( "testEnvironmentTexture", 1 ) )
+
+		renderer.pause()
+
+		# Rotate the light so we now see the red side of the environment texture.
+		light.transform( imath.M44f().rotate( imath.V3f( 0, math.pi, 0 ) ) )
+
+		def assertRed( handle, exposure ) :
+
+			# Slightly off-centre, to avoid triangle edge artifact in centre of image.
+			self.assertEqualWithAbsError(
+				self.__colorAtUV( IECoreImage.ImageDisplayDriver.storedImage( handle ), imath.V2f( 0.55 ) ),
+				imath.Color4f( pow( 2, exposure ), 0, 0, 1 ), error = 0.01
+			)
+
+		renderer.render()
+
+		self.assertEventually( lambda : assertRed( "testEnvironmentTexture", 1 ) )
+		self.assertEventually( lambda : assertBlueTop( "testEnvironmentTexture", 1 ) )
+
+		renderer.pause()
+
+		# Adjust light attributes and ensure we're still viewing the red side of the light.
+		light.attributes( lightAttributes( 2.0 ) )
+
+		renderer.render()
+
+		self.assertEventually( lambda : assertRed( "testEnvironmentTexture", 2 ) )
+		self.assertEventually( lambda : assertBlueTop( "testEnvironmentTexture", 2 ) )
+
+		renderer.pause()
+		del light
+
+	def testVDB( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		camera = renderer.camera(
+			"testCamera",
+			IECoreScene.Camera(
+				parameters = {
+					"resolution" : imath.V2i( 64, 64 ),
+					"projection" : "orthographic",
+					"aperture" : imath.V2f( 100, 100 )
+				}
+			)
+		)
+		camera.transform( imath.M44f().translate( imath.V3f( 0, 40, 150 ) ) )
+		renderer.option( "camera", IECore.StringData( "testCamera" ) )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testVDB",
+				}
+			)
+		)
+
+		vdb = IECoreVDB.VDBObject( str( pathlib.Path( __file__ ).parents[2] / "GafferVDBTest" / "data" / "smoke.vdb" ) )
+		volume = renderer.object(
+			"/vdb",
+			vdb,
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:volume" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_volume", "cycles:volume", { "emission_strength" : 1.0 } )
+					},
+					output = "output",
+				)
+			} ) )
+		)
+
+		renderer.render()
+
+		def assertVolumeVisible() :
+
+			testPixel = self.__colorAtUV( "testVDB", imath.V2f( 0.5 ) )
+			self.assertGreater( testPixel.r, 0 )
+			self.assertGreater( testPixel.g, 0 )
+			self.assertGreater( testPixel.b, 0 )
+
+		self.assertEventually( lambda : assertVolumeVisible() )
+
+		# Change the shader and ensure that the volume hasn't disappeared as a result.
+		renderer.pause()
+		volume.attributes(
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:volume" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_volume", "cycles:volume", { "emission_strength" : 0.5 }  )
+					},
+					output = "output",
+				),
+			} ) )
+		)
+
+		renderer.render()
+
+		self.assertEventually( lambda : assertVolumeVisible() )
+
+		for rayMarching in ( True, False ) :
+
+			renderer.pause()
+			renderer.option( "cycles:integrator:volume_ray_marching", IECore.BoolData( rayMarching ) )
+
+			renderer.render()
+			self.assertEventually( lambda : assertVolumeVisible() )
+
+		renderer.pause()
+		del camera
+		del volume
+		del vdb
+
+	def testDuplicateVDB( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		camera = renderer.camera(
+			"testCamera",
+			IECoreScene.Camera(
+				parameters = {
+					"resolution" : imath.V2i( 64, 64 ),
+					"projection" : "orthographic",
+					"aperture" : imath.V2f( 100, 100 )
+				}
+			)
+		)
+		camera.transform( imath.M44f().translate( imath.V3f( 15, 40, 150 ) ) )
+		renderer.option( "camera", IECore.StringData( "testCamera" ) )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testVDB",
+				}
+			)
+		)
+
+		vdb = IECoreVDB.VDBObject( str( pathlib.Path( __file__ ).parents[2] / "GafferVDBTest" / "data" / "smoke.vdb" ) )
+		volume = renderer.object(
+			"/vdb",
+			vdb,
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:volume" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_volume", "cycles:volume", { "emission_strength" : 1.0 } )
+					},
+					output = "output",
+				)
+			} ) )
+		)
+
+		volume2 = renderer.object(
+			"/vdb2",
+			vdb,
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:volume" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_volume", "cycles:volume", { "emission_strength" : 0.9 } )
+					},
+					output = "output",
+				)
+			} ) )
+		)
+		volume2.transform( imath.M44f().translate( imath.V3f( 50, 0, 0 ) ) )
+
+		renderer.render()
+
+		def assertVolumesVisible() :
+
+			image = IECoreImage.ImageDisplayDriver.storedImage( "testVDB" )
+			self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+
+			# Ensure both volumes are visible.
+			for x in [ imath.V2f( 0.25, 0.5 ), imath.V2f( 0.75, 0.5 ) ] :
+				testPixel = self.__colorAtUV( image, x )
+				self.assertGreater( testPixel.r, 0 )
+				self.assertGreater( testPixel.g, 0 )
+				self.assertGreater( testPixel.b, 0 )
+
+		self.assertEventually( lambda : assertVolumesVisible() )
+
+		# Change the shader on one volume and ensure that neither volume has disappeared as a result.
+		renderer.pause()
+		volume.attributes(
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:volume" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_volume", "cycles:volume", { "emission_strength" : 0.5 }  )
+					},
+					output = "output",
+				),
+			} ) )
+		)
+
+		renderer.render()
+
+		self.assertEventually( lambda : assertVolumesVisible() )
+
+		renderer.pause()
+		del camera
+		del volume
+		del volume2
+		del vdb
+
+	def testMeshDeformationMotionBlur( self ) :
+
+		for device in self.devices() :
+
+			for numSamples in ( 2, 3, 4 ) :
+
+				with self.subTest( device = device["type"], numSamples = numSamples ) :
+
+					renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch )
+					renderer.option( "cycles:shadingsystem", IECore.StringData( "SVM" ) )
+					renderer.option( "cycles:device", IECore.StringData( "{}:00".format( device["type"] ) ) )
+
+					renderer.camera(
+						"testCamera",
+						IECoreScene.Camera(
+							parameters = {
+								"resolution" : imath.V2i( 640, 480 ),
+								"projection" : "perspective",
+							}
+						)
+					)
+					renderer.option( "camera", IECore.StringData( "testCamera" ) )
+
+					renderer.output(
+						"test",
+						IECoreScene.Output(
+							"test",
+							"ieDisplay",
+							"rgba",
+							{
+								"driverType" : "ImageDisplayDriver",
+								"handle" : "deformationMotion",
+							}
+						)
+					)
+
+					staticMesh = IECoreScene.MeshPrimitive.createSphere( 1 )
+					meshes = []
+					times = []
+					for i in range( 0, numSamples ) :
+						times.append( i / ( numSamples - 1 ) )
+						x = -3 + 6 * times[-1]
+						mesh = staticMesh.copy()
+						for i in range( len( mesh["P"].data ) ) :
+							mesh["P"].data[i] += imath.V3f( x, 0, -3 )
+						meshes.append( mesh )
+
+					object = renderer.object(
+						"sphere", meshes, times,
+						renderer.attributes( IECore.CompoundObject() )
+					)
+
+					renderer.render()
+					image = IECoreImage.ImageDisplayDriver.storedImage( "deformationMotion" )
+
+					for i in range( 0, 10 ) :
+						u = i / 9.0
+						self.assertEqual( self.__colorAtUV( image, imath.V2f( u, 0.1 ) ).a, 0 )
+						self.assertGreaterEqual( self.__colorAtUV( image, imath.V2f( u, 0.5 ) ).a, 0.1 )
+						self.assertEqual( self.__colorAtUV( image, imath.V2f( u, 0.9 ) ).a, 0 )
+
+					del object
+					del renderer
+
+	def testPointDeformationMotionBlur( self ) :
+
+		for device in self.devices() :
+
+			for numSamples in ( 2, 3, 4 ) :
+
+				with self.subTest( device = device["type"], numSamples = numSamples ) :
+
+					renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch )
+					renderer.option( "cycles:shadingsystem", IECore.StringData( "SVM" ) )
+					renderer.option( "cycles:device", IECore.StringData( "{}:00".format( device["type"] ) ) )
+
+					renderer.camera(
+						"testCamera",
+						IECoreScene.Camera(
+							parameters = {
+								"resolution" : imath.V2i( 640, 480 ),
+								"projection" : "perspective",
+							}
+						)
+					)
+					renderer.option( "camera", IECore.StringData( "testCamera" ) )
+
+					renderer.output(
+						"test",
+						IECoreScene.Output(
+							"test",
+							"ieDisplay",
+							"rgba",
+							{
+								"driverType" : "ImageDisplayDriver",
+								"handle" : "deformationMotion",
+							}
+						)
+					)
+
+					staticPrimitive = IECoreScene.PointsPrimitive( IECore.V3fVectorData( [ imath.V3f( 0, 0, 0 ) ] ) )
+					primitives = []
+					times = []
+					for i in range( 0, numSamples ) :
+						times.append( i / ( numSamples - 1 ) )
+						x = -3 + 6 * times[-1]
+						primitive = staticPrimitive.copy()
+						for i in range( len( primitive["P"].data ) ) :
+							primitive["P"].data[i] += imath.V3f( x, 0, -3 )
+						primitives.append( primitive )
+
+					object = renderer.object(
+						"points", primitives, times,
+						renderer.attributes( IECore.CompoundObject() )
+					)
+
+					renderer.render()
+					image = IECoreImage.ImageDisplayDriver.storedImage( "deformationMotion" )
+
+					for i in range( 0, 10 ) :
+						u = i / 9.0
+						self.assertEqual( self.__colorAtUV( image, imath.V2f( u, 0.1 ) ).a, 0 )
+						self.assertGreaterEqual( self.__colorAtUV( image, imath.V2f( u, 0.5 ) ).a, 0.1 )
+						self.assertEqual( self.__colorAtUV( image, imath.V2f( u, 0.9 ) ).a, 0 )
+
+					del object
+					del renderer
+
+	def testPointlessPrimitives( self ) :
+
+		pointlessMesh = IECoreScene.MeshPrimitive.createPlane( imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ) )
+		del pointlessMesh["P"]
+
+		for primitive in (
+			pointlessMesh,
+			IECoreScene.PointsPrimitive( 10 ),
+			IECoreScene.CurvesPrimitive( IECore.IntVectorData( [ 4 ] ) ),
+		) :
+			primitiveType = primitive.typeName()
+
+			for withSamples in ( False, True ) :
+
+				with self.subTest( primitiveType = primitiveType, withSamples = withSamples ) :
+
+					renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+					with IECore.CapturingMessageHandler() as mh :
+
+						if withSamples :
+							objectInterface = renderer.object(
+								"/pointless", [ primitive, primitive ], [ 0, 1 ],
+								renderer.attributes( IECore.CompoundObject() )
+							)
+						else :
+							objectInterface = renderer.object(
+								"/pointless", primitive,
+								renderer.attributes( IECore.CompoundObject() )
+							)
+
+						self.assertEqual( len( mh.messages ), 1 )
+						self.assertEqual( mh.messages[0].level, IECore.Msg.Level.Warning )
+						self.assertEqual( mh.messages[0].message, f'{primitiveType} does not have "P" primitive variable of interpolation type Vertex.' )
+
+					del objectInterface
+					del renderer
+
+	def testAutoTile( self ) :
+
+		plane = IECoreScene.MeshPrimitive.createPlane(
+			imath.Box2f( imath.V2f( -0.5 ), imath.V2f( 0.5 ) ),
+			imath.V2i( 2 )
+		)
+
+		plane["uniformColor"] = IECoreScene.PrimitiveVariable(
+			IECoreScene.PrimitiveVariable.Interpolation.Uniform,
+			IECore.Color3fVectorData( [
+				imath.Color3f( i, i, i )
+				for i in range( 1, 5 )
+			] )
+		)
+
+		shader = IECoreScene.ShaderNetwork(
+			shaders = {
+				"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "base_color" : imath.Color3f( 0 ), "emission_strength" : 1 } ),
+				"attribute" : IECoreScene.Shader( "attribute", "cycles:shader", { "attribute" : "uniformColor" } ),
+			},
+			connections = [
+				( ( "attribute", "color" ), ( "output", "emission_color" ) ),
+			],
+			output = "output",
+		)
+
+		untiledImage = None
+
+		for cropWindow in ( False, True ) :
+
+			camera = IECoreScene.Camera(
+				parameters = { "cropWindow" : imath.Box2f( imath.V2f( 0.1 ), imath.V2f( 0.85 ) ) } if cropWindow else {}
+			)
+
+			for tileSize in ( None, 160, 1024 ) :
+
+				with self.subTest( cropWindow = cropWindow, tileSize = tileSize ) :
+
+					renderer = self.createRenderer()
+
+					if tileSize :
+						renderer.option( "cycles:session:tile_size", IECore.IntData( tileSize ) )
+
+					renderer.camera( "testCamera", camera )
+					renderer.option( "camera", IECore.StringData( "testCamera" ) )
+
+					fileName = self.temporaryDirectory() / "test_{}_{}.exr".format( cropWindow, tileSize )
+					renderer.output(
+						"testOutput",
+						IECoreScene.Output(
+							str( fileName ),
+							"exr",
+							"rgba",
+							{}
+						)
+					)
+
+					planeHandle = renderer.object( "/plane", plane, renderer.attributes( IECore.CompoundObject ( { "cycles:surface" : shader } ) ) )
+					planeHandle.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+					renderer.render()
+
+					del planeHandle
+					del renderer
+
+					image = OpenImageIO.ImageBuf( str( fileName ) )
+					self.assertEqual( image.spec().full_width, 640 )
+					self.assertEqual( image.spec().full_height, 480 )
+
+					def assertColorAtUV( image, uv, color ) :
+
+						pixel = image.getpixel( int( uv.x * (image.spec().full_width - 1) ), int( uv.y * (image.spec().full_height - 1) ) )
+						self.assertEqual( imath.Color4f( *pixel ), color )
+
+					assertColorAtUV( image, imath.V2f( 0.33, 0.66 ), imath.Color4f( 1, 1, 1, 1 ) )
+					assertColorAtUV( image, imath.V2f( 0.66, 0.66 ), imath.Color4f( 2, 2, 2, 1 ) )
+					assertColorAtUV( image, imath.V2f( 0.33, 0.33 ), imath.Color4f( 3, 3, 3, 1 ) )
+					assertColorAtUV( image, imath.V2f( 0.66, 0.33 ), imath.Color4f( 4, 4, 4, 1 ) )
+
+					if not cropWindow and tileSize is None and untiledImage is None :
+						untiledImage = image
+					else :
+						self.assertFalse( OpenImageIO.ImageBufAlgo.compare( image, untiledImage, failthresh = 0, warnthresh = 0 ).error )
+
+	def testRenderRaisesOnError( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch )
+		renderer.output( "test", IECoreScene.Output( "test", "exr", "rgba", {} ) )
+
+		with self.assertRaisesRegex( RuntimeError, 'OpenImageIO could not find a format writer for "test".' ) :
+			with IECore.CapturingMessageHandler() as mh :
+				renderer.render()
+
+		self.ignoreMessage( IECore.Msg.Level.Error, "Cycles", """OpenImageIO could not find a format writer for "test". Is it a file format that OpenImageIO doesn't know about?""" )
+
+	def testUnsupportedTesselationEdits( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+
+		polygonSphere = IECoreScene.MeshPrimitive.createSphere( 1 )
+		subdivSphere = polygonSphere.copy()
+		subdivSphere.setInterpolation( "catmullClark" )
+
+		maxLevel1Attributes = renderer.attributes(
+			IECore.CompoundObject( { "cycles:max_level" : IECore.IntData( 1 ) } )
+		)
+		maxLevel2Attributes = renderer.attributes(
+			IECore.CompoundObject( { "cycles:max_level" : IECore.IntData( 2 ) } )
+		)
+
+		polygonObject = renderer.object( "polygonSphere", polygonSphere, maxLevel1Attributes )
+		subdivObject = renderer.object( "subdivSphere", subdivSphere, maxLevel1Attributes )
+
+		self.assertTrue( polygonObject.attributes( maxLevel1Attributes ) )
+		self.assertTrue( polygonObject.attributes( maxLevel2Attributes ) )
+
+		self.assertTrue( subdivObject.attributes( maxLevel1Attributes ) )
+		self.assertFalse( subdivObject.attributes( maxLevel2Attributes ) )
+
+		del polygonObject, subdivObject
+
+	def testCrashWithSubdivShaderEdit( self ) :
+
+		for shadingSystem in [ "OSL", "SVM" ] :
+			with self.subTest( shadingSystem = shadingSystem ) :
+
+				renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+				renderer.option( "cycles:shadingsystem", IECore.StringData( shadingSystem ) )
+
+				renderer.output(
+					"testOutput",
+					IECoreScene.Output(
+						"test",
+						"ieDisplay",
+						"rgba",
+						{
+							"driverType" : "ImageDisplayDriver",
+							"handle" : "testCrashWithSubdivShaderEdit",
+						}
+					)
+				)
+
+				def shaderAttributes( color ) :
+					return renderer.attributes( IECore.CompoundObject ( {
+						"cycles:surface" : IECoreScene.ShaderNetwork(
+							shaders = {
+								"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "emission_color" : color, "emission_strength" : 1 } ),
+							},
+							output = "output",
+						)
+					} ) )
+
+				subdivSphere = IECoreScene.MeshPrimitive.createSphere( 1 )
+				subdivSphere.setInterpolation( "catmullClark" )
+				object = renderer.object( "subdivSphere", subdivSphere, shaderAttributes( imath.Color3f( 1 ) ) )
+				object.transform( imath.M44f().translate( imath.V3f( 0, 0, -3 ) ) )
+
+				def assertColor( color ) :
+
+					self.assertEqualWithAbsError(
+						self.__colorAtUV( "testCrashWithSubdivShaderEdit", imath.V2f( 0.5 ) ),
+						imath.Color4f( color.r, color.g, color.b, 1 ), error = 0.01
+					)
+
+				renderer.render()
+
+				self.assertEventually( lambda : assertColor( imath.Color3f( 1 ) ) )
+
+				renderer.pause()
+
+				for testColor in [ imath.Color3f( 1, 0, 0 ), imath.Color3f( 0, 1, 0 ), imath.Color3f( 0, 0, 1 ) ] :
+
+					object.attributes( shaderAttributes( testColor ) )
+
+					renderer.render()
+
+					self.assertEventually( lambda : assertColor( testColor ) )
+
+					renderer.pause()
+
+				del object
+				del renderer
+
+	def testRenderStopPreservesOutput( self ) :
+
+		renderer = self.createRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive )
+		renderer.option( "cycles:session:samples", IECore.IntData( 64 ) )
+
+		renderer.output(
+			"testOutput",
+			IECoreScene.Output(
+				"test",
+				"ieDisplay",
+				"rgba",
+				{
+					"driverType" : "ImageDisplayDriver",
+					"handle" : "testRenderStopPreservesOutput",
+				}
+			)
+		)
+
+		plane = renderer.object(
+			"/plane",
+			IECoreScene.MeshPrimitive.createPlane(
+				imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ),
+			),
+			renderer.attributes( IECore.CompoundObject ( {
+				"cycles:surface" : IECoreScene.ShaderNetwork(
+					shaders = {
+						"output" : IECoreScene.Shader( "principled_bsdf", "cycles:surface", { "emission_strength" : 1 } ),
+						"checker" : IECoreScene.Shader( "checker_texture", "cycles:surface", { "color1" : imath.Color3f( 1 ), "color2" : imath.Color3f( 0 ), "scale" : 1000 } ),
+					},
+					connections = [
+						( ( "checker", "color" ), ( "output", "emission_color" ) ),
+					],
+					output = "output",
+				)
+			} ) )
+		)
+		plane.transform( imath.M44f().translate( imath.V3f( 0, 0, -1 ) ) )
+
+		renderer.render()
+
+		def assertConverged() :
+
+			image = IECoreImage.ImageDisplayDriver.storedImage( "testRenderStopPreservesOutput" )
+			self.assertIsInstance( image, IECoreImage.ImagePrimitive )
+			self.assertLess( sum( abs( r - 0.5 ) for r in image["R"] ) / len( image["R"] ), 0.15 )
+
+		# Give our high-frequency checker time to converge towards 0.5
+		self.assertEventually( lambda : assertConverged() )
+
+		renderer.pause()
+
+		pausedImage = IECoreImage.ImageDisplayDriver.storedImage( "testRenderStopPreservesOutput" )
+
+		del plane
+		del renderer
+
+		assertConverged()
+		self.assertEqual( pausedImage, IECoreImage.ImageDisplayDriver.storedImage( "testRenderStopPreservesOutput" ) )
