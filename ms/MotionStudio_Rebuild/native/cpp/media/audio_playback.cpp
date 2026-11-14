@@ -1,4 +1,5 @@
 #include "ms_audio_playback.hpp"
+#include "ms_android_decode.hpp"
 #include "ms_project.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -49,6 +50,29 @@ void AudioDecoderFFmpeg::close() {
 Error AudioDecoderFFmpeg::decode_window(double start, double duration, AudioBuffer& dst) {
   if (!open_ || path_.empty())
     return Error::make(ErrorCode::NotInitialized, "audio decoder closed");
+#if defined(__ANDROID__)
+  // Android has no ffmpeg binary: decode through the platform extractor and
+  // slice the window out of the decoded PCM.
+  {
+    AudioBuffer all;
+    const int rate = info_.sample_rate > 0 ? info_.sample_rate : 48000;
+    const int ch_req = info_.channels > 0 ? info_.channels : 2;
+    Error ae = android_decode_audio(path_, all, rate, ch_req, start + duration + 1.0);
+    if (!ae.ok()) return ae;
+    const int ch = std::max(1, all.channels);
+    const size_t s0 = static_cast<size_t>(std::max(0.0, start) * all.sample_rate) *
+                      static_cast<size_t>(ch);
+    const size_t frames = static_cast<size_t>(std::max(0.0, duration) * all.sample_rate);
+    dst.sample_rate = all.sample_rate;
+    dst.channels = ch;
+    dst.samples.assign(frames * static_cast<size_t>(ch), 0.f);
+    for (size_t i = 0; i < dst.samples.size(); ++i) {
+      const size_t src = s0 + i;
+      if (src < all.samples.size()) dst.samples[i] = all.samples[src];
+    }
+    return Error::success();
+  }
+#endif
   if (!ffmpeg_available(paths_))
     return Error::make(ErrorCode::NotSupported, "ffmpeg not found");
   if (duration <= 0)

@@ -1,5 +1,6 @@
 #include "ms_bridge.h"
 #include "../include/ms_engine.hpp"
+#include "../include/ms_android_decode.hpp"
 #include <cstdlib>
 #include <cstring>
 
@@ -104,6 +105,11 @@ static ms::TextStyle make_text_style(const char* font, double size, const char* 
     s.box_width = box_width > 0 ? static_cast<float>(box_width) : 0.f;
     s.uppercase = uppercase != 0;
     return s;
+}
+
+const char* ms_decoder_backend() {
+    static const std::string name = ms::decoder_backend_name();
+    return name.c_str();
 }
 
 int ms_marker_add(double time, const char* name) {

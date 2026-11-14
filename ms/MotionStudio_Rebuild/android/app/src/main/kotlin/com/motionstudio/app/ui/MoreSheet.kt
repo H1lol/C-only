@@ -154,6 +154,12 @@ fun MoreSheet(
             )
 
             Spacer(Modifier.height(4.dp))
+            val backend = NativeEngine.nativeDecoderBackend()
+            Text(
+                "Decoder: $backend" + if (backend == "slate") "  (placeholder — no real decode)" else "",
+                color = if (backend == "slate") MsColors.error else MsColors.success,
+                fontSize = 11.sp,
+            )
             Text(
                 "Renderer: ${NativeEngine.nativePerfFrameMs().toInt()} ms/frame · " +
                     "${NativeEngine.nativePerfFps().toInt()} fps · native C++ CPU compositor",

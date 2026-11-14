@@ -94,6 +94,15 @@ M0–M5 desktop spikes: PASSED
 - Checks at startup and every five minutes.
 - Project files, recovery snapshots, autosaves, source media and exports remain outside the cleanup scope.
 
+## 2026-11-13 — Real decoding on Android
+- **MediaCodec decoder**: `media/android_decode.cpp` implements `IMediaDecoder` over `AMediaCodec` + `AMediaExtractor`, and `create_media_decoder` now prefers it on Android. Before this the only decoder was a shell-out to the `ffmpeg` CLI, which does not exist on Android, so every imported clip silently fell through to `SlateDecoder` and rendered as a flat placeholder colour. Handles H.264/HEVC/VP9 platform codecs, keyframe seeking, and NV12/I420/YV12/flexible YUV output with stride and slice-height from the reported format. Links `libmediandk`; no bundled binaries, no new licence obligations.
+- **Audio on Android**: `Android_decode_audio` decodes the extractor's audio track to float PCM, and `AudioDecoderFFmpeg::decode_window` uses it when ffmpeg is absent. That makes timeline playback, the export AAC track and the waveform real on device instead of silent.
+- **Honest import metadata**: `ProjectSession::import_media` asks a real decoder for duration/size/audio presence before falling back to the container sniff, which used to hardcode 10 s, 1920×1080 and "has audio" for every MP4.
+- **Decoder backend is visible**: `ms_decoder_backend()` reports `mediacodec` / `ffmpeg` / `slate`; the session sheet shows it in red when it is `slate`, so a placeholder can never masquerade as footage.
+- **All effects exposed**: chroma key was implemented in `cpu_effects.cpp` but missing from `EffectsSheet` — now listed, bringing the UI to all nine.
+- **All transitions exposed**: `MotionSheet` listed 5 of the 20 implemented transitions; it now lists all 20 (dissolve, 3 fades, 9 wipes, 4 slides, iris, zoom, dip).
+- Verified: `ctest` **13/13**, `:app:testDebugUnitTest` **6/6**, `:app:assembleDebug` green, both ABIs linked against `libmediandk.so` with 28 `AMediaCodec`/`AMediaExtractor`/`AMediaFormat` call sites. ⚠️ Still never executed on a device.
+
 ## 2026-11-13 — Waveforms, per-clip grade, masks, markers, project settings
 - **Timeline waveform**: `TimelineAudioPlayback::clip_peaks` computes a `bins`-wide peak envelope from the decoded PCM it already caches for playback, so asking for a waveform also warms the audio. `ms_clip_peaks` → JNI → `EditorEngine.peaks` (cached per clip/range) → audio clips draw real bars behind their label. Clips with no decodable audio return empty rather than a fake shape.
 - **Per-clip grade**: `ClipInfo` gained its own seven-parameter grade plus `grade_enabled`, applied in `render_clip` **after** the clip's effects and **before** compositing, so shots can be matched without touching the master grade. Serialized as `grade_enabled` + `grade: [...]`. `ColorSheet` now switches between **Sequence** and **Selected clip** with the same seven sliders.

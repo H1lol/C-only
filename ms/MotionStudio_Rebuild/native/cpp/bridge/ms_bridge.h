@@ -101,6 +101,10 @@ int ms_scopes_histogram(int* out, int bins);
 // Returns the new transition id, or 0 on failure.
 int ms_transition_add(int track_id, int outgoing, int incoming, int type, double duration);
 
+// Which decoder backend is live: "mediacodec", "ffmpeg" or "slate".
+// "slate" means imported video renders as a placeholder — surface it in the UI.
+const char* ms_decoder_backend();
+
 // Timeline markers. Returns the new marker id, or 0.
 int ms_marker_add(double time, const char* name);
 int ms_marker_remove(int id);

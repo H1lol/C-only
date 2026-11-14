@@ -35,6 +35,7 @@ Legend: ✅ done in this pass · ❌ still missing · ⚠️ partial / untested 
 | ✅ Masks | `comp/mask.cpp` is bridged: rectangle/ellipse/full with feather and invert, applied before the clip's transform; `MaskSheet` edits it. |
 | ✅ Markers | Session-level markers with names, serialized as `"markers"`, added/removed from the session sheet. |
 | ✅ Project settings | Size and frame rate can be changed without discarding edits (`ms_project_settings`). |
+| ✅ Android decode | MediaCodec/MediaExtractor decoder replaces the ffmpeg shell-out, plus PCM audio decode for playback, export and waveforms. ⚠️ Compiled and linked, never run on a device. |
 
 ## Still missing
 
@@ -63,7 +64,7 @@ Both the master grade and per-clip grades work, each with seven parameters and a
 Export carries AAC audio, and audio clips now draw a real waveform from decoded PCM. Still missing: the audio effect chain is unexposed beyond master gain — no EQ, compressor or limiter UI — and there is no separate audio mixer panel.
 
 ### 7. Playback performance
-No `MediaCodec` hardware decode; 4K HEVC will not play in real time. `graphics/gpu` is a mock — all compositing is CPU into an RGBA8 buffer. No proxies, no cache UI.
+Decoding now uses MediaCodec, but playback is still seek-per-frame rather than a streaming pipeline, so 4K will not play smoothly. Compositing remains CPU into an RGBA8 buffer (`gpu_mock`), and there are no proxies or cache-management UI.
 
 ### 8. Multicam and nested sequences
 Markers are done. Multicam and nested sequences still have zero references in the engine — a nested sequence would need a clip type that renders another timeline.

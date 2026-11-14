@@ -30,6 +30,7 @@ set(MS_CORE_SOURCES
   anim/animation.cpp
   media/media_probe.cpp
   media/ffmpeg_io.cpp
+  media/android_decode.cpp
   media/timeline_player.cpp
   media/export_engine.cpp
   media/mlt_timeline.cpp
@@ -66,6 +67,14 @@ endforeach()
 add_library(ms_core STATIC ${MS_CORE_SOURCES})
 set_target_properties(ms_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(ms_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# Android platform media APIs (AMediaCodec / AMediaExtractor) back the decoder
+# on device; the desktop build has no equivalent and uses ffmpeg instead.
+if(ANDROID)
+  find_library(ANDROID_MEDIA_LIB mediandk)
+  if(ANDROID_MEDIA_LIB)
+    target_link_libraries(ms_core PUBLIC ${ANDROID_MEDIA_LIB} log)
+  endif()
+endif()
 # C ABI used by Flutter FFI.
 add_library(motionstudio_native SHARED bridge/ms_bridge.cpp)
 target_link_libraries(motionstudio_native PRIVATE ms_core)

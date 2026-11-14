@@ -61,6 +61,8 @@ val MsEffects = listOf(
         listOf(p("horizontal", "Horizontal", 0f, 1f, 1f))),
     EffectDef("invert", "Invert", "Negative", emptyList()),
     EffectDef("opacity", "Opacity", "Blend to transparent", listOf(p("opacity", "Opacity", 0f, 1f, 1f))),
+    // Was implemented in the engine (cpu_effects.cpp) but never listed here.
+    EffectDef("chromakey", "Chroma Key", "Knock out green", listOf(p("tolerance", "Tolerance", 0f, 1f, 0.2f))),
 )
 
 private fun definition(id: String): EffectDef =

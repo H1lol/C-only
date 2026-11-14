@@ -1,5 +1,6 @@
 #include "ms_project.hpp"
 #include "ms_media.hpp"
+#include "ms_ffmpeg_io.hpp"
 #include <fstream>
 #include <sstream>
 #include <atomic>
@@ -502,6 +503,16 @@ MediaId ProjectSession::import_media(const std::string& path) {
   m.name = (slash == std::string::npos) ? path : path.substr(slash + 1);
 
   MediaProbeResult pr = MediaProbe::probe(path);
+  // The light probe only sniffs the container and guesses (fixed 10 s, 1920×1080,
+  // "has audio"). Ask a real decoder when one is available so clips get the true
+  // duration, size and audio presence.
+  if (auto dec = create_media_decoder(path)) {
+    const MediaProbeResult& real = dec->info();
+    if (!real.streams.empty() || real.duration_ms > 0) {
+      pr = real;
+      pr.ok = true;
+    }
+  }
   if (pr.ok && !pr.streams.empty()) {
     for (const auto& s : pr.streams) {
       if (s.type == "video") {

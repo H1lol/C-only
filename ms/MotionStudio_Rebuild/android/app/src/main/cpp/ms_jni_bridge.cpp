@@ -239,6 +239,12 @@ Java_com_motionstudio_app_native_NativeEngine_nativeTransitionRemove(JNIEnv*, jo
     return ms_transition_remove(track, id) == 0 ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jstring JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeDecoderBackend(JNIEnv* env, jobject) {
+    const char* name = ms_decoder_backend();
+    return env->NewStringUTF(name ? name : "unknown");
+}
+
 JNIEXPORT jint JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeMarkerAdd(JNIEnv* env, jobject, jdouble time,
         jstring name) {

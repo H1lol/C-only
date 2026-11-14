@@ -38,12 +38,31 @@ private data class AnimProp(
 )
 
 /** Mirrors ms::TransitionType indices in native/cpp/include/ms_transitions.hpp. */
+/**
+ * Every implemented transition (comp/transitions.cpp). Indices match
+ * ms::TransitionType exactly; None (0) is not offered because it does nothing.
+ */
 private val TransitionTypes = listOf(
     "Dissolve" to 1,
     "Fade Black" to 2,
-    "Wipe Left" to 5,
+    "Fade White" to 3,
+    "Fade Colour" to 4,
+    "Wipe L" to 5,
+    "Wipe R" to 6,
+    "Wipe Up" to 7,
+    "Wipe Down" to 8,
+    "Wipe Diag" to 9,
+    "Wipe Diag R" to 10,
     "Circle" to 11,
-    "Slide Left" to 14,
+    "Barn Door H" to 12,
+    "Barn Door V" to 13,
+    "Slide L" to 14,
+    "Slide R" to 15,
+    "Slide Up" to 16,
+    "Slide Down" to 17,
+    "Iris" to 18,
+    "Zoom" to 19,
+    "Dip to Colour" to 20,
 )
 
 private val Props = listOf(
@@ -154,17 +173,20 @@ fun MotionSheet(engine: EditorEngine, onDismiss: () -> Unit) {
                 fontSize = 11.sp,
             )
             Spacer(Modifier.height(6.dp))
-            Row {
-                TransitionTypes.forEach { (label, type) ->
-                    TextButton(
-                        enabled = engine.nextClip() != null,
-                        onClick = { engine.addTransitionToNext(type) },
-                    ) {
-                        Text(
-                            label,
-                            color = if (engine.nextClip() != null) MsColors.accentSoft else MsColors.textMuted,
-                            fontSize = 12.sp,
-                        )
+            TransitionTypes.chunked(3).forEach { rowTypes ->
+                Row {
+                    rowTypes.forEach { (label, type) ->
+                        TextButton(
+                            enabled = engine.nextClip() != null,
+                            onClick = { engine.addTransitionToNext(type) },
+                        ) {
+                            Text(
+                                label,
+                                color = if (engine.nextClip() != null) MsColors.accentSoft
+                                else MsColors.textMuted,
+                                fontSize = 11.sp,
+                            )
+                        }
                     }
                 }
             }

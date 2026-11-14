@@ -62,6 +62,9 @@ object NativeEngine {
     external fun nativeGradeClear()
     external fun nativeScopesHistogram(out: IntArray, bins: Int): Boolean
 
+    /** "mediacodec", "ffmpeg" or "slate" — the last one means no real decoding. */
+    external fun nativeDecoderBackend(): String
+
     // Timeline markers + project settings
     external fun nativeMarkerAdd(time: Double, name: String): Int
     external fun nativeMarkerRemove(id: Int): Boolean
