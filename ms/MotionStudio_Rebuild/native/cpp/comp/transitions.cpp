@@ -26,6 +26,9 @@ const char* transition_name(TransitionType t) {
     case TransitionType::Iris: return "iris";
     case TransitionType::Zoom: return "zoom";
     case TransitionType::DipToColor: return "dip_color";
+    case TransitionType::WipeBlindsH: return "blinds_h";
+    case TransitionType::WipeBlindsV: return "blinds_v";
+    case TransitionType::WipeChecker: return "checker";
     default: return "unknown";
   }
 }
@@ -266,6 +269,35 @@ Error apply_transition(const ImageBuffer& a, const ImageBuffer& b,
           D[i*4+1] = static_cast<uint8_t>(std::clamp(ag*(1-u)+bg*u, 0.f, 1.f)*255);
           D[i*4+2] = static_cast<uint8_t>(std::clamp(ab*(1-u)+bb*u, 0.f, 1.f)*255);
           D[i*4+3] = static_cast<uint8_t>(std::clamp(aa*(1-u)+ba*u, 0.f, 1.f)*255);
+        }
+      }
+      break;
+    }
+    case TransitionType::WipeBlindsH:
+    case TransitionType::WipeBlindsV:
+    case TransitionType::WipeChecker: {
+      // Each band or cell changes at its own moment, so the wipe reads as a
+      // pattern rather than a single edge. Thresholds stay in [0, 0.5] so every
+      // pixel has finished by the time u reaches 1.
+      constexpr int kBands = 12;
+      constexpr int kCells = 8;
+      for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+          float thresh = 0.f;
+          if (type == TransitionType::WipeBlindsH) {
+            const float band = static_cast<float>(x) * kBands / std::max(w, 1);
+            thresh = band - std::floor(band);
+          } else if (type == TransitionType::WipeBlindsV) {
+            const float band = static_cast<float>(y) * kBands / std::max(h, 1);
+            thresh = band - std::floor(band);
+          } else {
+            const int cx = x * kCells / std::max(w, 1);
+            const int cy = y * kCells / std::max(h, 1);
+            thresh = ((cx + cy) & 1) ? 0.5f : 0.f;
+          }
+          float t = std::clamp((u - thresh * 0.6f) * 2.f, 0.f, 1.f);
+          if (softness > 1e-3f) t = t * t * (3.f - 2.f * t); // smoothstep
+          mix_pix(y * w + x, t);
         }
       }
       break;

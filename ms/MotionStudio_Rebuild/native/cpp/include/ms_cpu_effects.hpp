@@ -23,4 +23,31 @@ Error cpu_mirror(const ImageBuffer& in, ImageBuffer& out, int horizontal);
 Error cpu_solid(ImageBuffer& out, int w, int h,
                 float r, float g, float b, float a);
 
+// Implemented in cpu_effects_extra.cpp
+Error cpu_threshold(const ImageBuffer& in, ImageBuffer& out, float level);
+Error cpu_chromakey_simple(const ImageBuffer& in, ImageBuffer& out,
+                           float kr, float kg, float kb, float tol);
+
+// Implemented in cpu_effects_catalogue.cpp
+Error cpu_saturation(const ImageBuffer& in, ImageBuffer& out, float amount);
+Error cpu_hue_shift(const ImageBuffer& in, ImageBuffer& out, float degrees);
+Error cpu_levels(const ImageBuffer& in, ImageBuffer& out, float black, float white, float gamma);
+Error cpu_white_balance(const ImageBuffer& in, ImageBuffer& out, float temperature, float tint);
+Error cpu_posterize(const ImageBuffer& in, ImageBuffer& out, int levels);
+Error cpu_sharpen(const ImageBuffer& in, ImageBuffer& out, float amount);
+Error cpu_edge_detect(const ImageBuffer& in, ImageBuffer& out, float amount);
+Error cpu_emboss(const ImageBuffer& in, ImageBuffer& out, float amount);
+Error cpu_pixelate(const ImageBuffer& in, ImageBuffer& out, int size);
+Error cpu_glow(const ImageBuffer& in, ImageBuffer& out, float amount, float radius);
+Error cpu_noise(const ImageBuffer& in, ImageBuffer& out, float amount, int seed);
+Error cpu_box_blur(const ImageBuffer& in, ImageBuffer& out, int radius);
+Error cpu_crop(const ImageBuffer& in, ImageBuffer& out,
+               float left, float right, float top, float bottom);
+
+/** Tries the catalogue effects; returns true when it wrote `out`. */
+bool cpu_effect_try(const std::string& effect_id,
+                    const ImageBuffer& in,
+                    ImageBuffer& out,
+                    const std::unordered_map<std::string, double>& params);
+
 } // namespace ms

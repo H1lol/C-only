@@ -63,6 +63,9 @@ private val TransitionTypes = listOf(
     "Iris" to 18,
     "Zoom" to 19,
     "Dip to Colour" to 20,
+    "Blinds H" to 21,
+    "Blinds V" to 22,
+    "Checker" to 23,
 )
 
 private val Props = listOf(

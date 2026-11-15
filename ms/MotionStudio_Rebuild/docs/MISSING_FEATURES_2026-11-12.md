@@ -63,6 +63,9 @@ Both the master grade and per-clip grades work, each with seven parameters and a
 ### 6. Audio depth
 Export carries AAC audio, and audio clips now draw a real waveform from decoded PCM. Still missing: the audio effect chain is unexposed beyond master gain — no EQ, compressor or limiter UI — and there is no separate audio mixer panel.
 
+### 6b. Effect catalogue size
+23 CPU effects against Kdenlive's roughly 84 hand-written effect definitions plus 145 MLT avfilter and 118 frei0r entries. Most of that gap is provided by third-party GPL plugins we cannot link; adding them would relicense the app. Audio effects remain the thinnest area: only master gain is wired to the UI.
+
 ### 7. Playback performance
 Decoding now uses MediaCodec, but playback is still seek-per-frame rather than a streaming pipeline, so 4K will not play smoothly. Compositing remains CPU into an RGBA8 buffer (`gpu_mock`), and there are no proxies or cache-management UI.
 

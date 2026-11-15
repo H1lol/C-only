@@ -42,27 +42,81 @@ data class EffectDef(
     val name: String,
     val note: String,
     val params: List<EffectParamDef>,
+    val group: String = "Basic",
 )
 
 private fun p(name: String, label: String, min: Float, max: Float, default: Float) =
     EffectParamDef(name, label, min, max, default)
 
-/** Mirrors the CPU effect registry in native/cpp/effects/cpu_effects.cpp. */
+/**
+ * Mirrors the CPU registry: cpu_effects.cpp, cpu_effects_extra.cpp and
+ * cpu_effects_catalogue.cpp. Every id here is reachable through
+ * cpu_effect_apply and covered by ms_effects_catalogue_test.
+ */
 val MsEffects = listOf(
+    // ---- Basic ----
     EffectDef("gaussian_blur", "Gaussian Blur", "Separable CPU blur",
-        listOf(p("radius", "Radius", 0f, 64f, 4f))),
+        listOf(p("radius", "Radius", 0f, 64f, 4f)), "Basic"),
+    EffectDef("box_blur", "Box Blur", "Running-sum blur",
+        listOf(p("radius", "Radius", 0f, 64f, 4f)), "Basic"),
+    EffectDef("sharpen", "Sharpen", "Unsharp 3x3",
+        listOf(p("amount", "Amount", 0f, 3f, 0.6f)), "Basic"),
     EffectDef("brightness_contrast", "Brightness / Contrast", "Levels",
-        listOf(p("brightness", "Brightness", -1f, 1f, 0f), p("contrast", "Contrast", 0f, 2f, 1f))),
-    EffectDef("grayscale", "Grayscale", "Luma desaturate", emptyList()),
-    EffectDef("sepia", "Sepia", "Warm monochrome", listOf(p("amount", "Amount", 0f, 1f, 1f))),
+        listOf(p("brightness", "Brightness", -1f, 1f, 0f), p("contrast", "Contrast", 0f, 2f, 1f)), "Basic"),
+    EffectDef("levels", "Levels", "Black / white / gamma",
+        listOf(
+            p("black", "Black", 0f, 0.9f, 0f),
+            p("white", "White", 0.1f, 1f, 1f),
+            p("gamma", "Gamma", 0.2f, 3f, 1f),
+        ), "Basic"),
+    EffectDef("opacity", "Opacity", "Blend to transparent",
+        listOf(p("opacity", "Opacity", 0f, 1f, 1f)), "Basic"),
+
+    // ---- Colour ----
+    EffectDef("grayscale", "Grayscale", "Luma desaturate", emptyList(), "Colour"),
+    EffectDef("sepia", "Sepia", "Warm monochrome",
+        listOf(p("amount", "Amount", 0f, 1f, 1f)), "Colour"),
+    EffectDef("invert", "Invert", "Negative", emptyList(), "Colour"),
+    EffectDef("saturation", "Saturation", "1 = unchanged, 0 = grey",
+        listOf(p("saturation", "Amount", 0f, 3f, 1.4f)), "Colour"),
+    EffectDef("hue_shift", "Hue Shift", "Rotate the colour wheel",
+        listOf(p("degrees", "Degrees", -180f, 180f, 30f)), "Colour"),
+    EffectDef("white_balance", "White Balance", "Temperature / tint",
+        listOf(
+            p("temperature", "Temp", -1f, 1f, 0f),
+            p("tint", "Tint", -1f, 1f, 0f),
+        ), "Colour"),
+    EffectDef("posterize", "Posterize", "Quantise to N levels",
+        listOf(p("levels", "Levels", 2f, 32f, 8f)), "Colour"),
+    EffectDef("threshold", "Threshold", "Binarize on luma",
+        listOf(p("level", "Level", 0f, 1f, 0.5f)), "Colour"),
+    EffectDef("chromakey", "Chroma Key", "Knock out green",
+        listOf(p("tolerance", "Tolerance", 0f, 1f, 0.2f)), "Colour"),
+
+    // ---- Stylise ----
+    EffectDef("glow", "Glow", "Blur screened back over the image",
+        listOf(p("amount", "Amount", 0f, 1f, 0.5f), p("radius", "Radius", 0f, 32f, 8f)), "Stylise"),
+    EffectDef("noise", "Film Grain", "Deterministic per-pixel noise",
+        listOf(p("amount", "Amount", 0f, 0.6f, 0.15f)), "Stylise"),
+    EffectDef("emboss", "Emboss", "Directional relief",
+        listOf(p("amount", "Amount", 0f, 2f, 0.5f)), "Stylise"),
+    EffectDef("edge_detect", "Edges", "Sobel gradient",
+        listOf(p("amount", "Amount", 0f, 3f, 1f)), "Stylise"),
+    EffectDef("pixelate", "Pixelate", "Block mosaic",
+        listOf(p("size", "Size", 1f, 64f, 8f)), "Stylise"),
     EffectDef("vignette", "Vignette", "Edge falloff",
-        listOf(p("strength", "Strength", 0f, 1f, 0.6f), p("radius", "Radius", 0.1f, 1.5f, 1f))),
+        listOf(p("strength", "Strength", 0f, 1f, 0.6f), p("radius", "Radius", 0.1f, 1.5f, 1f)), "Stylise"),
+
+    // ---- Framing ----
     EffectDef("mirror", "Mirror", "Flip horizontally or vertically",
-        listOf(p("horizontal", "Horizontal", 0f, 1f, 1f))),
-    EffectDef("invert", "Invert", "Negative", emptyList()),
-    EffectDef("opacity", "Opacity", "Blend to transparent", listOf(p("opacity", "Opacity", 0f, 1f, 1f))),
-    // Was implemented in the engine (cpu_effects.cpp) but never listed here.
-    EffectDef("chromakey", "Chroma Key", "Knock out green", listOf(p("tolerance", "Tolerance", 0f, 1f, 0.2f))),
+        listOf(p("horizontal", "Horizontal", 0f, 1f, 1f)), "Framing"),
+    EffectDef("crop", "Crop", "Clear the frame edges",
+        listOf(
+            p("left", "Left", 0f, 0.9f, 0f),
+            p("right", "Right", 0f, 0.9f, 0f),
+            p("top", "Top", 0f, 0.9f, 0f),
+            p("bottom", "Bottom", 0f, 0.9f, 0f),
+        ), "Framing"),
 )
 
 private fun definition(id: String): EffectDef =
@@ -155,25 +209,37 @@ fun EffectsSheet(engine: EditorEngine, onDismiss: () -> Unit) {
                 item {
                     Text("ADD", color = MsColors.textMuted, fontSize = 9.sp, fontFamily = MsFonts.mono)
                 }
-                items(MsEffects) { def ->
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(def.name, color = MsColors.textPrimary, fontSize = 14.sp)
-                            Text(def.note, color = MsColors.textMuted, fontSize = 11.sp)
-                        }
-                        TextButton(
-                            onClick = { engine.addEffect(def.id) },
-                            enabled = clipName != null,
+                MsEffects.groupBy { it.group }.forEach { (group, defs) ->
+                    item {
+                        Text(
+                            group.uppercase(),
+                            color = MsColors.textMuted,
+                            fontSize = 9.sp,
+                            fontFamily = MsFonts.mono,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                    items(defs) { def ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text(
-                                "Add",
-                                color = if (clipName != null) MsColors.accentSoft else MsColors.textMuted,
-                                fontSize = 12.sp,
-                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(def.name, color = MsColors.textPrimary, fontSize = 14.sp)
+                                Text(def.note, color = MsColors.textMuted, fontSize = 11.sp)
+                            }
+                            TextButton(
+                                onClick = { engine.addEffect(def.id) },
+                                enabled = clipName != null,
+                            ) {
+                                Text(
+                                    "Add",
+                                    color = if (clipName != null) MsColors.accentSoft
+                                    else MsColors.textMuted,
+                                    fontSize = 12.sp,
+                                )
+                            }
                         }
                     }
                 }

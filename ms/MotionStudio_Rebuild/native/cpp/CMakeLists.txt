@@ -18,6 +18,7 @@ set(MS_CORE_SOURCES
   render/render_backends.cpp
   render/render_queue.cpp
   effects/cpu_effects.cpp
+  effects/cpu_effects_catalogue.cpp
   effects/cpu_effects_extra.cpp
   effects/effect_stack.cpp
   effects/msp/msp_registry.cpp
@@ -127,6 +128,8 @@ target_include_directories(ms_edit_test PRIVATE
 add_executable(ms_title_demo tools/ms_title_demo.cpp)
 target_link_libraries(ms_title_demo PRIVATE ms_core)
 
+add_executable(ms_effects_catalogue_test tools/ms_effects_catalogue_test.cpp)
+target_link_libraries(ms_effects_catalogue_test PRIVATE ms_core)
 add_executable(ms_lut_test tools/ms_lut_test.cpp)
 target_link_libraries(ms_lut_test PRIVATE ms_core)
 
@@ -136,6 +139,7 @@ target_include_directories(ms_engine_audio_test PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # Native regression suite (usable with: ctest --test-dir <build> --output-on-failure)
+add_test(NAME ms_effects_catalogue_test COMMAND ms_effects_catalogue_test)
 add_test(NAME ms_studio_test COMMAND ms_studio_test)
 add_test(NAME ms_pass345_deep COMMAND ms_pass345_deep)
 add_test(NAME ms_pass6_test COMMAND ms_pass6_test)

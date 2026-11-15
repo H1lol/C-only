@@ -37,6 +37,10 @@ enum class TransitionType : uint8_t {
   Iris,
   Zoom,
   DipToColor,
+  // Pattern wipes — appended so saved projects keep their integer ids
+  WipeBlindsH,
+  WipeBlindsV,
+  WipeChecker,
 };
 
 struct Transition {

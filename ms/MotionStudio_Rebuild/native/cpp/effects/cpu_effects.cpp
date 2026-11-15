@@ -195,6 +195,9 @@ Error cpu_effect_apply(const std::string& effect_id,
     return it == params.end() ? def : it->second;
   };
 
+  // Catalogue effects (colour, stylise, framing) live in their own file.
+  if (cpu_effect_try(effect_id, in, out, params)) return Error::success();
+
   if (effect_id == "org.motionstudio.gaussian_blur" || effect_id == "gaussian_blur" || effect_id == "blur") {
     return cpu_gaussian_blur(in, out, static_cast<float>(get("radius", 4.0)));
   }
