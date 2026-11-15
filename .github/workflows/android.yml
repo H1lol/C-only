@@ -35,14 +35,21 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # packages: '' stops the action installing the legacy "tools" package,
+      # which Google's repository no longer publishes ("Failed to find package
+      # 'tools'"). It still puts sdkmanager on PATH and accepts licences.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ""
 
       # Versions mirror app/build.gradle.kts: compileSdk 35, NDK 27.0.12077973,
       # CMake 3.22.1. Keep them in step or the native build will not configure.
       - name: Install SDK packages
         run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager --install \
+            "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0" \
             "ndk;27.0.12077973" \
