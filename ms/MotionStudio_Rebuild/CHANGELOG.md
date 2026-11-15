@@ -94,6 +94,16 @@ M0–M5 desktop spikes: PASSED
 - Checks at startup and every five minutes.
 - Project files, recovery snapshots, autosaves, source media and exports remain outside the cleanup scope.
 
+## 2026-11-15 — Workspace UI: compositor shell
+- **The workspace strip was fake.** `EditorScreen` kept a `workspace` state that nothing read, so Animation / Compositing / Nodes / 3D were decoration. Replaced with five tabs that each swap the lower panel: TIMELINE, NODES, KEYS, GRADE, CLIP.
+- **NODES** — new `NodeGraphPane` renders the clip's actual render chain as a left-to-right graph: SRC → each effect in stack order → XFM → GRD → LUT → OUT, with bypass state on every node. Selecting a node shows its real parameters, so effects can be bypassed, deleted and dialled from the graph.
+- **GRADE** — seven grade parameters plus a live R/G/B/luma histogram drawn from `nativeScopesHistogram` on the last rendered frame.
+- **KEYS** — per-channel keyframe counts read from the project, with key-at-playhead and clear, and a plain note that dragging keys on a curve is not implemented.
+- **CLIP** — selection inspector: start/length/end, opacity, kind, effect stack with inline enable, doors into the detail sheets.
+- **New palette and chrome**: near-black panels with warm amber accent (violet removed), 1 px edges instead of rounded cards, monospace for every number, viewport overlays for decoder backend, resolution, transport state and timecode, plus safe-area guides.
+- Starter screen rebuilt as a technical project browser: identity strip with the live decoder backend, bordered project rows with accent spine, mono timestamps and file sizes, framed format/frame-rate pickers.
+- Verified: `:app:assembleDebug` and `:app:testDebugUnitTest` green, `ctest` 15/15. ⚠️ The layout has not been viewed on a device or emulator — it is compile-verified only.
+
 ## 2026-11-15 — Fixed: effects that appeared to do nothing
 - A new effect was stored as `{base_id, {}, true}` — **no parameters**. The engine then rendered its own internal defaults while the sheet displayed the picker's defaults, so the numbers on screen were not the numbers being rendered. Dragging a slider fixed it, which made effects feel half-broken.
 - `EditorEngine.addEffect` now seeds the effect with the picker's values, so displayed parameters and rendered pixels always agree.

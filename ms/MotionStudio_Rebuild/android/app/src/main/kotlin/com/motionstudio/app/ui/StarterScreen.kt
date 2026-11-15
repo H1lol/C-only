@@ -1,6 +1,7 @@
 package com.motionstudio.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,12 +20,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.MovieCreation
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,7 +41,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.motionstudio.app.data.ProjectStore
+import com.motionstudio.app.native.NativeEngine
 import com.motionstudio.app.ui.theme.MsColors
+import com.motionstudio.app.ui.theme.MsFonts
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -69,93 +70,143 @@ fun StarterScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(MsColors.background)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .background(MsColors.background),
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        // ---- identity strip -------------------------------------------------
+        Row(
+            Modifier.fillMaxWidth().height(52.dp).background(MsColors.surface)
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Box(
-                Modifier
-                    .size(38.dp)
-                    .background(MsColors.accentDim, RoundedCornerShape(10.dp)),
+                Modifier.size(24.dp).background(MsColors.accent, RoundedCornerShape(2.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("MS", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("MS", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("MOTION STUDIO", color = MsColors.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Text("Kotlin + C++ · on-device", color = MsColors.textTertiary, fontSize = 11.sp)
+                Text(
+                    "MOTION STUDIO",
+                    color = MsColors.textPrimary,
+                    fontSize = 12.sp,
+                    fontFamily = MsFonts.mono,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp,
+                )
+                Text(
+                    "COMPOSITOR  ·  KOTLIN + C++  ·  ${NativeEngine.nativeDecoderBackend().uppercase()}",
+                    color = MsColors.textMuted,
+                    fontSize = 8.sp,
+                    fontFamily = MsFonts.mono,
+                    letterSpacing = 0.8.sp,
+                )
             }
-            IconButton(onClick = onSettings) {
+            IconButton(onClick = onSettings, modifier = Modifier.size(36.dp)) {
                 Icon(Icons.Filled.Settings, "Settings", tint = MsColors.textSecondary)
             }
         }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(MsColors.border))
 
-        Spacer(Modifier.height(28.dp))
-        Text(
-            "Make something\nthat moves.",
-            color = MsColors.textPrimary,
-            fontSize = 34.sp,
-            lineHeight = 38.sp,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.height(10.dp))
-        Text(
-            "A focused space for motion design, compositing and editing — " +
-                "rendered by the native C++ engine.",
-            color = MsColors.textSecondary,
-            fontSize = 14.sp,
-        )
-
-        Spacer(Modifier.height(22.dp))
-        Row(
+        Column(
             Modifier
-                .fillMaxWidth()
-                .background(MsColors.accent, RoundedCornerShape(14.dp))
-                .clickable { showNew = true }
-                .padding(horizontal = 18.dp, vertical = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 14.dp, vertical = 14.dp),
         ) {
-            Icon(Icons.Filled.Add, "New project", tint = Color.White)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text("New project", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Text("Set up a new composition", color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp)
-            }
-        }
-
-        Spacer(Modifier.height(26.dp))
-        Text("Recent projects", color = MsColors.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(10.dp))
-
-        if (projects.isEmpty()) {
             Text(
-                "Projects you save appear here. Everything stays on this device.",
-                color = MsColors.textMuted,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(vertical = 12.dp),
+                "Motion design and\ncompositing, on device.",
+                color = MsColors.textPrimary,
+                fontSize = 26.sp,
+                lineHeight = 30.sp,
+                fontWeight = FontWeight.Bold,
             )
-        } else {
-            projects.forEach { file ->
-                ProjectRow(
-                    file = file,
-                    name = store.projectName(file),
-                    onOpen = { onOpenProject(file) },
-                    onDelete = {
-                        store.delete(file)
-                        refreshKey++
-                    },
-                )
-            }
-        }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Node chain, keyframes, grade and scopes — computed by the native engine, " +
+                    "no cloud render.",
+                color = MsColors.textTertiary,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+            )
 
-        Spacer(Modifier.height(40.dp))
-        Text(
-            "Motion Studio 2026.1.0 · GPL-3.0",
-            color = MsColors.textMuted,
-            fontSize = 11.sp,
-        )
+            Spacer(Modifier.height(18.dp))
+            SectionLabel("NEW COMPOSITION")
+            Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(MsColors.surface, RoundedCornerShape(2.dp))
+                    .border(1.dp, MsColors.border, RoundedCornerShape(2.dp))
+                    .clickable { showNew = true }
+                    .padding(horizontal = 12.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier.size(26.dp).border(1.dp, MsColors.accent, RoundedCornerShape(2.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Filled.Add, "New project", tint = MsColors.accent, modifier = Modifier.size(16.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "New project",
+                        color = MsColors.textPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        "1080p · 4K  ·  24 / 30 / 60 fps",
+                        color = MsColors.textMuted,
+                        fontSize = 9.sp,
+                        fontFamily = MsFonts.mono,
+                    )
+                }
+                Text("›", color = MsColors.accent, fontSize = 18.sp)
+            }
+
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("PROJECTS", if (projects.isEmpty()) "0" else "${projects.size}")
+            Spacer(Modifier.height(6.dp))
+
+            if (projects.isEmpty()) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, MsColors.borderSoft, RoundedCornerShape(2.dp))
+                        .padding(horizontal = 12.dp, vertical = 16.dp),
+                ) {
+                    Text(
+                        "No projects yet. Saved projects live in app storage and never leave the device.",
+                        color = MsColors.textMuted,
+                        fontSize = 11.sp,
+                    )
+                }
+            } else {
+                projects.forEach { file ->
+                    ProjectRow(
+                        file = file,
+                        name = store.projectName(file),
+                        onOpen = { onOpenProject(file) },
+                        onDelete = {
+                            store.delete(file)
+                            refreshKey++
+                        },
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(28.dp))
+            Text(
+                "MOTION STUDIO 2026.1.0  ·  ENGINE native-cpp  ·  " +
+                    NativeEngine.nativeDecoderBackend(),
+                color = MsColors.textMuted,
+                fontSize = 8.sp,
+                fontFamily = MsFonts.mono,
+                letterSpacing = 0.6.sp,
+            )
+        }
     }
 
     if (showNew) {
@@ -170,27 +221,64 @@ fun StarterScreen(
 }
 
 @Composable
+private fun SectionLabel(text: String, trailing: String? = null) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text,
+            color = MsColors.textMuted,
+            fontSize = 9.sp,
+            fontFamily = MsFonts.mono,
+            letterSpacing = 1.2.sp,
+        )
+        Spacer(Modifier.width(8.dp))
+        Box(Modifier.weight(1f).height(1.dp).background(MsColors.borderSoft))
+        if (trailing != null) {
+            Spacer(Modifier.width(8.dp))
+            Text(trailing, color = MsColors.textMuted, fontSize = 9.sp, fontFamily = MsFonts.mono)
+        }
+    }
+}
+
+@Composable
 private fun ProjectRow(file: File, name: String, onOpen: () -> Unit, onDelete: () -> Unit) {
     val stamp = remember(file.lastModified()) {
-        SimpleDateFormat("d MMM · HH:mm", Locale.getDefault()).format(Date(file.lastModified()))
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(file.lastModified()))
     }
+    val size = remember(file.length()) { "%.0f KB".format(file.length() / 1024.0) }
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .background(MsColors.surface, RoundedCornerShape(12.dp))
-            .clickable { onOpen() }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(vertical = 3.dp)
+            .background(MsColors.surface, RoundedCornerShape(2.dp))
+            .border(1.dp, MsColors.borderSoft, RoundedCornerShape(2.dp))
+            .clickable { onOpen() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Filled.MovieCreation, null, tint = MsColors.accentSoft, modifier = Modifier.size(22.dp))
+        // Accent spine: reads as a selected-layer marker rather than a card.
+        Box(Modifier.width(2.dp).height(46.dp).background(MsColors.accent))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(name, color = MsColors.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-            Text(stamp, color = MsColors.textTertiary, fontSize = 11.sp)
+            Text(
+                name,
+                color = MsColors.textPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+            Text(
+                "$stamp  ·  $size",
+                color = MsColors.textMuted,
+                fontSize = 9.sp,
+                fontFamily = MsFonts.mono,
+            )
         }
-        IconButton(onClick = onDelete) {
-            Icon(Icons.Filled.DeleteOutline, "Delete project", tint = MsColors.textMuted)
+        IconButton(onClick = onDelete, modifier = Modifier.size(38.dp)) {
+            Icon(
+                Icons.Filled.DeleteOutline,
+                "Delete project",
+                tint = MsColors.textMuted,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }
@@ -207,29 +295,44 @@ private fun NewProjectDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = MsColors.surface,
-        title = { Text("New project", color = MsColors.textPrimary) },
+        title = {
+            Text(
+                "NEW COMPOSITION",
+                color = MsColors.textPrimary,
+                fontSize = 12.sp,
+                fontFamily = MsFonts.mono,
+                letterSpacing = 1.sp,
+            )
+        },
         text = {
             Column {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Project name") },
+                    label = { Text("Name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Spacer(Modifier.height(14.dp))
-                Text("Format", color = MsColors.textTertiary, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "FORMAT",
+                    color = MsColors.textMuted,
+                    fontSize = 9.sp,
+                    fontFamily = MsFonts.mono,
+                    letterSpacing = 1.sp,
+                )
+                Spacer(Modifier.height(4.dp))
                 Column {
                     resolutions.forEachIndexed { index, item ->
+                        val active = index == resolution
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 2.dp)
-                                .background(
-                                    if (index == resolution) MsColors.accent.copy(alpha = 0.18f)
-                                    else Color.Transparent,
-                                    RoundedCornerShape(8.dp),
+                                .border(
+                                    1.dp,
+                                    if (active) MsColors.accent else MsColors.borderSoft,
+                                    RoundedCornerShape(2.dp),
                                 )
                                 .clickable { resolution = index }
                                 .padding(horizontal = 10.dp, vertical = 9.dp),
@@ -237,22 +340,47 @@ private fun NewProjectDialog(
                         ) {
                             Text(
                                 item.first,
-                                color = if (index == resolution) MsColors.accentSoft else MsColors.textSecondary,
-                                fontSize = 13.sp,
+                                color = if (active) MsColors.textPrimary else MsColors.textSecondary,
+                                fontSize = 12.sp,
+                                fontFamily = MsFonts.mono,
                                 modifier = Modifier.weight(1f),
                             )
-                            Text(item.third, color = MsColors.textMuted, fontSize = 11.sp)
+                            Text(
+                                item.third,
+                                color = MsColors.textMuted,
+                                fontSize = 9.sp,
+                                fontFamily = MsFonts.mono,
+                            )
                         }
                     }
                 }
                 Spacer(Modifier.height(12.dp))
+                Text(
+                    "FRAME RATE",
+                    color = MsColors.textMuted,
+                    fontSize = 9.sp,
+                    fontFamily = MsFonts.mono,
+                    letterSpacing = 1.sp,
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(24.0, 30.0, 60.0).forEach { option ->
-                        TextButton(onClick = { fps = option }) {
+                        val active = fps == option
+                        Box(
+                            Modifier
+                                .padding(top = 4.dp)
+                                .border(
+                                    1.dp,
+                                    if (active) MsColors.accent else MsColors.borderSoft,
+                                    RoundedCornerShape(2.dp),
+                                )
+                                .clickable { fps = option }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
                             Text(
                                 "${option.toInt()} fps",
-                                color = if (fps == option) MsColors.accentSoft else MsColors.textTertiary,
-                                fontSize = 12.sp,
+                                color = if (active) MsColors.accentSoft else MsColors.textTertiary,
+                                fontSize = 11.sp,
+                                fontFamily = MsFonts.mono,
                             )
                         }
                     }
@@ -265,10 +393,12 @@ private fun NewProjectDialog(
                     val (w, h) = resolutions[resolution].second
                     onCreate(name.trim().ifBlank { "Untitled Project" }, w, h, fps)
                 }
-            ) { Text("Create project") }
+            ) { Text("Create", color = MsColors.accent) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = MsColors.textTertiary)
+            }
         },
     )
 }

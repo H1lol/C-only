@@ -3,6 +3,8 @@ package com.motionstudio.app.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,39 +24,25 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CallSplit
-import androidx.compose.material.icons.filled.Loop
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.Animation
-import androidx.compose.material.icons.filled.ColorLens
-import androidx.compose.material.icons.filled.Create
-import androidx.compose.material.icons.filled.CropSquare
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Undo
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,17 +53,27 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.motionstudio.app.editor.EditorEngine
+import com.motionstudio.app.native.NativeEngine
 import com.motionstudio.app.ui.theme.MsColors
 import com.motionstudio.app.ui.theme.MsFonts
-import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-private val workspaces = listOf(
-    "Edit", "Animation", "Compositing", "Nodes", "3D", "Color", "Audio", "Export",
-)
+/**
+ * Editor workspaces. Each tab swaps the panel in the lower half; none of them is
+ * decorative — TIMELINE is the timeline, NODES is the clip's render chain,
+ * KEYS reads keyframe counts from the engine, GRADE drives the master grade,
+ * CLIP inspects the selection.
+ */
+private enum class Workspace(val label: String) {
+    Timeline("TIMELINE"),
+    Nodes("NODES"),
+    Keys("KEYS"),
+    Grade("GRADE"),
+    Clip("CLIP"),
+}
 
 @Composable
 fun EditorScreen(
@@ -85,7 +83,7 @@ fun EditorScreen(
 ) {
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
-    var workspace by remember { mutableStateOf(0) }
+    var workspace by remember { mutableStateOf(Workspace.Timeline) }
     var showMore by remember { mutableStateOf(false) }
     var showLooks by remember { mutableStateOf(false) }
     var showEffects by remember { mutableStateOf(false) }
@@ -93,7 +91,6 @@ fun EditorScreen(
     var showMotion by remember { mutableStateOf(false) }
     var showText by remember { mutableStateOf(false) }
     var showMask by remember { mutableStateOf(false) }
-    var showMenu by remember { mutableStateOf(false) }
 
     val importScope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(
@@ -143,64 +140,66 @@ fun EditorScreen(
         BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
             val landscape = maxWidth > maxHeight
             Column(Modifier.fillMaxSize()) {
-                TopBar(
-                    engine = engine,
-                    showMenu = showMenu,
-                    onShowMenu = { showMenu = it },
-                    onBack = onBack,
-                    onSave = { engine.save() },
-                )
-                if (!landscape) {
-                    WorkspaceStrip(selected = workspace, onSelect = { workspace = it })
-                }
+                CommandBar(engine = engine, onBack = onBack, onSave = { engine.save() })
                 if (landscape) {
                     Row(Modifier.weight(1f).fillMaxWidth()) {
-                        Column(Modifier.weight(0.62f).fillMaxHeight()) {
-                            ViewerBlock(engine)
-                        }
-                        Column(Modifier.weight(0.38f).fillMaxHeight()) {
+                        Column(Modifier.weight(0.60f).fillMaxHeight()) {
+                            Viewport(engine, modifier = Modifier.weight(1f))
                             TransportBar(engine)
-                            TimelinePane(
+                        }
+                        Column(
+                            Modifier.weight(0.40f).fillMaxHeight()
+                                .border(1.dp, MsColors.borderSoft)
+                        ) {
+                            WorkspaceTabs(selected = workspace, onSelect = { workspace = it })
+                            WorkspacePanel(
                                 engine = engine,
-                                modifier = Modifier.weight(1f).fillMaxWidth()
-                                    .background(MsColors.surface),
+                                workspace = workspace,
+                                modifier = Modifier.weight(1f),
+                                onOpenEffects = { showEffects = true },
+                                onOpenText = { showText = true },
+                                onOpenMask = { showMask = true },
+                                onOpenMotion = { showMotion = true },
                             )
-                            ToolRail(
+                            ActionRail(
                                 onImport = { picker.launch(arrayOf("video/*", "audio/*", "image/*")) },
                                 onSplit = { engine.splitAtPlayhead() },
-                                onLook = { showLooks = true },
                                 onEffects = { showEffects = true },
+                                onLook = { showLooks = true },
                                 onColor = { showColor = true },
                                 onMotion = { showMotion = true },
                                 onText = { showText = true },
                                 onMask = { showMask = true },
+                                onExport = { onExportFrame() },
                                 onMore = { showMore = true },
-                                onSeek = { engine.seek(engine.time) },
                             )
                         }
                     }
                 } else {
-                    Column(Modifier.weight(1f).fillMaxWidth()) {
-                        ViewerBlock(engine, modifier = Modifier.weight(1f))
-                        TransportBar(engine)
-                        TimelinePane(
-                            engine = engine,
-                            modifier = Modifier.weight(0.85f).fillMaxWidth()
-                                .background(MsColors.surface),
-                        )
-                        ToolRail(
-                            onImport = { picker.launch(arrayOf("video/*", "audio/*", "image/*")) },
-                            onSplit = { engine.splitAtPlayhead() },
-                            onLook = { showLooks = true },
-                            onEffects = { showEffects = true },
-                            onColor = { showColor = true },
-                            onMotion = { showMotion = true },
-                            onText = { showText = true },
-                            onMask = { showMask = true },
-                            onMore = { showMore = true },
-                            onSeek = { engine.seek(engine.time) },
-                        )
-                    }
+                    Viewport(engine, modifier = Modifier.weight(1f))
+                    TransportBar(engine)
+                    WorkspaceTabs(selected = workspace, onSelect = { workspace = it })
+                    WorkspacePanel(
+                        engine = engine,
+                        workspace = workspace,
+                        modifier = Modifier.weight(1.05f),
+                        onOpenEffects = { showEffects = true },
+                        onOpenText = { showText = true },
+                        onOpenMask = { showMask = true },
+                        onOpenMotion = { showMotion = true },
+                    )
+                    ActionRail(
+                        onImport = { picker.launch(arrayOf("video/*", "audio/*", "image/*")) },
+                        onSplit = { engine.splitAtPlayhead() },
+                        onEffects = { showEffects = true },
+                        onLook = { showLooks = true },
+                        onColor = { showColor = true },
+                        onMotion = { showMotion = true },
+                        onText = { showText = true },
+                        onMask = { showMask = true },
+                        onExport = { onExportFrame() },
+                        onMore = { showMore = true },
+                    )
                 }
             }
 
@@ -211,208 +210,324 @@ fun EditorScreen(
                     onExportFrame = onExportFrame,
                 )
             }
-            if (showLooks) {
-                LooksSheet(engine = engine, onDismiss = { showLooks = false })
-            }
-            if (showEffects) {
-                EffectsSheet(engine = engine, onDismiss = { showEffects = false })
-            }
-            if (showColor) {
-                ColorSheet(engine = engine, onDismiss = { showColor = false })
-            }
-            if (showMotion) {
-                MotionSheet(engine = engine, onDismiss = { showMotion = false })
-            }
-            if (showText) {
-                TextSheet(engine = engine, onDismiss = { showText = false })
-            }
-            if (showMask) {
-                MaskSheet(engine = engine, onDismiss = { showMask = false })
-            }
+            if (showLooks) LooksSheet(engine = engine, onDismiss = { showLooks = false })
+            if (showEffects) EffectsSheet(engine = engine, onDismiss = { showEffects = false })
+            if (showColor) ColorSheet(engine = engine, onDismiss = { showColor = false })
+            if (showMotion) MotionSheet(engine = engine, onDismiss = { showMotion = false })
+            if (showText) TextSheet(engine = engine, onDismiss = { showText = false })
+            if (showMask) MaskSheet(engine = engine, onDismiss = { showMask = false })
         }
     }
 }
 
 @Composable
-private fun TopBar(
+private fun WorkspacePanel(
     engine: EditorEngine,
-    showMenu: Boolean,
-    onShowMenu: (Boolean) -> Unit,
-    onBack: () -> Unit,
-    onSave: () -> Unit,
+    workspace: Workspace,
+    modifier: Modifier,
+    onOpenEffects: () -> Unit,
+    onOpenText: () -> Unit,
+    onOpenMask: () -> Unit,
+    onOpenMotion: () -> Unit,
 ) {
-    Surface(color = MsColors.background, shadowElevation = 0.dp) {
+    when (workspace) {
+        Workspace.Timeline -> TimelinePane(
+            engine = engine,
+            modifier = modifier.fillMaxWidth().background(MsColors.surface),
+        )
+        Workspace.Nodes -> NodeGraphPane(engine, modifier.fillMaxWidth())
+        Workspace.Keys -> KeyframePane(engine, modifier.fillMaxWidth())
+        Workspace.Grade -> GradePane(engine, modifier.fillMaxWidth())
+        Workspace.Clip -> ClipPane(
+            engine = engine,
+            onOpenEffects = onOpenEffects,
+            onOpenText = onOpenText,
+            onOpenMask = onOpenMask,
+            onOpenMotion = onOpenMotion,
+            modifier = modifier.fillMaxWidth(),
+        )
+    }
+}
+
+// --------------------------------------------------------------- chrome ----
+
+@Composable
+private fun CommandBar(engine: EditorEngine, onBack: () -> Unit, onSave: () -> Unit) {
+    Column {
         Row(
-            Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 6.dp),
+            Modifier.fillMaxWidth().height(48.dp).background(MsColors.surface)
+                .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to projects", tint = MsColors.textSecondary)
+            IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    "Back to projects",
+                    tint = MsColors.textSecondary,
+                )
             }
             Column(Modifier.weight(1f)) {
-                Text(
-                    engine.doc.name,
-                    color = MsColors.textPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        engine.doc.name,
+                        color = MsColors.textPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.width(8.dp))
                     Box(
-                        Modifier.size(6.dp).background(
+                        Modifier.size(5.dp).background(
                             if (engine.dirty) MsColors.warning else MsColors.success,
                             CircleShape,
                         )
                     )
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        if (engine.dirty) "Unsaved changes" else engine.status,
-                        color = MsColors.textTertiary,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                    )
                 }
+                Text(
+                    "${engine.doc.width}×${engine.doc.height}  ·  ${engine.fps.toInt()} FPS  ·  " +
+                        "${EditorEngine.formatTimecode(engine.duration, engine.fps)}",
+                    color = MsColors.textTertiary,
+                    fontSize = 9.sp,
+                    fontFamily = MsFonts.mono,
+                    maxLines = 1,
+                )
             }
-            IconButton(onClick = { engine.undo() }, enabled = true) {
+            IconButton(onClick = { engine.undo() }, modifier = Modifier.size(38.dp)) {
                 Icon(Icons.Filled.Undo, "Undo", tint = MsColors.textSecondary)
             }
-            IconButton(onClick = { engine.redo() }) {
+            IconButton(onClick = { engine.redo() }, modifier = Modifier.size(38.dp)) {
                 Icon(Icons.Filled.Redo, "Redo", tint = MsColors.textSecondary)
             }
-            IconButton(onClick = onSave) {
-                Icon(Icons.Filled.Save, "Save project", tint = MsColors.accentSoft)
-            }
-            Box {
-                IconButton(onClick = { onShowMenu(true) }) {
-                    Icon(Icons.Filled.MoreHoriz, "More", tint = MsColors.textSecondary)
-                }
-                DropdownMenu(expanded = showMenu, onDismissRequest = { onShowMenu(false) }) {
-                    DropdownMenuItem(
-                        text = { Text("Split at playhead") },
-                        onClick = { onShowMenu(false); engine.splitAtPlayhead() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Save project") },
-                        onClick = { onShowMenu(false); engine.save() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("${engine.doc.width} × ${engine.doc.height} · ${engine.fps.toInt()} fps") },
-                        onClick = { onShowMenu(false) },
-                        enabled = false,
-                    )
-                }
+            IconButton(onClick = onSave, modifier = Modifier.size(38.dp)) {
+                Icon(Icons.Filled.Save, "Save", tint = MsColors.accentSoft)
             }
         }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(MsColors.border))
     }
 }
 
 @Composable
-private fun WorkspaceStrip(selected: Int, onSelect: (Int) -> Unit) {
+private fun WorkspaceTabs(selected: Workspace, onSelect: (Workspace) -> Unit) {
     Row(
-        Modifier
-            .fillMaxWidth()
-            .height(44.dp)
-            .background(MsColors.surface)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp),
+        Modifier.fillMaxWidth().height(32.dp).background(MsColors.surface)
+            .horizontalScroll(rememberScrollState()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        workspaces.forEachIndexed { index, label ->
-            val active = index == selected
-            TextButton(
-                onClick = { onSelect(index) },
-                shape = RoundedCornerShape(8.dp),
+        Workspace.entries.forEach { tab ->
+            val active = tab == selected
+            Column(
+                Modifier
+                    .clickable { onSelect(tab) }
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    label,
-                    color = if (active) MsColors.accentSoft else MsColors.textTertiary,
-                    fontSize = 12.sp,
-                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    tab.label,
+                    color = if (active) MsColors.textPrimary else MsColors.textMuted,
+                    fontSize = 10.sp,
+                    fontFamily = MsFonts.mono,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                )
+                Spacer(Modifier.height(4.dp))
+                Box(
+                    Modifier
+                        .width(if (active) 18.dp else 0.dp)
+                        .height(2.dp)
+                        .background(if (active) MsColors.accent else Color.Transparent)
                 )
             }
         }
     }
+    Box(Modifier.fillMaxWidth().height(1.dp).background(MsColors.border))
 }
 
 @Composable
-private fun ViewerBlock(engine: EditorEngine, modifier: Modifier = Modifier) {
+private fun Viewport(engine: EditorEngine, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth().background(MsColors.viewerBg)) {
-        Row(
-            Modifier.fillMaxWidth().height(34.dp).background(MsColors.surface).padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "EDIT  /  ${engine.doc.width}×${engine.doc.height}  /  ${engine.fps.toInt()} fps",
-                color = MsColors.textTertiary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            AndroidView(
+                factory = { context -> PreviewView(context).also { it.attach(engine) } },
+                modifier = Modifier.fillMaxSize(),
             )
-            Spacer(Modifier.weight(1f))
-            engine.lookName?.let { look ->
+            // Safe-area guides: an inset rule plus centre cross, the standard
+            // framing overlay in a compositor viewport.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 26.dp, vertical = 18.dp)
+                    .border(1.dp, MsColors.guide.copy(alpha = 0.55f))
+            )
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp)
+                    .background(MsColors.background.copy(alpha = 0.72f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
                 Text(
-                    "LOOK · ${look.uppercase()}",
+                    "${NativeEngine.nativeDecoderBackend().uppercase()}  ·  " +
+                        "${engine.doc.width}×${engine.doc.height}  ·  ${engine.fps.toInt()}P",
+                    color = MsColors.textTertiary,
+                    fontSize = 9.sp,
+                    fontFamily = MsFonts.mono,
+                )
+            }
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .background(MsColors.background.copy(alpha = 0.72f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    if (engine.playing) "PLAYING" else "PAUSED",
+                    color = if (engine.playing) MsColors.success else MsColors.textMuted,
+                    fontSize = 9.sp,
+                    fontFamily = MsFonts.mono,
+                )
+            }
+            Box(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(8.dp)
+                    .background(MsColors.background.copy(alpha = 0.72f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    "TC " + EditorEngine.formatTimecode(engine.time, engine.fps),
                     color = MsColors.accentSoft,
                     fontSize = 10.sp,
                     fontFamily = MsFonts.mono,
-                    fontWeight = FontWeight.Medium,
                 )
-                Spacer(Modifier.width(10.dp))
             }
-            Text(
-                "${engine.doc.tracks.sumOf { it.clips.size }} clips",
-                color = MsColors.textMuted,
-                fontSize = 11.sp,
-            )
+            engine.lookName?.let { look ->
+                Box(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .background(MsColors.background.copy(alpha = 0.72f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        "LUT ${look.uppercase()}",
+                        color = MsColors.info,
+                        fontSize = 9.sp,
+                        fontFamily = MsFonts.mono,
+                    )
+                }
+            }
         }
-        AndroidView(
-            factory = { context -> PreviewView(context).also { it.attach(engine) } },
-            modifier = Modifier.fillMaxWidth().weight(1f),
-        )
     }
 }
 
 @Composable
 private fun TransportBar(engine: EditorEngine) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(52.dp)
-            .background(MsColors.surface)
-            .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(onClick = { engine.step(-1) }) {
-            Icon(Icons.Filled.SkipPrevious, "Previous frame", tint = MsColors.textSecondary)
-        }
-        IconButton(
-            onClick = { engine.togglePlay() },
-            modifier = Modifier.size(44.dp).background(MsColors.accent, CircleShape),
+    Column {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(MsColors.border))
+        Row(
+            Modifier.fillMaxWidth().height(46.dp).background(MsColors.surface)
+                .padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                if (engine.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                if (engine.playing) "Pause" else "Play",
-                tint = Color.White,
+            IconButton(onClick = { engine.step(-1) }, modifier = Modifier.size(38.dp)) {
+                Icon(Icons.Filled.SkipPrevious, "Previous frame", tint = MsColors.textSecondary)
+            }
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .background(MsColors.accent, CircleShape)
+                    .clickable { engine.togglePlay() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    if (engine.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    if (engine.playing) "Pause" else "Play",
+                    tint = Color.Black,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            IconButton(onClick = { engine.step(1) }, modifier = Modifier.size(38.dp)) {
+                Icon(Icons.Filled.SkipNext, "Next frame", tint = MsColors.textSecondary)
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(
+                EditorEngine.formatTimecode(engine.time, engine.fps),
+                color = MsColors.accentSoft,
+                fontSize = 12.sp,
+                fontFamily = MsFonts.mono,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                " / ${EditorEngine.formatTimecode(engine.duration, engine.fps)}",
+                color = MsColors.textMuted,
+                fontSize = 11.sp,
+                fontFamily = MsFonts.mono,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                "F${(engine.time * engine.fps).toInt()}",
+                color = MsColors.textMuted,
+                fontSize = 9.sp,
+                fontFamily = MsFonts.mono,
             )
         }
-        IconButton(onClick = { engine.step(1) }) {
-            Icon(Icons.Filled.SkipNext, "Next frame", tint = MsColors.textSecondary)
+    }
+}
+
+@Composable
+private fun ActionRail(
+    onImport: () -> Unit,
+    onSplit: () -> Unit,
+    onEffects: () -> Unit,
+    onLook: () -> Unit,
+    onColor: () -> Unit,
+    onMotion: () -> Unit,
+    onText: () -> Unit,
+    onMask: () -> Unit,
+    onExport: () -> Unit,
+    onMore: () -> Unit,
+) {
+    Column {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(MsColors.border))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(46.dp)
+                .background(MsColors.surfaceHigh)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            RailCommand("IMPORT", onImport)
+            RailCommand("SPLIT", onSplit)
+            RailCommand("FX", onEffects)
+            RailCommand("LOOK", onLook)
+            RailCommand("GRADE", onColor)
+            RailCommand("MOTION", onMotion)
+            RailCommand("TITLE", onText)
+            RailCommand("MASK", onMask)
+            RailCommand("EXPORT", onExport)
+            RailCommand("MORE", onMore)
         }
-        Spacer(Modifier.width(6.dp))
+    }
+}
+
+@Composable
+private fun RailCommand(label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .border(1.dp, MsColors.border, RoundedCornerShape(2.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 5.dp)
+    ) {
         Text(
-            EditorEngine.formatTimecode(engine.time, engine.fps),
-            color = MsColors.accentSoft,
-            fontSize = 13.sp,
+            label,
+            color = MsColors.textSecondary,
+            fontSize = 9.sp,
             fontFamily = MsFonts.mono,
-            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.6.sp,
         )
-        Text(
-            " / ${EditorEngine.formatTimecode(engine.duration, engine.fps)}",
-            color = MsColors.textMuted,
-            fontSize = 12.sp,
-            fontFamily = MsFonts.mono,
-        )
-        Spacer(Modifier.weight(1f))
-        Icon(Icons.Filled.Loop, "Loop", tint = MsColors.textMuted, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -425,53 +540,4 @@ private fun uniqueName(dir: File, name: String): String {
     var i = 2
     while (File(dir, "$base-$i$ext").exists()) i++
     return "$base-$i$ext"
-}
-
-@Composable
-private fun ToolRail(
-    onImport: () -> Unit,
-    onSplit: () -> Unit,
-    onLook: () -> Unit,
-    onEffects: () -> Unit,
-    onColor: () -> Unit,
-    onMotion: () -> Unit,
-    onText: () -> Unit,
-    onMask: () -> Unit,
-    onMore: () -> Unit,
-    onSeek: () -> Unit,
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(64.dp)
-            .background(MsColors.surfaceHigh),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            RailButton("Import", Icons.Filled.Add, onImport)
-            RailButton("Split", Icons.Filled.CallSplit, onSplit)
-            RailButton("Look", Icons.Filled.Palette, onLook)
-            RailButton("Effects", Icons.Filled.Tune, onEffects)
-            RailButton("Color", Icons.Filled.ColorLens, onColor)
-            RailButton("Motion", Icons.Filled.Animation, onMotion)
-            RailButton("Title", Icons.Filled.Create, onText)
-            RailButton("Mask", Icons.Filled.CropSquare, onMask)
-            RailButton("Playhead", Icons.Filled.SkipNext, onSeek)
-        }
-        IconButton(onClick = onMore) {
-            Icon(Icons.Filled.MoreHoriz, "More tools", tint = MsColors.accentSoft)
-        }
-    }
-}
-
-@Composable
-private fun RailButton(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
-    TextButton(onClick = onClick) {
-        Icon(icon, label, tint = MsColors.textSecondary, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(label, color = MsColors.textSecondary, fontSize = 12.sp)
-    }
 }

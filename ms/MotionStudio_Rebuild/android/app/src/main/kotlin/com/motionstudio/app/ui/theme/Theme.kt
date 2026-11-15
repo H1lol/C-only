@@ -13,31 +13,44 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.motionstudio.app.R
 
-/** Quiet charcoal surfaces with a single violet accent. */
+/**
+ * Dense, near-black workspace with one warm amber accent — the palette of a
+ * compositing tool, not a phone gallery. Every surface is a flat panel with a
+ * 1 px edge; nothing is rounded or soft, because the numbers carry the colour.
+ */
 object MsColors {
-    val background = Color(0xFF101014)
-    val surface = Color(0xFF18181E)
-    val surfaceHigh = Color(0xFF202027)
-    val surfaceHighest = Color(0xFF2A2A33)
-    val border = Color(0xFF33333D)
+    val background = Color(0xFF0A0A0C)
+    val surface = Color(0xFF101014)
+    val surfaceHigh = Color(0xFF16161B)
+    val surfaceHighest = Color(0xFF1D1D23)
+    val border = Color(0xFF2B2B33)
+    val borderSoft = Color(0xFF1F1F26)
 
-    val accent = Color(0xFF9476F5)
-    val accentSoft = Color(0xFFB6A2FF)
-    val accentDim = Color(0xFF59459E)
+    val accent = Color(0xFFFF7A1A)
+    val accentSoft = Color(0xFFFFA45C)
+    val accentDim = Color(0xFF7A3B0D)
 
-    val textPrimary = Color(0xFFF0EFF5)
-    val textSecondary = Color(0xFFC4C1CE)
-    val textTertiary = Color(0xFF918D9D)
-    val textMuted = Color(0xFF656170)
+    val textPrimary = Color(0xFFE9E9EC)
+    val textSecondary = Color(0xFFB2B2BA)
+    val textTertiary = Color(0xFF84848E)
+    val textMuted = Color(0xFF57575F)
 
-    val success = Color(0xFF54C99A)
-    val warning = Color(0xFFE8B45F)
-    val error = Color(0xFFE87979)
+    val success = Color(0xFF5FD08C)
+    val warning = Color(0xFFF0B429)
+    val error = Color(0xFFFF5C5C)
+    val info = Color(0xFF4CC2D6)
 
-    val viewerBg = Color(0xFF0B0B0E)
-    val videoTrack = Color(0xFF8B79E8)
-    val audioTrack = Color(0xFF58B997)
-    val overlayTrack = Color(0xFFB17BD9)
+    val viewerBg = Color(0xFF07070A)
+    val videoTrack = Color(0xFFB07434)
+    val audioTrack = Color(0xFF3E8E78)
+    val overlayTrack = Color(0xFF8A6BB8)
+
+    // Node graph + viewport overlays.
+    val nodeBg = Color(0xFF141419)
+    val nodeBorder = Color(0xFF31313A)
+    val wire = Color(0xFF4A4A55)
+    val guide = Color(0xFF3C3C46)
+    val guideStrong = Color(0xFF5C5C68)
 }
 
 /**
