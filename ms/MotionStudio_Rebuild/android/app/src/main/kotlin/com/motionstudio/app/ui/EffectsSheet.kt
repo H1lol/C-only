@@ -62,15 +62,15 @@ val MsEffects = listOf(
     EffectDef("sharpen", "Sharpen", "Unsharp 3x3",
         listOf(p("amount", "Amount", 0f, 3f, 0.6f)), "Basic"),
     EffectDef("brightness_contrast", "Brightness / Contrast", "Levels",
-        listOf(p("brightness", "Brightness", -1f, 1f, 0f), p("contrast", "Contrast", 0f, 2f, 1f)), "Basic"),
+        listOf(p("brightness", "Brightness", -1f, 1f, 0.06f), p("contrast", "Contrast", 0f, 2f, 1.1f)), "Basic"),
     EffectDef("levels", "Levels", "Black / white / gamma",
         listOf(
             p("black", "Black", 0f, 0.9f, 0f),
             p("white", "White", 0.1f, 1f, 1f),
-            p("gamma", "Gamma", 0.2f, 3f, 1f),
+            p("gamma", "Gamma", 0.2f, 3f, 1.2f),
         ), "Basic"),
     EffectDef("opacity", "Opacity", "Blend to transparent",
-        listOf(p("opacity", "Opacity", 0f, 1f, 1f)), "Basic"),
+        listOf(p("opacity", "Opacity", 0f, 1f, 0.8f)), "Basic"),
 
     // ---- Colour ----
     EffectDef("grayscale", "Grayscale", "Luma desaturate", emptyList(), "Colour"),
@@ -83,7 +83,7 @@ val MsEffects = listOf(
         listOf(p("degrees", "Degrees", -180f, 180f, 30f)), "Colour"),
     EffectDef("white_balance", "White Balance", "Temperature / tint",
         listOf(
-            p("temperature", "Temp", -1f, 1f, 0f),
+            p("temperature", "Temp", -1f, 1f, 0.2f),
             p("tint", "Tint", -1f, 1f, 0f),
         ), "Colour"),
     EffectDef("posterize", "Posterize", "Quantise to N levels",
@@ -112,10 +112,10 @@ val MsEffects = listOf(
         listOf(p("horizontal", "Horizontal", 0f, 1f, 1f)), "Framing"),
     EffectDef("crop", "Crop", "Clear the frame edges",
         listOf(
-            p("left", "Left", 0f, 0.9f, 0f),
-            p("right", "Right", 0f, 0.9f, 0f),
-            p("top", "Top", 0f, 0.9f, 0f),
-            p("bottom", "Bottom", 0f, 0.9f, 0f),
+            p("left", "Left", 0f, 0.9f, 0.08f),
+            p("right", "Right", 0f, 0.9f, 0.08f),
+            p("top", "Top", 0f, 0.9f, 0.08f),
+            p("bottom", "Bottom", 0f, 0.9f, 0.08f),
         ), "Framing"),
 )
 
@@ -230,7 +230,9 @@ fun EffectsSheet(engine: EditorEngine, onDismiss: () -> Unit) {
                                 Text(def.note, color = MsColors.textMuted, fontSize = 11.sp)
                             }
                             TextButton(
-                                onClick = { engine.addEffect(def.id) },
+                                onClick = {
+                                    engine.addEffect(def.id, def.params.associate { it.name to it.default })
+                                },
                                 enabled = clipName != null,
                             ) {
                                 Text(

@@ -91,6 +91,55 @@ int main() {
     std::printf("ok   %-18s mean diff %6.2f\n", c.id, diff);
   }
 
+  // The parameters the picker actually ships with (EffectsSheet.kt). Adding an
+  // effect must change the picture; several used to be neutral at their defaults
+  // (opacity 1.0, levels gamma 1.0, crop 0, white balance 0), so they looked
+  // broken until a slider was touched. Keep this table in step with the sheet.
+  struct ShipCase { const char* id; P params; };
+  const ShipCase shipped[] = {
+      {"gaussian_blur", P{{"radius", 4.0}}},
+      {"box_blur", P{{"radius", 4.0}}},
+      {"sharpen", P{{"amount", 0.6}}},
+      {"brightness_contrast", P{{"brightness", 0.06}, {"contrast", 1.1}}},
+      {"levels", P{{"black", 0.0}, {"white", 1.0}, {"gamma", 1.2}}},
+      {"opacity", P{{"opacity", 0.8}}},
+      {"grayscale", P{}},
+      {"sepia", P{{"amount", 1.0}}},
+      {"invert", P{}},
+      {"saturation", P{{"saturation", 1.4}}},
+      {"hue_shift", P{{"degrees", 30.0}}},
+      {"white_balance", P{{"temperature", 0.2}, {"tint", 0.0}}},
+      {"posterize", P{{"levels", 8.0}}},
+      {"threshold", P{{"level", 0.5}}},
+      {"chromakey", P{{"tolerance", 0.2}}},
+      {"glow", P{{"amount", 0.5}, {"radius", 8.0}}},
+      {"noise", P{{"amount", 0.15}}},
+      {"emboss", P{{"amount", 0.5}}},
+      {"edge_detect", P{{"amount", 1.0}}},
+      {"pixelate", P{{"size", 8.0}}},
+      {"vignette", P{{"strength", 0.6}, {"radius", 1.0}}},
+      {"mirror", P{{"horizontal", 1.0}}},
+      {"crop", P{{"left", 0.08}, {"right", 0.08}, {"top", 0.08}, {"bottom", 0.08}}},
+  };
+
+  std::printf("\n-- shipped defaults must be visible --\n");
+  for (const auto& c : shipped) {
+    ImageBuffer out;
+    Error e = cpu_effect_apply(c.id, src, out, c.params);
+    if (!e.ok()) {
+      std::printf("FAIL %-20s error %s\n", c.id, e.message.c_str());
+      ++failures;
+      continue;
+    }
+    const double diff = mean_abs_diff(src, out);
+    if (diff < 0.5) {
+      std::printf("FAIL %-20s invisible at its default settings (%.3f)\n", c.id, diff);
+      ++failures;
+      continue;
+    }
+    std::printf("ok   %-20s %6.2f\n", c.id, diff);
+  }
+
   // Unknown ids must report EffectNotFound rather than pretend success.
   ImageBuffer dummy;
   Error unknown = cpu_effect_apply("definitely_not_an_effect", src, dummy,

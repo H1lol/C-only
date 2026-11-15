@@ -749,7 +749,14 @@ class EditorEngine(
         return ok
     }
 
-    fun addEffect(baseId: String): Boolean {
+    /**
+     * [defaults] must be the values the picker shows. A new effect is stored with
+     * no parameters at all, so without this the engine renders its own internal
+     * defaults while the UI displays different numbers — and effects whose slider
+     * defaults are neutral (opacity 1.0, levels gamma 1.0, crop 0) looked like
+     * they did nothing at all.
+     */
+    fun addEffect(baseId: String, defaults: Map<String, Float> = emptyMap()): Boolean {
         val (t, c) = selection() ?: run {
             status = "Select a clip first"
             return false
@@ -758,6 +765,9 @@ class EditorEngine(
         if (index < 0) {
             status = "Could not add that effect"
             return false
+        }
+        defaults.forEach { (name, value) ->
+            NativeEngine.nativeEffectSetParam(t, c, index, name, value)
         }
         markDirty()
         reload()

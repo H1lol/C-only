@@ -94,6 +94,12 @@ M0–M5 desktop spikes: PASSED
 - Checks at startup and every five minutes.
 - Project files, recovery snapshots, autosaves, source media and exports remain outside the cleanup scope.
 
+## 2026-11-15 — Fixed: effects that appeared to do nothing
+- A new effect was stored as `{base_id, {}, true}` — **no parameters**. The engine then rendered its own internal defaults while the sheet displayed the picker's defaults, so the numbers on screen were not the numbers being rendered. Dragging a slider fixed it, which made effects feel half-broken.
+- `EditorEngine.addEffect` now seeds the effect with the picker's values, so displayed parameters and rendered pixels always agree.
+- Five defaults were neutral (opacity 1.0, levels gamma 1.0, white balance 0/0, crop 0, brightness 0 / contrast 1), so adding them changed nothing at all. Retuned to 0.8, 1.2, 0.2, 0.08 and 0.06/1.1.
+- `ms_effects_catalogue_test` now also checks all 23 effects at **shipped** defaults and fails if any of them is invisible (mean channel delta < 0.5). It caught the neutral five.
+
 ## 2026-11-15 — Fixed: black preview when opening a saved project
 - `Engine::load_project_json` never set `impl_->initialized`, and `render_frame()` returns false immediately while that flag is clear. Creating a new project went through `new_project()`, which does set it — so a fresh project rendered and an **opened** one did not. The starter screen opens projects directly, so every existing project showed a black preview and exported black frames.
 - Load now brings the engine up the same way `new_project()` does: playhead tick reset, `initialized = true`, frame cache cleared, backend registered.
