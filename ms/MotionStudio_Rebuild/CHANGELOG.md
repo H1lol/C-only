@@ -94,6 +94,11 @@ M0–M5 desktop spikes: PASSED
 - Checks at startup and every five minutes.
 - Project files, recovery snapshots, autosaves, source media and exports remain outside the cleanup scope.
 
+## 2026-11-15 — Fixed: black preview when opening a saved project
+- `Engine::load_project_json` never set `impl_->initialized`, and `render_frame()` returns false immediately while that flag is clear. Creating a new project went through `new_project()`, which does set it — so a fresh project rendered and an **opened** one did not. The starter screen opens projects directly, so every existing project showed a black preview and exported black frames.
+- Load now brings the engine up the same way `new_project()` does: playhead tick reset, `initialized = true`, frame cache cleared, backend registered.
+- Regression test `ms_engine_load_test`: create → serialise → shutdown (assert cold) → load → assert initialized, `render_frame()` true, and size restored from the file.
+
 ## 2026-11-15 — Effect catalogue and pattern wipes
 - **14 new CPU effects**, all original implementations of standard operations — no GPL code or XML copied from Kdenlive/MLT/frei0r (Kdenlive is GPL-3.0 and is only a capability reference here): saturation, hue shift, levels, white balance, posterize, sharpen, edge detect (Sobel), emboss, pixelate, glow (blur screened back), film grain, box blur (running sum, O(n) per pass), crop, threshold.
 - **Two effects that were dead code are now reachable**: `cpu_threshold` and `cpu_chromakey_simple` existed in `cpu_effects_extra.cpp` but no dispatch branch called them.

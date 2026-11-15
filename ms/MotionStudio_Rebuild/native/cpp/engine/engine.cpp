@@ -88,7 +88,15 @@ bool Engine::load_project_json(const std::string& json) {
     audio_->set_session(project_.get());
     audio_->stop();
     audio_->prepare();
-    return player_->prepare().ok();
+    auto prep = player_->prepare();
+    // Opening a saved project never goes through new_project(), so this has to
+    // bring the engine up itself: render_frame() bails immediately while
+    // `initialized` is false, which left the preview black after a load.
+    impl_->last_tick = std::chrono::steady_clock::now();
+    impl_->initialized = true;
+    frame_cache_->clear();
+    perf_.set_backend("native-cpu");
+    return prep.ok();
 }
 
 std::string Engine::project_to_json() const { return project_->to_json(); }

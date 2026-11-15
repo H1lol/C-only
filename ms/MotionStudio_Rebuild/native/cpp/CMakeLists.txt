@@ -130,6 +130,9 @@ target_link_libraries(ms_title_demo PRIVATE ms_core)
 
 add_executable(ms_effects_catalogue_test tools/ms_effects_catalogue_test.cpp)
 target_link_libraries(ms_effects_catalogue_test PRIVATE ms_core)
+
+add_executable(ms_engine_load_test tools/ms_engine_load_test.cpp)
+target_link_libraries(ms_engine_load_test PRIVATE motionstudio_native)
 add_executable(ms_lut_test tools/ms_lut_test.cpp)
 target_link_libraries(ms_lut_test PRIVATE ms_core)
 
@@ -140,6 +143,7 @@ target_include_directories(ms_engine_audio_test PRIVATE
 
 # Native regression suite (usable with: ctest --test-dir <build> --output-on-failure)
 add_test(NAME ms_effects_catalogue_test COMMAND ms_effects_catalogue_test)
+add_test(NAME ms_engine_load_test COMMAND ms_engine_load_test)
 add_test(NAME ms_studio_test COMMAND ms_studio_test)
 add_test(NAME ms_pass345_deep COMMAND ms_pass345_deep)
 add_test(NAME ms_pass6_test COMMAND ms_pass6_test)
