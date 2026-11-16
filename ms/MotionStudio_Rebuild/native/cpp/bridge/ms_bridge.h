@@ -117,6 +117,12 @@ int ms_comp_set_param(int id, const char* name, double value);
 int ms_comp_get_param(int id, const char* name, double* out);
 /** Empty path makes the Read node sample the edited timeline instead of a file. */
 int ms_comp_set_media(int id, const char* path);
+/** Knob link: `param` on `node` follows `src_param` on `src`. Refused on a cycle. */
+int ms_comp_link_param(int node, const char* param, int src, const char* src_param);
+int ms_comp_unlink_param(int node, const char* param);
+int ms_comp_link_count(void);
+/** "node|param|src|src_param", or "" when the index is out of range. */
+int ms_comp_link_at(int index, char* buf, int size);
 int ms_comp_get_media(int id, char* buf, int size);
 int ms_comp_set_enabled(int id, int enabled);
 int ms_comp_set_position(int id, float x, float y);

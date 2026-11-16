@@ -94,6 +94,36 @@ M0–M5 desktop spikes: PASSED
 - Checks at startup and every five minutes.
 - Project files, recovery snapshots, autosaves, source media and exports remain outside the cleanup scope.
 
+## 2026-11-16 — Transform node and linkable knobs (half of what Natron actually is)
+Read Natron's own architecture notes before writing this. Two things define that class of tool: every
+knob can be driven by something other than its own stored value, and the graph is evaluated by pulling
+from the output. The first is now implemented; the second was already true here.
+
+- **Transform node is real.** It used to copy its input and ignore every parameter. It now does
+  translate, scale, rotate (about the frame centre) and opacity with a bilinear inverse map, and an
+  identity transform takes a straight-copy path so default settings never resample and soften the
+  image.
+- **Knob links, in Natron's sense.** `ParamLink{node, param, src, src_param}` makes one knob follow
+  another node's knob. Values resolve through the link on every fetch, so moving the source changes
+  the result without retouching the link. A Constant node's `Number` knob is the numeric source this
+  was built for.
+- **Cycles are refused where the link is made**, not discovered when a frame is cooked: linking
+  follows the source's own chain and rejects the link if it reaches the target, matching Natron's
+  "connecting would create a cycle" rule. Resolution is also depth-guarded so a corrupt file cannot
+  hang the render thread.
+- Links are serialised in the same record format (`~L|node|param|src|srcparam`), dropped on load if
+  either end is missing, and removed when a node is deleted.
+- UI: the NODES inspector is now driven by a knob table rather than a `when` per op, with a LINK chip
+  per knob that opens a picker of every numeric knob on every other node. A linked knob's slider is
+  disabled and tinted, because dragging a driven value would be a lie.
+- Because the `Constant`'s colour and its number are separate, a Constant can now act as a number
+  node without affecting the picture.
+- Tests: the comp suite grew to cover translation exposing transparency, pixel shifting, opacity on
+  alpha, identity pass-through, link resolution, a linked scale of 1 matching the unlinked image
+  byte-for-byte, self-link and cycle refusal, link persistence, and cleanup on node removal.
+  `ctest` 16/16, `:app:assembleDebug` and `:app:testDebugUnitTest` green, 82 Kotlin externals against
+  83 native symbols with none missing. Still no device, so none of this has been seen rendering.
+
 ## 2026-11-16 — Timeline follows the playhead, pinch zooms the time axis
 - **Playhead follow**: while playing, the shared horizontal scroll pages so the playhead never
   leaves the viewport — it crosses the right margin, then resumes 12% in from the left, and it

@@ -104,6 +104,36 @@ int ms_comp_set_media(int id, const char* path) {
     return 0;
 }
 
+int ms_comp_link_param(int node, const char* param, int src, const char* src_param) {
+    if (!param || !src_param) return -1;
+    return eng().comp_graph().link_parameter(static_cast<uint64_t>(node), param,
+                                             static_cast<uint64_t>(src), src_param)
+               ? 0 : -1;
+}
+
+int ms_comp_unlink_param(int node, const char* param) {
+    if (!param) return -1;
+    return eng().comp_graph().unlink_parameter(static_cast<uint64_t>(node), param) ? 0 : -1;
+}
+
+int ms_comp_link_count(void) {
+    return static_cast<int>(eng().comp_graph().links().size());
+}
+
+int ms_comp_link_at(int index, char* buf, int size) {
+    const auto& links = eng().comp_graph().links();
+    if (index < 0 || index >= static_cast<int>(links.size())) return -1;
+    const auto& l = links[static_cast<std::size_t>(index)];
+    const std::string text = std::to_string(l.node) + "|" + l.param + "|" +
+                             std::to_string(l.src) + "|" + l.src_param;
+    if (buf && size > 0) {
+        const int copy = static_cast<int>(text.size()) < size - 1 ? static_cast<int>(text.size()) : size - 1;
+        std::memcpy(buf, text.data(), static_cast<size_t>(copy));
+        buf[copy] = '\0';
+    }
+    return static_cast<int>(text.size());
+}
+
 int ms_comp_get_media(int id, char* buf, int size) {
     const ms::GraphNode* n = eng().comp_graph().find(static_cast<uint64_t>(id));
     if (!n) return -1;

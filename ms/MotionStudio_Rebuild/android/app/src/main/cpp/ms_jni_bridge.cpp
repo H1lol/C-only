@@ -335,6 +335,39 @@ Java_com_motionstudio_app_native_NativeEngine_nativeCompSetMedia(JNIEnv* env, jo
     return rc == 0 ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompLinkParam(JNIEnv* env, jobject, jint node,
+                                                                  jstring param, jint src,
+                                                                  jstring src_param) {
+    const char* p = param ? env->GetStringUTFChars(param, nullptr) : nullptr;
+    const char* sp = src_param ? env->GetStringUTFChars(src_param, nullptr) : nullptr;
+    const bool ok = p && sp && ms_comp_link_param(node, p, src, sp) == 0;
+    if (p) env->ReleaseStringUTFChars(param, p);
+    if (sp) env->ReleaseStringUTFChars(src_param, sp);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompUnlinkParam(JNIEnv* env, jobject, jint node,
+                                                                    jstring param) {
+    const char* p = param ? env->GetStringUTFChars(param, nullptr) : nullptr;
+    const bool ok = p && ms_comp_unlink_param(node, p) == 0;
+    if (p) env->ReleaseStringUTFChars(param, p);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompLinkCount(JNIEnv*, jobject) {
+    return ms_comp_link_count();
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompLinkAt(JNIEnv* env, jobject, jint index) {
+    char buf[512];
+    if (ms_comp_link_at(index, buf, sizeof(buf)) < 0) return env->NewStringUTF("");
+    return env->NewStringUTF(buf);
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeCompGetMedia(JNIEnv* env, jobject, jint id) {
     char buf[1024];

@@ -192,6 +192,112 @@ int main() {
     check(sp && sp[0] < 30 && sp[1] < 30, "missing provider renders the slate, not garbage");
   }
 
+  // ---- Transform: real geometry, and identity must not resample ------------
+  {
+    ms::NodeGraph g;
+    ms::GraphNode view; view.op = ms::NodeOp::Viewer;
+    const uint64_t v = g.add(view);
+    ms::GraphNode tr; tr.op = ms::NodeOp::Transform;
+    const uint64_t t = g.add(tr);
+
+    // Deterministic two-tone source: left red, right blue.
+    g.set_read_provider([](const ms::GraphNode&, double, int w, int h, ms::ImageBuffer& out) {
+      if (!out.allocate(w, h, ms::PixelFormat::RGBA8)) return ms::Error::make(ms::ErrorCode::OutOfMemory, "x");
+      for (int y = 0; y < h; ++y) {
+        uint8_t* row = out.data() + static_cast<size_t>(y) * out.stride();
+        for (int x = 0; x < w; ++x) {
+          uint8_t* px = row + x * 4;
+          const bool left = x < w / 2;
+          px[0] = left ? 220 : 20; px[1] = 20; px[2] = left ? 20 : 220; px[3] = 255;
+        }
+      }
+      return ms::Error::success();
+    });
+    ms::GraphNode read; read.op = ms::NodeOp::Read;
+    const uint64_t r = g.add(read);
+    check(g.connect(r, t), "read feeds transform");
+    check(g.connect(t, v), "transform feeds viewer");
+
+    ms::ImageBuffer plain;
+    check(g.evaluate(v, 0.0, 16, 16, plain).ok(), "transform with defaults cooks");
+    check(plain.valid() && plain.data()[0] == 220, "identity transform passes the image through");
+
+    check(g.set_parameter(t, "translate_x", 8.0), "translate param set");
+    ms::ImageBuffer moved;
+    check(g.evaluate(v, 0.0, 16, 16, moved).ok(), "translated transform cooks");
+    const uint8_t* m = moved.valid() ? moved.data() : nullptr;
+    check(m && m[3] == 0, "translation exposes transparent area");
+    check(m && m[(12 * 4)] == 220, "translation shifts source pixels right");
+
+    check(g.set_parameter(t, "translate_x", 0.0), "translate reset");
+    check(g.set_parameter(t, "opacity", 0.5), "opacity set");
+    ms::ImageBuffer faded;
+    check(g.evaluate(v, 0.0, 16, 16, faded).ok(), "faded transform cooks");
+    const uint8_t* f8 = faded.valid() ? faded.data() : nullptr;
+    check(f8 && std::abs(f8[3] - 127) <= 2, "opacity scales alpha");
+  }
+
+  // ---- Knob links, in Natron's sense --------------------------------------
+  {
+    ms::NodeGraph g;
+    g.set_read_provider([](const ms::GraphNode&, double, int w, int h, ms::ImageBuffer& out) {
+      if (!out.allocate(w, h, ms::PixelFormat::RGBA8)) return ms::Error::make(ms::ErrorCode::OutOfMemory, "x");
+      for (int y = 0; y < h; ++y) {
+        uint8_t* row = out.data() + static_cast<size_t>(y) * out.stride();
+        for (int x = 0; x < w; ++x) {
+          uint8_t* px = row + x * 4;
+          const bool left = x < w / 2;
+          px[0] = left ? 220 : 20; px[1] = 20; px[2] = left ? 20 : 220; px[3] = 255;
+        }
+      }
+      return ms::Error::success();
+    });
+    ms::GraphNode read; read.op = ms::NodeOp::Read;
+    const uint64_t r = g.add(read);
+    ms::GraphNode tr; tr.op = ms::NodeOp::Transform;
+    const uint64_t t = g.add(tr);
+    ms::GraphNode view; view.op = ms::NodeOp::Viewer;
+    const uint64_t v = g.add(view);
+    ms::GraphNode num; num.op = ms::NodeOp::Constant;
+    num.params.push_back({"value", 0.5});
+    const uint64_t c = g.add(num);
+    g.connect(r, t); g.connect(t, v);
+
+    ms::ImageBuffer unlinked;
+    check(g.evaluate(v, 0.0, 16, 16, unlinked).ok(), "unlinked transform cooks");
+
+    check(g.link_parameter(t, "scale", c, "value"), "scale links to a constant value");
+    check(g.parameter_value(t, "scale", 1.0) == 0.5, "linked parameter resolves to the source value");
+    ms::ImageBuffer linked;
+    check(g.evaluate(v, 0.0, 16, 16, linked).ok(), "linked transform cooks");
+    // scale 0.5 shrinks the image around the centre, so the corner is empty.
+    check(linked.valid() && linked.data()[3] == 0, "linked scale changes the image");
+
+    check(g.set_parameter(c, "value", 1.0), "source value changes");
+    check(g.parameter_value(t, "scale", 1.0) == 1.0, "link follows the source without being retouched");
+    ms::ImageBuffer back;
+    check(g.evaluate(v, 0.0, 16, 16, back).ok(), "linked cook after source change");
+    check(back.valid() && unlinked.valid() && back.width() == unlinked.width() &&
+          std::memcmp(back.data(), unlinked.data(),
+                      static_cast<size_t>(back.stride()) * back.height()) == 0,
+          "linked scale of 1 matches the unlinked image exactly");
+
+    // Cycles are refused at link time, not discovered during a cook.
+    check(!g.link_parameter(t, "scale", t, "scale"), "self link refused");
+    check(g.link_parameter(c, "value", t, "scale") == false, "link that would close a cycle refused");
+    check(g.links().size() == 1, "refused links are not stored");
+
+    const std::string doc = g.serialize();
+    ms::NodeGraph restored;
+    check(restored.deserialize(doc), "graph with a knob link round-trips");
+    check(restored.links().size() == 1, "knob link is saved");
+    check(restored.links()[0].param == "scale" && restored.links()[0].src_param == "value",
+          "knob link keeps its endpoints");
+
+    check(g.remove(c), "removing the source node");
+    check(g.links().empty(), "removing a node drops its knob links");
+  }
+
   std::printf("\n%s (%d failures)\n", failures == 0 ? "PASS" : "FAIL", failures);
   return failures == 0 ? 0 : 1;
 }

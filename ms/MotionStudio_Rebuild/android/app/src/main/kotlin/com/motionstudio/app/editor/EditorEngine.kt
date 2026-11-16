@@ -24,6 +24,18 @@ data class CompNode(
 
 data class CompEdge(val from: Int, val to: Int, val slot: Int)
 
+/** A knob link: `param` on `node` follows `srcParam` on `src` (Natron semantics). */
+data class CompLink(val node: Int, val param: String, val src: Int, val srcParam: String)
+
+/** One numeric knob a node exposes, with the range the UI should offer. */
+data class Knob(
+    val name: String,
+    val label: String,
+    val min: Double,
+    val max: Double,
+    val default: Double,
+)
+
 object CompOps {
     const val READ = 0
     const val WRITE = 1
@@ -50,6 +62,31 @@ object CompOps {
         INVERT -> "Invert"
         OVER -> "Over"
         else -> "Node"
+    }
+
+    /**
+     * Knobs per node kind. Kept here rather than in the engine so the UI and the
+     * link picker agree on names, ranges and defaults.
+     */
+    fun knobs(op: Int): List<Knob> = when (op) {
+        READ -> listOf(Knob("offset", "Offset sec", -30.0, 30.0, 0.0))
+        BLUR -> listOf(Knob("radius", "Radius", 0.0, 64.0, 4.0))
+        GRADE -> listOf(
+            Knob("exposure", "Exposure", -2.0, 2.0, 0.0),
+            Knob("contrast", "Contrast", 0.2, 2.5, 1.0),
+        )
+        SATURATION -> listOf(Knob("amount", "Amount", 0.0, 3.0, 1.0))
+        MERGE -> listOf(Knob("mix", "Mix", 0.0, 1.0, 0.5))
+        TRANSFORM -> listOf(
+            Knob("translate_x", "Pos X px", -2000.0, 2000.0, 0.0),
+            Knob("translate_y", "Pos Y px", -2000.0, 2000.0, 0.0),
+            Knob("scale", "Scale", 0.05, 4.0, 1.0),
+            Knob("rotate", "Rotate deg", -180.0, 180.0, 0.0),
+            Knob("opacity", "Opacity", 0.0, 1.0, 1.0),
+        )
+        // The Constant's colour is separate; this number is its value output.
+        CONSTANT -> listOf(Knob("value", "Number", -10.0, 10.0, 0.0))
+        else -> emptyList()
     }
 
     fun capacity(op: Int): Int = when (op) {
@@ -198,6 +235,8 @@ class EditorEngine(
         private set
     var compSink by mutableIntStateOf(0)
         private set
+    var compLinks by mutableStateOf<List<CompLink>>(emptyList())
+        private set
 
     /** Re-reads the native graph. Cheap: a handful of ints, no pixel work. */
     fun refreshComp() {
@@ -217,6 +256,17 @@ class EditorEngine(
         compEdges = edges
         compActive = NativeEngine.nativeCompActive()
         compSink = NativeEngine.nativeCompSink()
+        val links = ArrayList<CompLink>()
+        for (i in 0 until NativeEngine.nativeCompLinkCount()) {
+            val text = NativeEngine.nativeCompLinkAt(i)
+            if (text.isEmpty()) continue
+            val parts = text.split('|')
+            if (parts.size < 4) continue
+            val node = parts[0].toIntOrNull() ?: continue
+            val src = parts[2].toIntOrNull() ?: continue
+            links += CompLink(node, parts[1], src, parts[3])
+        }
+        compLinks = links
     }
 
     fun activateComp(on: Boolean) {
@@ -273,6 +323,27 @@ class EditorEngine(
     }
 
     fun compMedia(id: Int): String = NativeEngine.nativeCompGetMedia(id)
+
+    fun linkFor(node: Int, param: String): CompLink? =
+        compLinks.firstOrNull { it.node == node && it.param == param }
+
+    fun linkCompParam(node: Int, param: String, src: Int, srcParam: String): Boolean {
+        val ok = NativeEngine.nativeCompLinkParam(node, param, src, srcParam)
+        if (!ok) {
+            status = "That link would create a cycle"
+            return false
+        }
+        NativeEngine.nativeSeek(time)
+        refreshComp()
+        status = "#$node.$param follows #$src.$srcParam"
+        return true
+    }
+
+    fun unlinkCompParam(node: Int, param: String) {
+        NativeEngine.nativeCompUnlinkParam(node, param)
+        NativeEngine.nativeSeek(time)
+        refreshComp()
+    }
 
     fun setCompEnabled(id: Int, enabled: Boolean) {
         NativeEngine.nativeCompSetEnabled(id, enabled)

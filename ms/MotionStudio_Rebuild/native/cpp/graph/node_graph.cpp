@@ -22,6 +22,8 @@ bool NodeGraph::remove(uint64_t id) {
   nodes_.erase(it, nodes_.end());
   edges_.erase(std::remove_if(edges_.begin(), edges_.end(),
                [id](const GraphEdge& e) { return e.from == id || e.to == id; }), edges_.end());
+  links_.erase(std::remove_if(links_.begin(), links_.end(),
+               [id](const ParamLink& l) { return l.node == id || l.src == id; }), links_.end());
   return true;
 }
 
@@ -74,6 +76,65 @@ bool NodeGraph::set_parameter(uint64_t node_id, const std::string& name, double 
   for (auto& p : n->params) if (p.name == name) { p.value = value; return true; }
   n->params.push_back({name, value});
   return true;
+}
+
+bool NodeGraph::param_reaches(uint64_t node, const std::string& param, uint64_t target_node,
+                               const std::string& target_param, int depth) const {
+  if (depth > 64) return true; // treat runaway chains as a cycle rather than hang
+  if (node == target_node && param == target_param) return true;
+  for (const auto& l : links_) {
+    if (l.node != node || l.param != param) continue;
+    return param_reaches(l.src, l.src_param, target_node, target_param, depth + 1);
+  }
+  return false;
+}
+
+bool NodeGraph::link_parameter(uint64_t node, const std::string& param, uint64_t src,
+                               const std::string& src_param) {
+  if (param.empty() || src_param.empty() || !find(node) || !find(src)) return false;
+  if (node == src && param == src_param) return false;
+  // Follow the source's own chain: if it reaches this parameter, the link would
+  // recurse forever when the value is fetched.
+  if (param_reaches(src, src_param, node, param, 0)) return false;
+  for (auto& l : links_) {
+    if (l.node == node && l.param == param) {
+      l.src = src;
+      l.src_param = src_param;
+      return true;
+    }
+  }
+  links_.push_back({node, param, src, src_param});
+  return true;
+}
+
+bool NodeGraph::unlink_parameter(uint64_t node, const std::string& param) {
+  const auto before = links_.size();
+  links_.erase(std::remove_if(links_.begin(), links_.end(),
+               [&](const ParamLink& l) { return l.node == node && l.param == param; }),
+               links_.end());
+  return before != links_.size();
+}
+
+double NodeGraph::parameter_value(uint64_t node, const std::string& param, double fallback) const {
+  int guard = 0;
+  uint64_t current = node;
+  std::string name = param;
+  while (guard++ < 64) {
+    bool linked = false;
+    for (const auto& l : links_) {
+      if (l.node == current && l.param == name) {
+        current = l.src;
+        name = l.src_param;
+        linked = true;
+        break;
+      }
+    }
+    if (!linked) break;
+  }
+  const GraphNode* n = find(current);
+  if (!n) return fallback;
+  for (const auto& p : n->params) if (p.name == name) return p.value;
+  return fallback;
 }
 
 GraphNode* NodeGraph::find(uint64_t id) {
@@ -143,9 +204,11 @@ Error NodeGraph::eval_node(uint64_t id, double time, int w, int h,
   }
   if (w <= 0 || h <= 0) return finish(Error::make(ErrorCode::InvalidArgument, "invalid graph output size"));
 
+  // Every knob read goes through links, so a linked parameter cannot be bypassed
+  // by a node reading its stored value directly.
+  const uint64_t node_id = n->id;
   auto param = [&](const char* name, double def) {
-    for (const auto& p : n->params) if (p.name == name) return p.value;
-    return def;
+    return parameter_value(node_id, name, def);
   };
   std::array<uint64_t, 2> input_ids{0, 0};
   for (const auto& e : edges_) if (e.to == id && e.to_in >= 0 && e.to_in < 2) input_ids[static_cast<std::size_t>(e.to_in)] = e.from;
@@ -221,7 +284,69 @@ Error NodeGraph::eval_node(uint64_t id, double time, int w, int h,
       }
       break;
     }
-    case NodeOp::Transform: case NodeOp::Viewer: case NodeOp::Write:
+    case NodeOp::Transform: {
+      if (!a.valid()) { result = cpu_solid(out, w, h, 0.1f, 0.1f, 0.12f, 1.f); break; }
+      const float tx = static_cast<float>(param("translate_x", 0.0));
+      const float ty = static_cast<float>(param("translate_y", 0.0));
+      float scale = static_cast<float>(param("scale", 1.0));
+      const float rotate = static_cast<float>(param("rotate", 0.0));
+      const float opacity = static_cast<float>(std::clamp(param("opacity", 1.0), 0.0, 1.0));
+      if (std::fabs(scale) < 1e-3f) scale = 1e-3f;
+      // Identity stays a straight copy: a Transform with default knobs must not
+      // resample the image and soften it.
+      if (std::fabs(scale - 1.f) < 1e-4f && std::fabs(rotate) < 1e-4f &&
+          std::fabs(tx) < 0.01f && std::fabs(ty) < 0.01f && opacity > 0.999f) {
+        out.copy_from(a);
+        break;
+      }
+      if (a.format() != PixelFormat::RGBA8) {
+        result = Error::make(ErrorCode::NotSupported, "transform requires RGBA8 input");
+        break;
+      }
+      if (!out.allocate(w, h, PixelFormat::RGBA8)) {
+        result = Error::make(ErrorCode::OutOfMemory, "transform output");
+        break;
+      }
+      const float cx = w * 0.5f, cy = h * 0.5f;
+      const float rad = rotate * 3.14159265358979f / 180.f;
+      const float cs = std::cos(-rad), sn = std::sin(-rad);
+      const uint8_t* src = a.data();
+      uint8_t* dst = out.data();
+      for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+          // Inverse map: destination pixel back into source space.
+          const float px = static_cast<float>(x) - cx - tx;
+          const float py = static_cast<float>(y) - cy - ty;
+          const float rx = (px * cs - py * sn) / scale + cx;
+          const float ry = (px * sn + py * cs) / scale + cy;
+          uint8_t* o = dst + (static_cast<size_t>(y) * out.stride()) + static_cast<size_t>(x) * 4;
+          if (rx < -1.f || ry < -1.f || rx > static_cast<float>(w) || ry > static_cast<float>(h)) {
+            o[0] = o[1] = o[2] = o[3] = 0;
+            continue;
+          }
+          const int x0 = static_cast<int>(std::floor(rx));
+          const int y0 = static_cast<int>(std::floor(ry));
+          const float fx = rx - static_cast<float>(x0);
+          const float fy = ry - static_cast<float>(y0);
+          float acc[4] = {0.f, 0.f, 0.f, 0.f};
+          for (int dy = 0; dy <= 1; ++dy) {
+            for (int dx = 0; dx <= 1; ++dx) {
+              const int sx = std::clamp(x0 + dx, 0, w - 1);
+              const int sy = std::clamp(y0 + dy, 0, h - 1);
+              const float weight = (dx ? fx : 1.f - fx) * (dy ? fy : 1.f - fy);
+              if (weight <= 0.f) continue;
+              const uint8_t* s = src + (static_cast<size_t>(sy) * a.stride()) + static_cast<size_t>(sx) * 4;
+              for (int c = 0; c < 4; ++c) acc[c] += s[c] * weight;
+            }
+          }
+          for (int c = 0; c < 4; ++c)
+            o[c] = static_cast<uint8_t>(std::clamp(acc[c], 0.f, 255.f) + 0.5f);
+          o[3] = static_cast<uint8_t>(std::clamp(o[3] * opacity, 0.f, 255.f) + 0.5f);
+        }
+      }
+      break;
+    }
+    case NodeOp::Viewer: case NodeOp::Write:
       if (a.valid()) out.copy_from(a); else result = cpu_solid(out, w, h, 0.1f, 0.1f, 0.12f, 1.f); break;
   }
   return finish(result);
@@ -302,6 +427,10 @@ std::string NodeGraph::serialize() const {
     s += "~E|" + std::to_string(e.from) + "|" + std::to_string(e.to) + "|" +
          std::to_string(e.from_out) + "|" + std::to_string(e.to_in);
   }
+  for (const auto& l : links_) {
+    s += "~L|" + std::to_string(l.node) + "|" + clean(l.param) + "|" +
+         std::to_string(l.src) + "|" + clean(l.src_param);
+  }
   return s;
 }
 
@@ -309,6 +438,7 @@ bool NodeGraph::deserialize(const std::string& text) {
   if (text.rfind("MSCOMP1", 0) != 0) return false;
   std::vector<GraphNode> nodes;
   std::vector<GraphEdge> edges;
+  std::vector<ParamLink> links;
   uint64_t max_id = 0;
 
   auto split = [](const std::string& s, char sep) {
@@ -359,12 +489,25 @@ bool NodeGraph::deserialize(const std::string& text) {
       e.from_out = std::atoi(f[3].c_str());
       e.to_in = std::atoi(f[4].c_str());
       edges.push_back(e);
+    } else if (f[0] == "L" && f.size() >= 5) {
+      ParamLink l;
+      l.node = std::strtoull(f[1].c_str(), nullptr, 10);
+      l.param = f[2];
+      l.src = std::strtoull(f[3].c_str(), nullptr, 10);
+      l.src_param = f[4];
+      if (l.node && l.src && !l.param.empty() && !l.src_param.empty()) links.push_back(std::move(l));
     }
   }
 
   if (nodes.empty()) return false;
   nodes_ = std::move(nodes);
   edges_ = std::move(edges);
+  // Links to nodes that did not survive the read would resolve to nothing and
+  // silently fall back to defaults, so drop them on load instead.
+  links_.clear();
+  for (auto& l : links) {
+    if (find(l.node) && find(l.src)) links_.push_back(std::move(l));
+  }
   next_id_ = max_id + 1;
   return validate().ok();
 }

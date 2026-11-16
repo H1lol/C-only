@@ -72,8 +72,10 @@ Decoding now uses MediaCodec, but playback is still seek-per-frame rather than a
 ### 7b. Comp network depth
 The node graph evaluates (Constant, Blur, Grade, Saturate, Invert, Merge, Over, Viewer) and is saved
 with the project, and `Read` decodes media or samples the edited timeline through the engine's
-provider. It is not yet a full compositor: there is no Transform node with wired parameters, no per-node persistent cache across frames,
-no viewer AOI/tiling or proxy playback, one decoder per media path with no prefetch, and node colour
+provider. `Transform` now does translate/scale/rotate/opacity, and knobs can be linked to other
+nodes' numeric knobs (cycle-checked, persisted). It is not yet a full compositor: there are no
+expressions (links only), no with wired parameters, no per-node persistent cache across frames,
+viewer AOI/tiling or proxy playback, one decoder per media path with no prefetch, and node colour
 for Constant is not editable from the UI.
 
 ### 8. Multicam and nested sequences

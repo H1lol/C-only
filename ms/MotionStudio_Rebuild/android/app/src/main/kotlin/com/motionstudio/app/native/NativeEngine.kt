@@ -76,6 +76,10 @@ object NativeEngine {
     external fun nativeCompGetParam(id: Int, name: String, fallback: Double): Double
     external fun nativeCompSetMedia(id: Int, path: String): Boolean
     external fun nativeCompGetMedia(id: Int): String
+    external fun nativeCompLinkParam(node: Int, param: String, src: Int, srcParam: String): Boolean
+    external fun nativeCompUnlinkParam(node: Int, param: String): Boolean
+    external fun nativeCompLinkCount(): Int
+    external fun nativeCompLinkAt(index: Int): String
     external fun nativeCompSetEnabled(id: Int, enabled: Boolean): Boolean
     external fun nativeCompSetPosition(id: Int, x: Float, y: Float): Boolean
     external fun nativeCompSetSink(id: Int): Boolean

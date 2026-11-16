@@ -30,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import com.motionstudio.app.editor.CompOps
 import com.motionstudio.app.editor.CompNode
 import com.motionstudio.app.editor.EditorEngine
+import com.motionstudio.app.editor.Knob
 import com.motionstudio.app.ui.theme.MsColors
 import com.motionstudio.app.ui.theme.MsFonts
 
@@ -65,6 +67,7 @@ fun NodeGraphPane(engine: EditorEngine, modifier: Modifier = Modifier) {
     val nodes = engine.compNodes
     val edges = engine.compEdges
     var selected by remember { mutableIntStateOf(0) }
+    var picking by remember { mutableStateOf<String?>(null) }
     val density = LocalDensity.current
     val hScroll = rememberScrollState()
     val vScroll = rememberScrollState()
@@ -109,6 +112,7 @@ fun NodeGraphPane(engine: EditorEngine, modifier: Modifier = Modifier) {
                 CompOps.GRADE to "GRADE",
                 CompOps.SATURATION to "SAT",
                 CompOps.INVERT to "INVERT",
+                CompOps.TRANSFORM to "XFORM",
                 CompOps.MERGE to "MERGE",
                 CompOps.OVER to "OVER",
                 CompOps.VIEWER to "VIEWER",
@@ -243,53 +247,80 @@ fun NodeGraphPane(engine: EditorEngine, modifier: Modifier = Modifier) {
                 }
             }
 
-            when (selectedNode.op) {
-                CompOps.BLUR ->
-                    CompParam(engine, selectedNode, "radius", "Radius", 0.0, 64.0, 4.0)
-                CompOps.GRADE -> {
-                    CompParam(engine, selectedNode, "exposure", "Exposure", -2.0, 2.0, 0.0)
-                    CompParam(engine, selectedNode, "contrast", "Contrast", 0.2, 2.5, 1.0)
-                }
-                CompOps.SATURATION ->
-                    CompParam(engine, selectedNode, "amount", "Amount", 0.0, 3.0, 1.0)
-                CompOps.MERGE ->
-                    CompParam(engine, selectedNode, "mix", "Mix", 0.0, 1.0, 0.5)
-                CompOps.READ -> {
-                    val current = engine.compMedia(selectedNode.id)
-                    Text(
-                        "SOURCE  " + if (current.isEmpty()) "timeline sequence" else current.substringAfterLast('/'),
-                        color = MsColors.textTertiary,
-                        fontSize = 9.sp,
-                        fontFamily = MsFonts.mono,
-                        modifier = Modifier.padding(bottom = 3.dp),
-                    )
-                    Row(
-                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        SourceChip("TIMELINE", current.isEmpty()) {
-                            engine.setCompMedia(selectedNode.id, "")
-                        }
-                        engine.doc.media.forEach { media ->
-                            SourceChip(media.name.ifBlank { media.path.substringAfterLast('/') },
-                                current == media.path) {
-                                engine.setCompMedia(selectedNode.id, media.path)
-                            }
+            if (selectedNode.op == CompOps.READ) {
+                val current = engine.compMedia(selectedNode.id)
+                Text(
+                    "SOURCE  " + if (current.isEmpty()) "timeline sequence" else current.substringAfterLast('/'),
+                    color = MsColors.textTertiary,
+                    fontSize = 9.sp,
+                    fontFamily = MsFonts.mono,
+                    modifier = Modifier.padding(bottom = 3.dp),
+                )
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    SourceChip("TIMELINE", current.isEmpty()) {
+                        engine.setCompMedia(selectedNode.id, "")
+                    }
+                    engine.doc.media.forEach { media ->
+                        SourceChip(media.name.ifBlank { media.path.substringAfterLast('/') },
+                            current == media.path) {
+                            engine.setCompMedia(selectedNode.id, media.path)
                         }
                     }
-                    CompParam(engine, selectedNode, "offset", "Offset sec", -30.0, 30.0, 0.0)
                 }
-                CompOps.CONSTANT -> Text(
-                    "Constant renders a flat colour from the engine's defaults. " +
-                        "Per-channel sliders are not bridged yet.",
-                    color = MsColors.textMuted,
-                    fontSize = 10.sp,
-                )
-                else -> Text(
+            }
+
+            val knobs = CompOps.knobs(selectedNode.op)
+            if (knobs.isEmpty()) {
+                Text(
                     "This node has no editable parameters.",
                     color = MsColors.textMuted,
                     fontSize = 10.sp,
                 )
+            } else {
+                knobs.forEach { knob ->
+                    KnobRow(
+                        engine = engine,
+                        node = selectedNode,
+                        knob = knob,
+                        picking = picking == knob.name,
+                        onPickToggle = {
+                            picking = if (picking == knob.name) null else knob.name
+                        },
+                    )
+                }
+                // Link picker: any numeric knob on any other node can drive this one.
+                val target = picking
+                if (target != null) {
+                    val candidates = engine.compNodes
+                        .filter { it.id != selectedNode.id }
+                        .flatMap { other ->
+                            CompOps.knobs(other.op).map { k ->
+                                Triple(other, k, "#${other.id} ${CompOps.name(other.op)}.${k.label}")
+                            }
+                        }
+                    if (candidates.isEmpty()) {
+                        Text(
+                            "Add another node with a numeric knob to link against.",
+                            color = MsColors.textMuted,
+                            fontSize = 10.sp,
+                        )
+                    } else {
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            candidates.forEach { (other, k, label) ->
+                                SourceChip(label, false) {
+                                    engine.linkCompParam(selectedNode.id, target, other.id, k.name)
+                                    picking = null
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -313,42 +344,53 @@ private fun SourceChip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun CompParam(
+private fun KnobRow(
     engine: EditorEngine,
     node: CompNode,
-    name: String,
-    label: String,
-    min: Double,
-    max: Double,
-    fallback: Double,
+    knob: Knob,
+    picking: Boolean,
+    onPickToggle: () -> Unit,
 ) {
-    val value = engine.compParam(node.id, name, fallback)
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            label.uppercase(),
-            color = MsColors.textTertiary,
-            fontSize = 9.sp,
-            fontFamily = MsFonts.mono,
-            modifier = Modifier.width(76.dp),
-        )
-        Slider(
-            value = value.toFloat().coerceIn(min.toFloat(), max.toFloat()),
-            onValueChange = { engine.setCompParam(node.id, name, it.toDouble()) },
-            valueRange = min.toFloat()..max.toFloat(),
-            colors = SliderDefaults.colors(
-                thumbColor = MsColors.accent,
-                activeTrackColor = MsColors.accent,
-                inactiveTrackColor = MsColors.border,
-            ),
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            "%.2f".format(value),
-            color = MsColors.textSecondary,
-            fontSize = 10.sp,
-            fontFamily = MsFonts.mono,
-            modifier = Modifier.width(44.dp),
-        )
+    val link = engine.linkFor(node.id, knob.name)
+    val value = if (link != null) engine.compParam(link.src, link.srcParam, knob.default)
+    else engine.compParam(node.id, knob.name, knob.default)
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                knob.label.uppercase(),
+                color = MsColors.textTertiary,
+                fontSize = 9.sp,
+                fontFamily = MsFonts.mono,
+                modifier = Modifier.width(76.dp),
+            )
+            Slider(
+                // A linked knob is driven by its source, so dragging it would be a lie.
+                value = value.toFloat().coerceIn(knob.min.toFloat(), knob.max.toFloat()),
+                onValueChange = { engine.setCompParam(node.id, knob.name, it.toDouble()) },
+                valueRange = knob.min.toFloat()..knob.max.toFloat(),
+                enabled = link == null,
+                colors = SliderDefaults.colors(
+                    thumbColor = if (link == null) MsColors.accent else MsColors.info,
+                    activeTrackColor = if (link == null) MsColors.accent else MsColors.info,
+                    inactiveTrackColor = MsColors.border,
+                ),
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "%.2f".format(value),
+                color = MsColors.textSecondary,
+                fontSize = 10.sp,
+                fontFamily = MsFonts.mono,
+                modifier = Modifier.width(46.dp),
+            )
+            if (link == null) {
+                SourceChip(if (picking) "PICK…" else "LINK", picking) { onPickToggle() }
+            } else {
+                SourceChip("#${link.src}.${link.srcParam}", true) {
+                    engine.unlinkCompParam(node.id, knob.name)
+                }
+            }
+        }
     }
 }
 

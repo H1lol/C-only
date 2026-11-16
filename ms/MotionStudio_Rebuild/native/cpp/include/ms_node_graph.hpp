@@ -33,6 +33,19 @@ struct GraphNode {
   float x = 0.f, y = 0.f;
 };
 
+/**
+ * A knob link, in Natron's sense: `param` on `node` follows `param` on `src`
+ * instead of using its own stored value. Resolved on every fetch, so the source
+ * can change without touching the link. Links are rejected if they would form a
+ * cycle, because resolution recurses.
+ */
+struct ParamLink {
+  uint64_t node = 0;
+  std::string param;
+  uint64_t src = 0;
+  std::string src_param;
+};
+
 struct GraphEdge {
   uint64_t from = 0;
   uint64_t to = 0;
@@ -58,6 +71,13 @@ public:
   bool connect(uint64_t from, uint64_t to, int from_out = 0, int to_in = 0);
   bool disconnect(uint64_t from, uint64_t to, int to_in = 0);
   bool set_parameter(uint64_t node_id, const std::string& name, double value);
+  /** Makes `param` on `node` follow `src_param` on `src`. False on a cycle. */
+  bool link_parameter(uint64_t node, const std::string& param, uint64_t src,
+                      const std::string& src_param);
+  bool unlink_parameter(uint64_t node, const std::string& param);
+  const std::vector<ParamLink>& links() const { return links_; }
+  /** Value of `param` after following links; `fallback` when absent. */
+  double parameter_value(uint64_t node, const std::string& param, double fallback) const;
   Error validate() const;
   GraphNode* find(uint64_t id);
   const GraphNode* find(uint64_t id) const;
@@ -82,6 +102,7 @@ private:
   ReadProvider read_provider_;
   std::vector<GraphNode> nodes_;
   std::vector<GraphEdge> edges_;
+  std::vector<ParamLink> links_;
   uint64_t next_id_ = 1;
 
   Error eval_node(uint64_t id, double time, int w, int h,
@@ -90,6 +111,8 @@ private:
   std::vector<uint64_t> inputs_of(uint64_t id) const;
   int input_capacity(NodeOp op) const;
   bool reaches(uint64_t start, uint64_t target) const;
+  bool param_reaches(uint64_t node, const std::string& param, uint64_t target_node,
+                     const std::string& target_param, int depth) const;
 };
 
 /** Stable names for the editor and the save format. */
