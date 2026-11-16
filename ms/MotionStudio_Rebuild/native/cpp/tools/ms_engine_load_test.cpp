@@ -39,6 +39,22 @@ int main() {
   check(meta.width == 640 && meta.height == 360,
         "frame size restored from the loaded project");
 
+  // ---- comp network round-trips through the project document --------------
+  check(ms_comp_add_node(static_cast<int>(ms::NodeOp::Blur), 60.f, 40.f) > 0, "comp node added");
+  const int before = ms_comp_node_count();
+  check(before >= 1, "comp has a node");
+  ms_comp_set_active(1);
+  check(ms_comp_active() == 1, "comp activates");
+  char* with_comp = ms_project_to_json();
+  check(with_comp && std::string(with_comp).find("\"comp\":\"MSCOMP1") != std::string::npos,
+        "project document carries the comp");
+  std::string doc = with_comp ? with_comp : "{}";
+  std::free(with_comp);
+
+  ms_engine_shutdown();
+  check(ms_project_load(doc.c_str()) == 0, "project with a comp loads");
+  check(ms_comp_node_count() == before, "comp nodes are restored on load");
+
   std::printf("\n%s (%d failures)\n", failures == 0 ? "PASS" : "FAIL", failures);
   return failures == 0 ? 0 : 1;
 }

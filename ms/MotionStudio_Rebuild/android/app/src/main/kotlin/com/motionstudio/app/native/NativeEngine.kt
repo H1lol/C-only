@@ -63,6 +63,24 @@ object NativeEngine {
     external fun nativeScopesHistogram(out: IntArray, bins: Int): Boolean
 
     /** "mediacodec", "ffmpeg" or "slate" — the last one means no real decoding. */
+    // ---- Comp network (node graph) ----
+    external fun nativeCompNodeCount(): Int
+    external fun nativeCompNodeAt(index: Int, out: IntArray): Boolean
+    external fun nativeCompEdgeCount(): Int
+    external fun nativeCompEdgeAt(index: Int, out: IntArray): Boolean
+    external fun nativeCompAddNode(op: Int, x: Float, y: Float): Int
+    external fun nativeCompRemoveNode(id: Int): Boolean
+    external fun nativeCompConnect(from: Int, to: Int, slot: Int): Boolean
+    external fun nativeCompDisconnect(from: Int, to: Int, slot: Int): Boolean
+    external fun nativeCompSetParam(id: Int, name: String, value: Double): Boolean
+    external fun nativeCompGetParam(id: Int, name: String, fallback: Double): Double
+    external fun nativeCompSetEnabled(id: Int, enabled: Boolean): Boolean
+    external fun nativeCompSetPosition(id: Int, x: Float, y: Float): Boolean
+    external fun nativeCompSetSink(id: Int): Boolean
+    external fun nativeCompSink(): Int
+    external fun nativeCompSetActive(active: Boolean): Boolean
+    external fun nativeCompActive(): Boolean
+
     external fun nativeDecoderBackend(): String
 
     // Timeline markers + project settings

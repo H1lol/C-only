@@ -24,6 +24,7 @@ set(MS_CORE_SOURCES
   effects/msp/msp_registry.cpp
   effects/store/effect_store.cpp
   effects/builtin_effects.cpp
+  graph/node_graph.cpp
   comp/layer_stack.cpp
   comp/transitions.cpp
   comp/mask.cpp
@@ -114,6 +115,9 @@ add_executable(ms_audio_fx_test tools/ms_audio_fx_test.cpp)
 target_link_libraries(ms_audio_fx_test PRIVATE ms_core)
 add_executable(ms_audio_playback_test tools/ms_audio_playback_test.cpp)
 target_link_libraries(ms_audio_playback_test PRIVATE ms_core)
+add_executable(ms_comp_graph_test tools/ms_comp_graph_test.cpp)
+target_link_libraries(ms_comp_graph_test PRIVATE ms_core)
+
 add_executable(ms_graph_safety_test tools/ms_graph_safety_test.cpp)
 target_link_libraries(ms_graph_safety_test PRIVATE ms_core)
 
@@ -133,6 +137,8 @@ target_link_libraries(ms_effects_catalogue_test PRIVATE ms_core)
 
 add_executable(ms_engine_load_test tools/ms_engine_load_test.cpp)
 target_link_libraries(ms_engine_load_test PRIVATE motionstudio_native)
+
+
 add_executable(ms_lut_test tools/ms_lut_test.cpp)
 target_link_libraries(ms_lut_test PRIVATE ms_core)
 
@@ -144,6 +150,7 @@ target_include_directories(ms_engine_audio_test PRIVATE
 # Native regression suite (usable with: ctest --test-dir <build> --output-on-failure)
 add_test(NAME ms_effects_catalogue_test COMMAND ms_effects_catalogue_test)
 add_test(NAME ms_engine_load_test COMMAND ms_engine_load_test)
+
 add_test(NAME ms_studio_test COMMAND ms_studio_test)
 add_test(NAME ms_pass345_deep COMMAND ms_pass345_deep)
 add_test(NAME ms_pass6_test COMMAND ms_pass6_test)
@@ -152,6 +159,7 @@ add_test(NAME ms_17_22_test COMMAND ms_17_22_test)
 add_test(NAME ms_23_30_test COMMAND ms_23_30_test)
 add_test(NAME ms_audio_fx_test COMMAND ms_audio_fx_test)
 add_test(NAME ms_audio_playback_test COMMAND ms_audio_playback_test)
+add_test(NAME ms_comp_graph_test COMMAND ms_comp_graph_test)
 add_test(NAME ms_graph_safety_test COMMAND ms_graph_safety_test)
 add_test(NAME ms_export_profile_test COMMAND ms_export_profile_test)
 add_test(NAME ms_engine_audio_test COMMAND ms_engine_audio_test)

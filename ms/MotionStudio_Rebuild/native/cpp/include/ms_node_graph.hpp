@@ -28,6 +28,9 @@ struct GraphNode {
   std::vector<NodeParam> params;
   std::string media_path; // for Read
   float solid_r = 0, solid_g = 0, solid_b = 0, solid_a = 1;
+  // Editor layout only. Kept on the node so a saved comp reopens where the user
+  // left it; it never affects evaluation.
+  float x = 0.f, y = 0.f;
 };
 
 struct GraphEdge {
@@ -53,6 +56,17 @@ public:
   /** Evaluate graph ending at viewer_or_write node into output */
   Error evaluate(uint64_t sink_id, double time_sec, int w, int h, ImageBuffer& out);
 
+  /** First Viewer/Write node, or 0 when the network has no sink. */
+  uint64_t sink_id() const;
+
+  /**
+   * Compact record format, used for saving the comp inside the project file.
+   * Deliberately not JSON: '~' separates records and '|' fields, so parsing is
+   * exact and cannot be fooled by a quote in a node name.
+   */
+  std::string serialize() const;
+  bool deserialize(const std::string& text);
+
 private:
   std::vector<GraphNode> nodes_;
   std::vector<GraphEdge> edges_;
@@ -65,5 +79,9 @@ private:
   int input_capacity(NodeOp op) const;
   bool reaches(uint64_t start, uint64_t target) const;
 };
+
+/** Stable names for the editor and the save format. */
+const char* graph_op_name(NodeOp op);
+bool graph_op_from_name(const std::string& name, NodeOp& out);
 
 } // namespace ms

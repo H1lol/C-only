@@ -101,6 +101,26 @@ int ms_scopes_histogram(int* out, int bins);
 // Returns the new transition id, or 0 on failure.
 int ms_transition_add(int track_id, int outgoing, int incoming, int type, double duration);
 
+// ---- Comp network (node graph) ----
+// Node ops: 0 Read, 1 Write, 2 Merge, 3 Blur, 4 Grade, 5 Transform,
+//           6 Constant, 7 Viewer, 8 Saturation, 9 Invert, 10 CompositeOver.
+int ms_comp_node_count(void);
+int ms_comp_node_at(int index, int* out_id, int* out_op, int* out_enabled,
+                    float* out_x, float* out_y);
+int ms_comp_edge_count(void);
+int ms_comp_edge_at(int index, int* out_from, int* out_to, int* out_slot);
+int ms_comp_add_node(int op, float x, float y);
+int ms_comp_remove_node(int id);
+int ms_comp_connect(int from, int to, int slot);
+int ms_comp_disconnect(int from, int to, int slot);
+int ms_comp_set_param(int id, const char* name, double value);
+int ms_comp_set_enabled(int id, int enabled);
+int ms_comp_set_position(int id, float x, float y);
+int ms_comp_set_sink(int id);
+int ms_comp_sink(void);
+int ms_comp_set_active(int active);
+int ms_comp_active(void);
+
 // Which decoder backend is live: "mediacodec", "ffmpeg" or "slate".
 // "slate" means imported video renders as a placeholder — surface it in the UI.
 const char* ms_decoder_backend();

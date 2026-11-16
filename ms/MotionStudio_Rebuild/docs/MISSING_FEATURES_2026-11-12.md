@@ -69,6 +69,12 @@ Export carries AAC audio, and audio clips now draw a real waveform from decoded 
 ### 7. Playback performance
 Decoding now uses MediaCodec, but playback is still seek-per-frame rather than a streaming pipeline, so 4K will not play smoothly. Compositing remains CPU into an RGBA8 buffer (`gpu_mock`), and there are no proxies or cache-management UI.
 
+### 7b. Comp network depth
+The node graph evaluates (Constant, Blur, Grade, Saturate, Invert, Merge, Over, Viewer) and is saved
+with the project, but it is not yet a full compositor: `Read` renders a slate instead of decoding a
+clip, there is no Transform node with wired parameters, no per-node persistent cache across frames,
+no viewer AOI/tiling, and node colour for Constant is not editable from the UI.
+
 ### 8. Multicam and nested sequences
 Markers are done. Multicam and nested sequences still have zero references in the engine — a nested sequence would need a clip type that renders another timeline.
 

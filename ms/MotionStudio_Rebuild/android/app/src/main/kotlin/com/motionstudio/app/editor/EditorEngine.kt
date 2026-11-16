@@ -13,6 +13,52 @@ import com.motionstudio.app.native.NativeEngine
 import java.io.File
 
 /** Styling for a title clip; mirrors ms::TextStyle one field at a time. */
+/** One node in the comp network (mirrors ms::GraphNode). op matches ms::NodeOp. */
+data class CompNode(
+    val id: Int,
+    val op: Int,
+    val enabled: Boolean,
+    val x: Float,
+    val y: Float,
+)
+
+data class CompEdge(val from: Int, val to: Int, val slot: Int)
+
+object CompOps {
+    const val READ = 0
+    const val WRITE = 1
+    const val MERGE = 2
+    const val BLUR = 3
+    const val GRADE = 4
+    const val TRANSFORM = 5
+    const val CONSTANT = 6
+    const val VIEWER = 7
+    const val SATURATION = 8
+    const val INVERT = 9
+    const val OVER = 10
+
+    fun name(op: Int): String = when (op) {
+        READ -> "Read"
+        WRITE -> "Write"
+        MERGE -> "Merge"
+        BLUR -> "Blur"
+        GRADE -> "Grade"
+        TRANSFORM -> "Transform"
+        CONSTANT -> "Constant"
+        VIEWER -> "Viewer"
+        SATURATION -> "Saturate"
+        INVERT -> "Invert"
+        OVER -> "Over"
+        else -> "Node"
+    }
+
+    fun capacity(op: Int): Int = when (op) {
+        MERGE, OVER -> 2
+        CONSTANT, READ, VIEWER -> 1
+        else -> 1
+    }
+}
+
 data class TitleOptions(
     val font: String = "anton",
     val size: Double = 140.0,
@@ -142,11 +188,107 @@ class EditorEngine(
     }
 
     /** Lets the UI report progress (import, export) through the status line. */
+
+    // ---- Comp network -------------------------------------------------------
+    var compNodes by mutableStateOf<List<CompNode>>(emptyList())
+        private set
+    var compEdges by mutableStateOf<List<CompEdge>>(emptyList())
+        private set
+    var compActive by mutableStateOf(false)
+        private set
+    var compSink by mutableIntStateOf(0)
+        private set
+
+    /** Re-reads the native graph. Cheap: a handful of ints, no pixel work. */
+    fun refreshComp() {
+        val nodes = ArrayList<CompNode>()
+        val buf = IntArray(5)
+        for (i in 0 until NativeEngine.nativeCompNodeCount()) {
+            if (NativeEngine.nativeCompNodeAt(i, buf)) {
+                nodes += CompNode(buf[0], buf[1], buf[2] != 0, buf[3].toFloat(), buf[4].toFloat())
+            }
+        }
+        compNodes = nodes
+        val edges = ArrayList<CompEdge>()
+        val eb = IntArray(3)
+        for (i in 0 until NativeEngine.nativeCompEdgeCount()) {
+            if (NativeEngine.nativeCompEdgeAt(i, eb)) edges += CompEdge(eb[0], eb[1], eb[2])
+        }
+        compEdges = edges
+        compActive = NativeEngine.nativeCompActive()
+        compSink = NativeEngine.nativeCompSink()
+    }
+
+    fun activateComp(on: Boolean) {
+        NativeEngine.nativeCompSetActive(on)
+        // The viewer must repaint: the comp is cooked on the next frame.
+        NativeEngine.nativeSeek(time)
+        refreshComp()
+        status = if (on) "Comp active — viewport cooks the node graph" else "Timeline view"
+    }
+
+    fun addCompNode(op: Int, x: Float, y: Float): Int {
+        val id = NativeEngine.nativeCompAddNode(op, x, y)
+        refreshComp()
+        NativeEngine.nativeSeek(time)
+        status = "Added ${CompOps.name(op)}"
+        return id
+    }
+
+    fun moveCompNode(id: Int, x: Float, y: Float) {
+        NativeEngine.nativeCompSetPosition(id, x, y)
+        compNodes = compNodes.map { if (it.id == id) it.copy(x = x, y = y) else it }
+    }
+
+    fun connectComp(from: Int, to: Int, slot: Int = 0): Boolean {
+        val ok = NativeEngine.nativeCompConnect(from, to, slot)
+        if (!ok) {
+            status = "Cannot connect those nodes (would create a cycle)"
+            return false
+        }
+        NativeEngine.nativeSeek(time)
+        refreshComp()
+        return true
+    }
+
+    fun disconnectComp(from: Int, to: Int, slot: Int) {
+        NativeEngine.nativeCompDisconnect(from, to, slot)
+        NativeEngine.nativeSeek(time)
+        refreshComp()
+    }
+
+    fun setCompParam(id: Int, name: String, value: Double) {
+        NativeEngine.nativeCompSetParam(id, name, value)
+        NativeEngine.nativeSeek(time)
+    }
+
+    fun compParam(id: Int, name: String, fallback: Double): Double =
+        NativeEngine.nativeCompGetParam(id, name, fallback)
+
+    fun setCompEnabled(id: Int, enabled: Boolean) {
+        NativeEngine.nativeCompSetEnabled(id, enabled)
+        NativeEngine.nativeSeek(time)
+        refreshComp()
+    }
+
+    fun removeCompNode(id: Int) {
+        NativeEngine.nativeCompRemoveNode(id)
+        NativeEngine.nativeSeek(time)
+        refreshComp()
+    }
+
+    fun viewCompNode(id: Int) {
+        NativeEngine.nativeCompSetSink(id)
+        NativeEngine.nativeSeek(time)
+        refreshComp()
+    }
+
     fun note(message: String) {
         status = message
     }
 
     fun reload() {
+        runCatching { refreshComp() }
         doc = ProjectDoc.parse(NativeEngine.nativeProjectToJson())
         val state = NativeEngine.nativePreviewState()
         if (state.size >= 4) {

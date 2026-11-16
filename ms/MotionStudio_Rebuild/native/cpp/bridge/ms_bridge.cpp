@@ -5,6 +5,133 @@
 #include <cstring>
 
 extern "C" {
+// ---------------------------------------------------------------- comp ------
+namespace {
+ms::Engine& eng() { return ms::Engine::instance(); }
+}
+
+int ms_comp_node_count(void) {
+    return static_cast<int>(eng().comp_graph().nodes().size());
+}
+
+int ms_comp_node_at(int index, int* out_id, int* out_op, int* out_enabled,
+                    float* out_x, float* out_y) {
+    const auto& nodes = eng().comp_graph().nodes();
+    if (index < 0 || index >= static_cast<int>(nodes.size())) return -1;
+    const auto& n = nodes[static_cast<size_t>(index)];
+    if (out_id) *out_id = static_cast<int>(n.id);
+    if (out_op) *out_op = static_cast<int>(n.op);
+    if (out_enabled) *out_enabled = n.enabled ? 1 : 0;
+    if (out_x) *out_x = n.x;
+    if (out_y) *out_y = n.y;
+    return 0;
+}
+
+int ms_comp_edge_count(void) {
+    return static_cast<int>(eng().comp_graph().edges().size());
+}
+
+int ms_comp_edge_at(int index, int* out_from, int* out_to, int* out_slot) {
+    const auto& edges = eng().comp_graph().edges();
+    if (index < 0 || index >= static_cast<int>(edges.size())) return -1;
+    const auto& e = edges[static_cast<size_t>(index)];
+    if (out_from) *out_from = static_cast<int>(e.from);
+    if (out_to) *out_to = static_cast<int>(e.to);
+    if (out_slot) *out_slot = e.to_in;
+    return 0;
+}
+
+int ms_comp_add_node(int op, float x, float y) {
+    if (op < 0 || op > 10) return 0;
+    ms::GraphNode n;
+    n.op = static_cast<ms::NodeOp>(op);
+    n.x = x;
+    n.y = y;
+    switch (n.op) {
+        case ms::NodeOp::Constant: n.solid_r = 0.12f; n.solid_g = 0.12f; n.solid_b = 0.14f; break;
+        case ms::NodeOp::Grade: n.params = {{"exposure", 0.0}, {"contrast", 1.0}}; break;
+        case ms::NodeOp::Blur: n.params = {{"radius", 6.0}}; break;
+        case ms::NodeOp::Saturation: n.params = {{"amount", 1.4}}; break;
+        case ms::NodeOp::Merge: n.params = {{"mix", 0.5}}; break;
+        default: break;
+    }
+    const uint64_t id = eng().comp_graph().add(n);
+    eng().invalidate_frames();
+    return static_cast<int>(id);
+}
+
+int ms_comp_remove_node(int id) {
+    const bool ok = eng().comp_graph().remove(static_cast<uint64_t>(id));
+    if (ok) eng().invalidate_frames();
+    return ok ? 0 : -1;
+}
+
+int ms_comp_connect(int from, int to, int slot) {
+    const bool ok = eng().comp_graph().connect(static_cast<uint64_t>(from),
+                                               static_cast<uint64_t>(to), 0, slot);
+    if (ok) eng().invalidate_frames();
+    return ok ? 0 : -1;
+}
+
+int ms_comp_disconnect(int from, int to, int slot) {
+    const bool ok = eng().comp_graph().disconnect(static_cast<uint64_t>(from),
+                                                  static_cast<uint64_t>(to), slot);
+    if (ok) eng().invalidate_frames();
+    return ok ? 0 : -1;
+}
+
+int ms_comp_set_param(int id, const char* name, double value) {
+    const bool ok = name && eng().comp_graph().set_parameter(static_cast<uint64_t>(id), name, value);
+    if (ok) eng().invalidate_frames();
+    return ok ? 0 : -1;
+}
+
+int ms_comp_set_enabled(int id, int enabled) {
+    ms::GraphNode* n = eng().comp_graph().find(static_cast<uint64_t>(id));
+    if (!n) return -1;
+    n->enabled = enabled != 0;
+    eng().invalidate_frames();
+    return 0;
+}
+
+int ms_comp_set_position(int id, float x, float y) {
+    ms::GraphNode* n = eng().comp_graph().find(static_cast<uint64_t>(id));
+    if (!n) return -1;
+    n->x = x;
+    n->y = y;
+    return 0; // layout only: no pixel change, so the frame cache stays warm
+}
+
+int ms_comp_set_sink(int id) {
+    // The cooked node is the first Viewer/Write in the network, so designating a
+    // sink means promoting the chosen node and demoting the previous one.
+    auto& graph = eng().comp_graph();
+    ms::GraphNode* target = graph.find(static_cast<uint64_t>(id));
+    if (!target) return -1;
+    // nodes() is const-only, so ids are collected first and each node is reached
+    // through the mutable find() overload.
+    std::vector<uint64_t> ids;
+    for (const auto& n : graph.nodes()) ids.push_back(n.id);
+    for (uint64_t nid : ids) {
+        ms::GraphNode* n = graph.find(nid);
+        if (n && nid != static_cast<uint64_t>(id) && n->op == ms::NodeOp::Viewer)
+            n->op = ms::NodeOp::Write;
+    }
+    target->op = ms::NodeOp::Viewer;
+    eng().invalidate_frames();
+    return 0;
+}
+
+int ms_comp_sink(void) { return static_cast<int>(eng().comp_graph().sink_id()); }
+
+int ms_comp_set_active(int active) {
+    eng().set_comp_active(active != 0);
+    return 0;
+}
+
+int ms_comp_active(void) { return eng().comp_active() ? 1 : 0; }
+
+
 int ms_engine_init(int width, int height) { return ms::Engine::instance().init(width, height) ? 0 : -1; }
 int ms_project_new(const char* name, int width, int height, double fps) {
     return ms::Engine::instance().new_project(name ? name : "Untitled", width, height,

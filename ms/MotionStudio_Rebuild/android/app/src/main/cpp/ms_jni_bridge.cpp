@@ -239,6 +239,116 @@ Java_com_motionstudio_app_native_NativeEngine_nativeTransitionRemove(JNIEnv*, jo
     return ms_transition_remove(track, id) == 0 ? JNI_TRUE : JNI_FALSE;
 }
 
+
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompNodeCount(JNIEnv*, jobject) {
+    return ms_comp_node_count();
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompNodeAt(JNIEnv* env, jobject, jint index,
+                                                               jintArray out) {
+    if (!out || env->GetArrayLength(out) < 5) return JNI_FALSE;
+    jint id = 0, op = 0, enabled = 0;
+    jfloat x = 0, y = 0;
+    if (ms_comp_node_at(index, &id, &op, &enabled, &x, &y) != 0) return JNI_FALSE;
+    const jint values[5] = {id, op, enabled, static_cast<jint>(x), static_cast<jint>(y)};
+    env->SetIntArrayRegion(out, 0, 5, values);
+    return JNI_TRUE;
+}
+
+JNIEXPORT jfloatArray JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompNodePos(JNIEnv* env, jobject, jint index) {
+    jint id = 0, op = 0, enabled = 0;
+    jfloat x = 0, y = 0;
+    if (ms_comp_node_at(index, &id, &op, &enabled, &x, &y) != 0) return nullptr;
+    jfloat values[2] = {x, y};
+    jfloatArray arr = env->NewFloatArray(2);
+    if (arr) env->SetFloatArrayRegion(arr, 0, 2, values);
+    return arr;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompEdgeCount(JNIEnv*, jobject) {
+    return ms_comp_edge_count();
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompEdgeAt(JNIEnv* env, jobject, jint index,
+                                                               jintArray out) {
+    if (!out || env->GetArrayLength(out) < 3) return JNI_FALSE;
+    jint from = 0, to = 0, slot = 0;
+    if (ms_comp_edge_at(index, &from, &to, &slot) != 0) return JNI_FALSE;
+    const jint values[3] = {from, to, slot};
+    env->SetIntArrayRegion(out, 0, 3, values);
+    return JNI_TRUE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompAddNode(JNIEnv*, jobject, jint op,
+                                                                jfloat x, jfloat y) {
+    return ms_comp_add_node(op, x, y);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompRemoveNode(JNIEnv*, jobject, jint id) {
+    return ms_comp_remove_node(id) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompConnect(JNIEnv*, jobject, jint from,
+                                                                jint to, jint slot) {
+    return ms_comp_connect(from, to, slot) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompDisconnect(JNIEnv*, jobject, jint from,
+                                                                   jint to, jint slot) {
+    return ms_comp_disconnect(from, to, slot) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompSetParam(JNIEnv* env, jobject, jint id,
+                                                                 jstring name, jdouble value) {
+    const char* utf = name ? env->GetStringUTFChars(name, nullptr) : nullptr;
+    const bool ok = utf && ms_comp_set_param(id, utf, value) == 0;
+    if (utf) env->ReleaseStringUTFChars(name, utf);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompSetEnabled(JNIEnv*, jobject, jint id,
+                                                                   jboolean enabled) {
+    return ms_comp_set_enabled(id, enabled ? 1 : 0) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompSetPosition(JNIEnv*, jobject, jint id,
+                                                                    jfloat x, jfloat y) {
+    return ms_comp_set_position(id, x, y) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompSetSink(JNIEnv*, jobject, jint id) {
+    return ms_comp_set_sink(id) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompSink(JNIEnv*, jobject) {
+    return ms_comp_sink();
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompSetActive(JNIEnv*, jobject,
+                                                                  jboolean active) {
+    return ms_comp_set_active(active ? 1 : 0) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompActive(JNIEnv*, jobject) {
+    return ms_comp_active() ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeDecoderBackend(JNIEnv* env, jobject) {
     const char* name = ms_decoder_backend();

@@ -94,6 +94,35 @@ M0–M5 desktop spikes: PASSED
 - Checks at startup and every five minutes.
 - Project files, recovery snapshots, autosaves, source media and exports remain outside the cleanup scope.
 
+## 2026-11-16 — Comp network: a real node graph, wired end to end
+Built after reading how production compositors actually evaluate a graph rather than guessing:
+Foundry's NDK guide (an Op's hash comes from its inputs' hashes plus its knob values at that frame)
+and Houdini's Copernicus cooking notes (pull each node's inputs, cache intermediate results).
+
+- **`NodeGraph` is now reachable from the app.** The engine already had the class and cycle-safe
+  validation but nothing called it. `Engine` owns a graph, `set_comp_active()` switches the viewport
+  from the timeline player to a cook of the graph's Viewer node, and master grade plus LUT still apply
+  afterwards as display finishing.
+- **Persistence in the project document.** `project_to_json()` appends `"comp":"<records>"` and
+  `load_project_json()` restores it. The record format (`MSCOMP1~N|…~E|…`) is deliberate: fields are
+  sanitised of the separators, so parsing is exact and a quote in a node name cannot corrupt it.
+- **C++ bridge + JNI + Kotlin**: 16 new entry points (node count/at, edge count/at, add, remove,
+  connect, disconnect, get/set param, enable, position, sink, active).
+- **NODES tab is a real DAG editor.** Nodes render at their saved positions, wires are drawn between
+  them, dragging moves a node, tapping selects, tapping a node's IN port connects the selected node
+  into that slot, and cycles are rejected by the evaluator instead of being applied. Selecting a node
+  exposes its parameters (blur radius, grade exposure/contrast, saturation amount, merge mix), Bypass,
+  "View this" (promotes the node to the sink) and Delete.
+- **Tests**: `ms_comp_graph_test` (17 checks) covers cook, parameter change affecting pixels,
+  validation, self-link and cycle rejection, the save format, position/param survival and that a
+  restored comp renders byte-identically. `ms_engine_load_test` now also proves a comp survives a
+  full project save/load cycle. `ctest` **17/17**, `:app:testDebugUnitTest` 6/6, APK green,
+  76 Kotlin externals vs 76 JNI symbols.
+- Known limits, stated plainly: the `Read` node still renders a slate (media decode is not wired to
+  the graph), Constant colour channels are not bridged to sliders, the node cache is per-cook rather
+  than persisted across frames, and the comp-active flag itself is not saved. The UI has not been
+  viewed on a device.
+
 ## 2026-11-15 — Workspace UI: compositor shell
 - **The workspace strip was fake.** `EditorScreen` kept a `workspace` state that nothing read, so Animation / Compositing / Nodes / 3D were decoration. Replaced with five tabs that each swap the lower panel: TIMELINE, NODES, KEYS, GRADE, CLIP.
 - **NODES** — new `NodeGraphPane` renders the clip's actual render chain as a left-to-right graph: SRC → each effect in stack order → XFM → GRD → LUT → OUT, with bypass state on every node. Selecting a node shows its real parameters, so effects can be bypassed, deleted and dialled from the graph.

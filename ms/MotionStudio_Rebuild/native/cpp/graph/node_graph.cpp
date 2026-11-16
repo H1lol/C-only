@@ -228,4 +228,138 @@ Error NodeGraph::evaluate(uint64_t sink_id, double time_sec, int w, int h, Image
   return eval_node(sink_id, time_sec, w, h, cache, visiting, out);
 }
 
+
+const char* graph_op_name(NodeOp op) {
+  switch (op) {
+    case NodeOp::Read: return "read";
+    case NodeOp::Write: return "write";
+    case NodeOp::Merge: return "merge";
+    case NodeOp::Blur: return "blur";
+    case NodeOp::Grade: return "grade";
+    case NodeOp::Transform: return "transform";
+    case NodeOp::Constant: return "constant";
+    case NodeOp::Viewer: return "viewer";
+    case NodeOp::Saturation: return "saturation";
+    case NodeOp::Invert: return "invert";
+    case NodeOp::CompositeOver: return "over";
+  }
+  return "constant";
+}
+
+bool graph_op_from_name(const std::string& name, NodeOp& out) {
+  static const NodeOp all[] = {NodeOp::Read, NodeOp::Write, NodeOp::Merge, NodeOp::Blur,
+                               NodeOp::Grade, NodeOp::Transform, NodeOp::Constant,
+                               NodeOp::Viewer, NodeOp::Saturation, NodeOp::Invert,
+                               NodeOp::CompositeOver};
+  for (NodeOp op : all) {
+    if (name == graph_op_name(op)) { out = op; return true; }
+  }
+  return false;
+}
+
+uint64_t NodeGraph::sink_id() const {
+  for (const auto& n : nodes_) {
+    if (n.op == NodeOp::Viewer || n.op == NodeOp::Write) return n.id;
+  }
+  return 0;
+}
+
+std::string NodeGraph::serialize() const {
+  std::string s = "MSCOMP1";
+  auto clean = [](const std::string& in) {
+    std::string o;
+    for (char c : in) o.push_back(c == '~' || c == '|' || c == ':' || c == ',' ? '_' : c);
+    return o;
+  };
+  for (const auto& n : nodes_) {
+    s += "~N|";
+    s += std::to_string(n.id);
+    s += "|";
+    s += graph_op_name(n.op);
+    s += "|";
+    s += n.enabled ? "1" : "0";
+    s += "|" + std::to_string(n.x) + "|" + std::to_string(n.y);
+    s += "|" + std::to_string(n.solid_r) + "|" + std::to_string(n.solid_g);
+    s += "|" + std::to_string(n.solid_b) + "|" + std::to_string(n.solid_a);
+    s += "|" + clean(n.media_path);
+    s += "|" + clean(n.name);
+    s += "|";
+    bool first = true;
+    for (const auto& p : n.params) {
+      if (!first) s += ",";
+      first = false;
+      s += clean(p.name) + ":" + std::to_string(p.value);
+    }
+  }
+  for (const auto& e : edges_) {
+    s += "~E|" + std::to_string(e.from) + "|" + std::to_string(e.to) + "|" +
+         std::to_string(e.from_out) + "|" + std::to_string(e.to_in);
+  }
+  return s;
+}
+
+bool NodeGraph::deserialize(const std::string& text) {
+  if (text.rfind("MSCOMP1", 0) != 0) return false;
+  std::vector<GraphNode> nodes;
+  std::vector<GraphEdge> edges;
+  uint64_t max_id = 0;
+
+  auto split = [](const std::string& s, char sep) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : s) {
+      if (c == sep) { out.push_back(cur); cur.clear(); }
+      else cur.push_back(c);
+    }
+    out.push_back(cur);
+    return out;
+  };
+
+  // Fields are sanitised of '~' and '|' when written, so a plain split is exact
+  // and cannot lose a record the way an offset walk can.
+  const std::vector<std::string> records = split(text, '~');
+  for (size_t i = 1; i < records.size(); ++i) {
+    const std::string& record = records[i];
+    if (record.empty()) continue;
+    const std::vector<std::string> f = split(record, '|');
+    if (f.empty()) continue;
+    if (f[0] == "N" && f.size() >= 12) {
+      GraphNode n;
+      n.id = std::strtoull(f[1].c_str(), nullptr, 10);
+      graph_op_from_name(f[2], n.op);
+      n.enabled = f[3] == "1";
+      n.x = std::strtof(f[4].c_str(), nullptr);
+      n.y = std::strtof(f[5].c_str(), nullptr);
+      n.solid_r = std::strtof(f[6].c_str(), nullptr);
+      n.solid_g = std::strtof(f[7].c_str(), nullptr);
+      n.solid_b = std::strtof(f[8].c_str(), nullptr);
+      n.solid_a = std::strtof(f[9].c_str(), nullptr);
+      n.media_path = f[10];
+      n.name = f[11];
+      if (f.size() > 12 && !f[12].empty()) {
+        for (const auto& pair : split(f[12], ',')) {
+          const size_t colon = pair.find(':');
+          if (colon == std::string::npos) continue;
+          n.params.push_back({pair.substr(0, colon), std::strtod(pair.c_str() + colon + 1, nullptr)});
+        }
+      }
+      max_id = std::max(max_id, n.id);
+      nodes.push_back(std::move(n));
+    } else if (f[0] == "E" && f.size() >= 5) {
+      GraphEdge e;
+      e.from = std::strtoull(f[1].c_str(), nullptr, 10);
+      e.to = std::strtoull(f[2].c_str(), nullptr, 10);
+      e.from_out = std::atoi(f[3].c_str());
+      e.to_in = std::atoi(f[4].c_str());
+      edges.push_back(e);
+    }
+  }
+
+  if (nodes.empty()) return false;
+  nodes_ = std::move(nodes);
+  edges_ = std::move(edges);
+  next_id_ = max_id + 1;
+  return validate().ok();
+}
+
 } // namespace ms

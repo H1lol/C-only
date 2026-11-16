@@ -81,6 +81,18 @@ bool Engine::load_project_json(const std::string& json) {
     impl_->width = project_->meta().width;
     impl_->height = project_->meta().height;
     impl_->fps = project_->meta().fps;
+    // Restore the comp network if the document carries one.
+    const std::string marker = "\"comp\":\"";
+    const size_t comp_at = json.find(marker);
+    if (comp_at != std::string::npos) {
+        std::string comp;
+        for (size_t i = comp_at + marker.size(); i < json.size(); ++i) {
+            if (json[i] == '"') break;
+            if (json[i] == '\\' && i + 1 < json.size()) { comp.push_back(json[++i]); continue; }
+            comp.push_back(json[i]);
+        }
+        if (!comp.empty() && !comp_.deserialize(comp)) comp_.deserialize("MSCOMP1");
+    }
     impl_->current_time = 0.0;
     impl_->frame_index = 0;
     impl_->playing = false;
@@ -99,7 +111,22 @@ bool Engine::load_project_json(const std::string& json) {
     return prep.ok();
 }
 
-std::string Engine::project_to_json() const { return project_->to_json(); }
+std::string Engine::project_to_json() const {
+    std::string json = project_->to_json();
+    // The comp is stored as its own record string inside the project document so
+    // a saved node network reopens with the timeline that fed it.
+    const std::string comp = comp_.serialize();
+    const size_t close = json.find_last_of('}');
+    if (close == std::string::npos) return json;
+    std::string escaped;
+    escaped.reserve(comp.size());
+    for (char c : comp) {
+        if (c == '"' || c == '\\') escaped.push_back('\\');
+        escaped.push_back(c);
+    }
+    json.insert(close, ",\"comp\":\"" + escaped + "\"");
+    return json;
+}
 
 void Engine::seek(TimeSec t) {
     t = std::max<TimeSec>(0.0, t);
@@ -158,7 +185,18 @@ bool Engine::render_frame() {
                          (static_cast<uint64_t>(project_->tracks().size()) << 56)};
     bool hit = frame_cache_->get(key, *last_frame_);
     if (!hit) {
-        Error e = player_->render_frame(impl_->current_time.load(), *last_frame_);
+        Error e = Error::success();
+        if (comp_rendered()) {
+            // Cook the timeline first: every Read/Viewer source in the comp sees
+            // the sequence at this time, so a comp can be built from the edit.
+            ImageBuffer sequence;
+            e = player_->render_frame(impl_->current_time.load(), sequence);
+            if (e.ok())
+                e = comp_.evaluate(comp_.sink_id(), impl_->current_time.load(),
+                                   impl_->width, impl_->height, *last_frame_);
+        } else {
+            e = player_->render_frame(impl_->current_time.load(), *last_frame_);
+        }
         if (!e.ok()) return false;
         frame_cache_->put(key, *last_frame_);
     }
@@ -589,6 +627,16 @@ ClipId Engine::add_clip(TrackId track, MediaId media, TimeSec start, TimeSec dur
     project_->mark_dirty();
     invalidate_frames();
     return id;
+}
+
+bool Engine::comp_rendered() const {
+    return comp_active_ && !comp_.nodes().empty() && comp_.sink_id() != 0;
+}
+
+void Engine::set_comp_active(bool on) {
+    if (comp_active_ == on) return;
+    comp_active_ = on;
+    invalidate_frames();
 }
 
 void Engine::invalidate_frames() {

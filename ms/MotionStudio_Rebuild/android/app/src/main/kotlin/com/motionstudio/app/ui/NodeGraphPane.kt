@@ -1,16 +1,21 @@
 package com.motionstudio.app.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,307 +29,369 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.motionstudio.app.editor.CompOps
+import com.motionstudio.app.editor.CompNode
 import com.motionstudio.app.editor.EditorEngine
 import com.motionstudio.app.ui.theme.MsColors
 import com.motionstudio.app.ui.theme.MsFonts
 
-/**
- * The clip's render chain as a left-to-right graph: source, every effect in
- * stack order, then transform, grade, look and output. The chain is real — each
- * card is a stage the C++ renderer actually executes for this clip, in this
- * order. Tapping a card selects it and its parameters appear underneath.
- */
-private data class ChainNode(
-    val key: String,
-    val kind: String,
-    val title: String,
-    val detail: String,
-    val effectIndex: Int = -1,
-    val enabled: Boolean = true,
-)
+private val NodeWidth = 132.dp
+private val NodeHeight = 56.dp
+private val CanvasWidth = 1400.dp
+private val CanvasHeight = 760.dp
 
+/**
+ * Comp network editor.
+ *
+ * This is a real dependency graph, not a chain: nodes are `ms::NodeOp` values,
+ * wires are `GraphEdge`s, and the viewport cooks from the node marked Viewer
+ * whenever the comp is active. Dragging moves a node (layout only), tapping
+ * selects, and tapping a node's IN port connects the selected node into it. The
+ * evaluator rejects cycles, so a bad link simply reports and does not apply.
+ */
 @Composable
 fun NodeGraphPane(engine: EditorEngine, modifier: Modifier = Modifier) {
-    val clip = engine.doc.clipById(engine.selectedTrackId, engine.selectedClipId)
-    val effects = clip?.effects ?: emptyList()
+    val nodes = engine.compNodes
+    val edges = engine.compEdges
+    var selected by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+    val hScroll = rememberScrollState()
+    val vScroll = rememberScrollState()
 
-    val chain = remember(clip?.id, effects, engine.lookName, engine.gradeActive, clip?.isText) {
-        buildList {
-            add(
-                ChainNode(
-                    "src", "SRC",
-                    clip?.name ?: "no clip",
-                    clip?.let { "%.2fs".format(it.duration) } ?: "select a clip",
-                )
-            )
-            effects.forEachIndexed { index, e ->
-                add(
-                    ChainNode(
-                        "fx$index", "FX",
-                        effectLabel(e.id),
-                        if (e.params.isEmpty()) "defaults" else "${e.params.size} params",
-                        effectIndex = index,
-                        enabled = e.enabled,
-                    )
-                )
-            }
-            add(ChainNode("xform", "XFM", "Transform", "scale · pos · opacity"))
-            add(
-                ChainNode(
-                    "grade", "GRD", "Grade",
-                    if (engine.gradeActive) "active" else "bypassed",
-                    enabled = engine.gradeActive,
-                )
-            )
-            add(
-                ChainNode(
-                    "look", "LUT", "Look",
-                    engine.lookName ?: "none",
-                    enabled = engine.lookName != null,
-                )
-            )
-            add(ChainNode("out", "OUT", "Output", "${engine.doc.width}×${engine.doc.height}"))
-        }
-    }
-
-    var selectedKey by remember(chain.size) { mutableStateOf(chain.lastOrNull()?.key ?: "") }
-    val selected = chain.firstOrNull { it.key == selectedKey } ?: chain.lastOrNull()
+    val selectedNode = nodes.firstOrNull { it.id == selected }
 
     Column(modifier.background(MsColors.background)) {
-        Row(
-            Modifier.fillMaxWidth().height(28.dp).background(MsColors.surfaceHigh)
-                .padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "RENDER CHAIN",
-                color = MsColors.textMuted,
-                fontSize = 9.sp,
-                fontFamily = MsFonts.mono,
-                letterSpacing = 1.sp,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                "${effects.size} fx",
-                color = MsColors.textTertiary,
-                fontSize = 9.sp,
-                fontFamily = MsFonts.mono,
-            )
-        }
+        PanelHeader(
+            "COMP NETWORK",
+            "${nodes.size} nodes · ${edges.size} wires · " +
+                if (engine.compActive) "COOKING" else "TIMELINE VIEW",
+        )
 
+        // ---- toolbar --------------------------------------------------------
         Row(
+            Modifier.fillMaxWidth().height(34.dp).background(MsColors.surface)
+                .horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Box(
+                Modifier
+                    .border(
+                        1.dp,
+                        if (engine.compActive) MsColors.accent else MsColors.border,
+                        RoundedCornerShape(2.dp),
+                    )
+                    .clickable { engine.activateComp(!engine.compActive) }
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    if (engine.compActive) "COMP ON" else "COMP OFF",
+                    color = if (engine.compActive) MsColors.accent else MsColors.textTertiary,
+                    fontSize = 9.sp,
+                    fontFamily = MsFonts.mono,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            listOf(
+                CompOps.CONSTANT to "CONST",
+                CompOps.BLUR to "BLUR",
+                CompOps.GRADE to "GRADE",
+                CompOps.SATURATION to "SAT",
+                CompOps.INVERT to "INVERT",
+                CompOps.MERGE to "MERGE",
+                CompOps.OVER to "OVER",
+                CompOps.VIEWER to "VIEWER",
+            ).forEach { (op, label) ->
+                Box(
+                    Modifier
+                        .border(1.dp, MsColors.border, RoundedCornerShape(2.dp))
+                        .clickable {
+                            // New nodes land in a free column so they never stack.
+                            val x = 40f + (nodes.size % 4) * 170f
+                            val y = 60f + (nodes.size / 4) * 110f
+                            selected = engine.addCompNode(op, x, y)
+                        }
+                        .padding(horizontal = 7.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        label,
+                        color = MsColors.textSecondary,
+                        fontSize = 9.sp,
+                        fontFamily = MsFonts.mono,
+                    )
+                }
+            }
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(MsColors.border))
+
+        // ---- graph ----------------------------------------------------------
+        Box(
             Modifier
                 .fillMaxWidth()
+                .weight(1f)
                 .background(MsColors.viewerBg)
-                .horizontalScroll(rememberScrollState())
-                .padding(vertical = 12.dp, horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .horizontalScroll(hScroll)
+                .verticalScroll(vScroll)
         ) {
-            chain.forEachIndexed { index, node ->
-                NodeCard(
-                    node = node,
-                    selected = node.key == selected?.key,
-                    onClick = { selectedKey = node.key },
-                )
-                if (index != chain.lastIndex) {
-                    // Wire to the next node. Drawn as a rule so the chain reads
-                    // as a flow even at phone widths.
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.width(14.dp).height(1.dp).background(MsColors.wire))
-                        Box(
-                            Modifier.size(4.dp).background(
-                                if (node.enabled) MsColors.wire else MsColors.border,
-                                CircleShape,
-                            )
-                        )
-                        Box(Modifier.width(14.dp).height(1.dp).background(MsColors.wire))
+            Box(Modifier.size(CanvasWidth, CanvasHeight)) {
+                // Wires first so nodes draw on top of them.
+                Canvas(Modifier.fillMaxSize()) {
+                    val byId = nodes.associateBy { it.id }
+                    edges.forEach { edge ->
+                        val from = byId[edge.from] ?: return@forEach
+                        val to = byId[edge.to] ?: return@forEach
+                        val startX = with(density) { (from.x.dp + NodeWidth).toPx() }
+                        val startY = with(density) { (from.y.dp + NodeHeight / 2).toPx() }
+                        val endX = with(density) { to.x.dp.toPx() }
+                        val endY = with(density) { (to.y.dp + NodeHeight / 2).toPx() }
+                        val midX = (startX + endX) / 2f
+                        // Cubic-ish wire: two straight hints read better than a
+                        // bezier at this size and cost nothing to hit-test.
+                        drawLine(MsColors.wire, Offset(startX, startY), Offset(midX, startY), 1.5f)
+                        drawLine(MsColors.wire, Offset(midX, startY), Offset(midX, endY), 1.5f)
+                        drawLine(MsColors.wire, Offset(midX, endY), Offset(endX, endY), 1.5f)
                     }
+                }
+
+                nodes.forEach { node ->
+                    CompNodeCard(
+                        node = node,
+                        isSelected = node.id == selected,
+                        isSink = node.id == engine.compSink,
+                        onSelect = { selected = node.id },
+                        onMove = { dx, dy ->
+                            val step = with(density) { 1.dp.toPx() }
+                            engine.moveCompNode(node.id, node.x + dx / step, node.y + dy / step)
+                        },
+                        onConnect = { slot ->
+                            if (selected != 0 && selected != node.id) {
+                                engine.connectComp(selected, node.id, slot)
+                            }
+                        },
+                    )
                 }
             }
         }
 
+        // ---- inspector ------------------------------------------------------
         Column(
             Modifier
                 .fillMaxWidth()
-                .weight(1f)
+                .height(150.dp)
                 .background(MsColors.surface)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
-            val node = selected
-            if (node == null) {
-                Text("No clip selected", color = MsColors.textTertiary, fontSize = 12.sp)
+            if (selectedNode == null) {
+                Text(
+                    "No node selected. Add one above, then tap a node's IN port to wire the selected node into it.",
+                    color = MsColors.textTertiary,
+                    fontSize = 11.sp,
+                )
                 return@Column
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    node.kind,
-                    color = MsColors.accent,
-                    fontSize = 10.sp,
+                    "#${selectedNode.id}  ${CompOps.name(selectedNode.op).uppercase()}",
+                    color = MsColors.textPrimary,
+                    fontSize = 12.sp,
                     fontFamily = MsFonts.mono,
                     fontWeight = FontWeight.Bold,
                 )
-                Spacer(Modifier.width(8.dp))
-                Text(node.title, color = MsColors.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                Spacer(Modifier.weight(1f))
+                Spacer(Modifier.width(10.dp))
                 Text(
-                    if (node.enabled) "ACTIVE" else "BYPASS",
-                    color = if (node.enabled) MsColors.success else MsColors.textMuted,
+                    if (selectedNode.enabled) "ACTIVE" else "BYPASSED",
+                    color = if (selectedNode.enabled) MsColors.success else MsColors.textMuted,
                     fontSize = 9.sp,
                     fontFamily = MsFonts.mono,
                 )
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { engine.setCompEnabled(selectedNode.id, !selectedNode.enabled) }) {
+                    Text(
+                        if (selectedNode.enabled) "Bypass" else "Enable",
+                        color = MsColors.accentSoft,
+                        fontSize = 11.sp,
+                    )
+                }
+                TextButton(
+                    onClick = { engine.viewCompNode(selectedNode.id) },
+                    enabled = selectedNode.id != engine.compSink,
+                ) {
+                    Text(
+                        if (selectedNode.id == engine.compSink) "Viewing" else "View this",
+                        color = if (selectedNode.id == engine.compSink) MsColors.textMuted
+                        else MsColors.info,
+                        fontSize = 11.sp,
+                    )
+                }
+                TextButton(onClick = {
+                    engine.removeCompNode(selectedNode.id)
+                    selected = 0
+                }) {
+                    Text("Delete", color = MsColors.error, fontSize = 11.sp)
+                }
             }
-            Text(node.detail, color = MsColors.textMuted, fontSize = 11.sp)
-            Spacer(Modifier.height(8.dp))
 
-            when {
-                node.effectIndex >= 0 && clip != null -> {
-                    val effect = clip.effects.getOrNull(node.effectIndex)
-                    val def = MsEffects.firstOrNull { it.id == effect?.id }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { engine.setEffectEnabled(node.effectIndex, !node.enabled) }) {
-                            Text(
-                                if (node.enabled) "Bypass" else "Enable",
-                                color = MsColors.accentSoft,
-                                fontSize = 11.sp,
-                            )
-                        }
-                        TextButton(onClick = { engine.removeEffect(node.effectIndex) }) {
-                            Text("Delete node", color = MsColors.error, fontSize = 11.sp)
-                        }
-                    }
-                    if (def == null) {
-                        Text(
-                            "No parameter map for “${effect?.id}” in the UI",
-                            color = MsColors.textMuted,
-                            fontSize = 11.sp,
-                        )
-                    } else {
-                        def.params.forEach { param ->
-                            val value = (effect?.params?.get(param.name)?.toFloat() ?: param.default)
-                                .coerceIn(param.min, param.max)
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    param.label.uppercase(),
-                                    color = MsColors.textTertiary,
-                                    fontSize = 9.sp,
-                                    fontFamily = MsFonts.mono,
-                                    modifier = Modifier.width(74.dp),
-                                )
-                                Slider(
-                                    value = value,
-                                    onValueChange = {
-                                        engine.setEffectParam(node.effectIndex, param.name, it)
-                                    },
-                                    valueRange = param.min..param.max,
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = MsColors.accent,
-                                        activeTrackColor = MsColors.accent,
-                                        inactiveTrackColor = MsColors.border,
-                                    ),
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Text(
-                                    "%.2f".format(value),
-                                    color = MsColors.textSecondary,
-                                    fontSize = 10.sp,
-                                    fontFamily = MsFonts.mono,
-                                    modifier = Modifier.width(44.dp),
-                                )
-                            }
-                        }
-                        Text(
-                            def.note,
-                            color = MsColors.textMuted,
-                            fontSize = 10.sp,
-                        )
-                    }
+            when (selectedNode.op) {
+                CompOps.BLUR ->
+                    CompParam(engine, selectedNode, "radius", "Radius", 0.0, 64.0, 4.0)
+                CompOps.GRADE -> {
+                    CompParam(engine, selectedNode, "exposure", "Exposure", -2.0, 2.0, 0.0)
+                    CompParam(engine, selectedNode, "contrast", "Contrast", 0.2, 2.5, 1.0)
                 }
-
-                node.kind == "GRD" -> {
-                    Text(
-                        "Seven-parameter grade is applied after the clip's effects. " +
-                            "Open the GRADE tab for the full set and the histogram.",
-                        color = MsColors.textSecondary,
-                        fontSize = 11.sp,
-                    )
-                }
-
-                node.kind == "XFM" -> {
-                    Text(
-                        "Scale, position and opacity can be animated from the KEYS tab.",
-                        color = MsColors.textSecondary,
-                        fontSize = 11.sp,
-                    )
-                }
-
-                else -> {
-                    Text(
-                        "Terminal stage — nothing to configure here.",
-                        color = MsColors.textMuted,
-                        fontSize = 11.sp,
-                    )
-                }
+                CompOps.SATURATION ->
+                    CompParam(engine, selectedNode, "amount", "Amount", 0.0, 3.0, 1.0)
+                CompOps.MERGE ->
+                    CompParam(engine, selectedNode, "mix", "Mix", 0.0, 1.0, 0.5)
+                CompOps.CONSTANT -> Text(
+                    "Constant renders a flat colour from the engine's defaults. " +
+                        "Per-channel sliders are not bridged yet.",
+                    color = MsColors.textMuted,
+                    fontSize = 10.sp,
+                )
+                else -> Text(
+                    "This node has no editable parameters.",
+                    color = MsColors.textMuted,
+                    fontSize = 10.sp,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun NodeCard(node: ChainNode, selected: Boolean, onClick: () -> Unit) {
-    Column(
-        Modifier
-            .width(104.dp)
-            .background(MsColors.nodeBg, RoundedCornerShape(3.dp))
-            .border(
-                1.dp,
-                if (selected) MsColors.accent else MsColors.nodeBorder,
-                RoundedCornerShape(3.dp),
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                node.kind,
-                color = if (selected) MsColors.accent else MsColors.textTertiary,
-                fontSize = 9.sp,
-                fontFamily = MsFonts.mono,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.weight(1f))
-            Box(
-                Modifier.size(5.dp).background(
-                    if (node.enabled) MsColors.success else MsColors.textMuted,
-                    CircleShape,
-                )
-            )
-        }
-        Spacer(Modifier.height(3.dp))
+private fun CompParam(
+    engine: EditorEngine,
+    node: CompNode,
+    name: String,
+    label: String,
+    min: Double,
+    max: Double,
+    fallback: Double,
+) {
+    val value = engine.compParam(node.id, name, fallback)
+    Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            node.title,
-            color = MsColors.textPrimary,
-            fontSize = 11.sp,
-            maxLines = 1,
-        )
-        Text(
-            node.detail,
-            color = MsColors.textMuted,
+            label.uppercase(),
+            color = MsColors.textTertiary,
             fontSize = 9.sp,
             fontFamily = MsFonts.mono,
-            maxLines = 1,
+            modifier = Modifier.width(76.dp),
+        )
+        Slider(
+            value = value.toFloat().coerceIn(min.toFloat(), max.toFloat()),
+            onValueChange = { engine.setCompParam(node.id, name, it.toDouble()) },
+            valueRange = min.toFloat()..max.toFloat(),
+            colors = SliderDefaults.colors(
+                thumbColor = MsColors.accent,
+                activeTrackColor = MsColors.accent,
+                inactiveTrackColor = MsColors.border,
+            ),
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "%.2f".format(value),
+            color = MsColors.textSecondary,
+            fontSize = 10.sp,
+            fontFamily = MsFonts.mono,
+            modifier = Modifier.width(44.dp),
         )
     }
 }
 
-/** Human label for an effect id, falling back to the raw id. */
-private fun effectLabel(id: String): String =
-    MsEffects.firstOrNull { it.id == id }?.name ?: id.replace('_', ' ')
+@Composable
+private fun CompNodeCard(
+    node: CompNode,
+    isSelected: Boolean,
+    isSink: Boolean,
+    onSelect: () -> Unit,
+    onMove: (Float, Float) -> Unit,
+    onConnect: (Int) -> Unit,
+) {
+    val capacity = CompOps.capacity(node.op)
+    Box(
+        Modifier
+            .offset(node.x.dp, node.y.dp)
+            .size(NodeWidth, NodeHeight)
+            .background(MsColors.nodeBg, RoundedCornerShape(3.dp))
+            .border(
+                1.dp,
+                when {
+                    isSelected -> MsColors.accent
+                    isSink -> MsColors.info
+                    else -> MsColors.nodeBorder
+                },
+                RoundedCornerShape(3.dp),
+            )
+            // Tap and drag must be separate pointerInput modifiers: a single
+            // detector cannot report both gestures.
+            .pointerInput(node.id) {
+                detectTapGestures { onSelect() }
+            }
+            .pointerInput(node.id, node.x, node.y) {
+                detectDragGestures { change, drag ->
+                    change.consume()
+                    onMove(drag.x, drag.y)
+                }
+            }
+    ) {
+        Column(Modifier.fillMaxSize().padding(start = 18.dp, end = 8.dp, top = 6.dp, bottom = 6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    CompOps.name(node.op).uppercase(),
+                    color = if (isSelected) MsColors.accent else MsColors.textSecondary,
+                    fontSize = 10.sp,
+                    fontFamily = MsFonts.mono,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.weight(1f))
+                Box(
+                    Modifier.size(5.dp).background(
+                        if (node.enabled) MsColors.success else MsColors.textMuted,
+                        CircleShape,
+                    )
+                )
+            }
+            Text(
+                "#${node.id}" + if (isSink) "  VIEW" else "",
+                color = if (isSink) MsColors.info else MsColors.textMuted,
+                fontSize = 9.sp,
+                fontFamily = MsFonts.mono,
+            )
+        }
+
+        // IN ports: tapping one wires the currently selected node into this slot.
+        Column(
+            Modifier.align(Alignment.CenterStart).padding(start = 2.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            repeat(capacity) { slot ->
+                Box(
+                    Modifier
+                        .size(14.dp)
+                        .background(MsColors.border, RoundedCornerShape(2.dp))
+                        .clickable { onConnect(slot) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "${slot + 1}",
+                        color = MsColors.textSecondary,
+                        fontSize = 7.sp,
+                        fontFamily = MsFonts.mono,
+                    )
+                }
+            }
+        }
+    }
+}

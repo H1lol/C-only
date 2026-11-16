@@ -6,6 +6,7 @@
 #include "ms_audio_playback.hpp"
 #include "ms_image.hpp"
 #include "ms_lut.hpp"
+#include "ms_node_graph.hpp"
 #include "ms_gpu.hpp"
 #include "ms_performance.hpp"
 #include "ms_autosave.hpp"
@@ -115,6 +116,17 @@ public:
                         float saturation, float temperature, float lift, float gamma,
                         float gain);
     bool clear_clip_grade(TrackId track, ClipId clip);
+
+    // ---- Comp network ------------------------------------------------------
+    // When active, the viewport is cooked from the comp graph instead of the
+    // timeline player. The graph's Viewer/Write node is the sink. Master grade
+    // and the LUT still apply afterwards, as display finishing.
+    NodeGraph& comp_graph() { return comp_; }
+    const NodeGraph& comp_graph() const { return comp_; }
+    bool comp_active() const { return comp_active_; }
+    void set_comp_active(bool on);
+    /** True when the comp is active and has a sink to cook. */
+    bool comp_rendered() const;
     /** Reads the selected clip's grade; false when it has none. */
     bool clip_grade(TrackId track, ClipId clip, float* out7) const;
 
@@ -163,6 +175,8 @@ private:
     std::unique_ptr<FrameCache> frame_cache_;
     std::unique_ptr<Lut3D> look_;
     float look_strength_ = 1.f;
+    NodeGraph comp_;
+    bool comp_active_ = false;
     float grade_[7] = {0.f, 1.f, 1.f, 0.f, 0.f, 1.f, 1.f};
     bool grade_active_ = false;
     PerformanceMonitor perf_;
