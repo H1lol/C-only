@@ -42,6 +42,17 @@ struct GraphEdge {
 
 class NodeGraph {
 public:
+  /**
+   * Supplies the image for a Read node. The engine installs one backed by the
+   * project's decoders; a graph with no provider (and every unit test that does
+   * not install one) renders the Read slate instead, so a missing decoder can
+   * never leave uninitialised pixels on screen.
+   */
+  using ReadProvider = std::function<Error(const GraphNode& node, double time_sec,
+                                           int w, int h, ImageBuffer& out)>;
+  void set_read_provider(ReadProvider provider) { read_provider_ = std::move(provider); }
+  bool has_read_provider() const { return static_cast<bool>(read_provider_); }
+
   uint64_t add(GraphNode n);
   bool remove(uint64_t id);
   bool connect(uint64_t from, uint64_t to, int from_out = 0, int to_in = 0);
@@ -68,6 +79,7 @@ public:
   bool deserialize(const std::string& text);
 
 private:
+  ReadProvider read_provider_;
   std::vector<GraphNode> nodes_;
   std::vector<GraphEdge> edges_;
   uint64_t next_id_ = 1;

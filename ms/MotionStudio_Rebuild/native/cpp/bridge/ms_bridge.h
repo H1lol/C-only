@@ -114,6 +114,10 @@ int ms_comp_remove_node(int id);
 int ms_comp_connect(int from, int to, int slot);
 int ms_comp_disconnect(int from, int to, int slot);
 int ms_comp_set_param(int id, const char* name, double value);
+int ms_comp_get_param(int id, const char* name, double* out);
+/** Empty path makes the Read node sample the edited timeline instead of a file. */
+int ms_comp_set_media(int id, const char* path);
+int ms_comp_get_media(int id, char* buf, int size);
 int ms_comp_set_enabled(int id, int enabled);
 int ms_comp_set_position(int id, float x, float y);
 int ms_comp_set_sink(int id);

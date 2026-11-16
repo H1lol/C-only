@@ -1,9 +1,11 @@
 // Comp network: cooking, cycle rejection, validation and the save format.
 #include "../include/ms_node_graph.hpp"
+#include "../include/ms_cpu_effects.hpp"
 
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <cmath>
 
 using namespace ms;
 
@@ -151,6 +153,43 @@ int main() {
     NodeGraph junk;
     check(!junk.deserialize("not a comp"), "deserialize rejects foreign text");
     check(!junk.deserialize("MSCOMP1~E|1|2|0|0"), "deserialize rejects an edge-only document");
+  }
+
+  // ---- Read nodes resolve through the engine's provider -------------------
+  {
+    ms::NodeGraph g;
+    ms::GraphNode read; read.op = ms::NodeOp::Read; read.media_path = "/media/take_04.mp4";
+    read.params.push_back({"offset", 2.5});
+    const uint64_t r = g.add(read);
+    ms::GraphNode view; view.op = ms::NodeOp::Viewer;
+    const uint64_t v = g.add(view);
+    check(g.connect(r, v), "read connects to viewer");
+
+    std::string seen_path;
+    double seen_time = -1.0, seen_offset = -1.0;
+    g.set_read_provider([&](const ms::GraphNode& n, double t, int w, int h, ms::ImageBuffer& out) {
+      seen_path = n.media_path;
+      seen_time = t;
+      for (const auto& p : n.params) if (p.name == "offset") seen_offset = p.value;
+      return ms::cpu_solid(out, w, h, 0.2f, 0.8f, 0.3f, 1.f);
+    });
+    ms::ImageBuffer out;
+    check(g.evaluate(v, 1.25, 8, 8, out).ok(), "read cooks with a provider");
+    check(seen_path == "/media/take_04.mp4", "provider receives the media path");
+    check(std::abs(seen_time - 1.25) < 1e-9, "provider receives the cook time");
+    check(std::abs(seen_offset - 2.5) < 1e-9, "provider receives the node offset");
+    const uint8_t* px = out.valid() ? out.data() : nullptr;
+    check(px && px[0] > 30 && px[0] < 90 && px[1] > 180, "read output is the decoded frame, not the slate");
+
+    // With the provider gone the node must fall back to its explicit slate.
+    ms::NodeGraph bare;
+    const uint64_t r2 = bare.add(read);
+    const uint64_t v2 = bare.add(view);
+    bare.connect(r2, v2);
+    ms::ImageBuffer slate;
+    check(bare.evaluate(v2, 0.0, 8, 8, slate).ok(), "read cooks without a provider");
+    const uint8_t* sp = slate.valid() ? slate.data() : nullptr;
+    check(sp && sp[0] < 30 && sp[1] < 30, "missing provider renders the slate, not garbage");
   }
 
   std::printf("\n%s (%d failures)\n", failures == 0 ? "PASS" : "FAIL", failures);

@@ -265,6 +265,15 @@ class EditorEngine(
     fun compParam(id: Int, name: String, fallback: Double): Double =
         NativeEngine.nativeCompGetParam(id, name, fallback)
 
+    /** Empty path means the Read node samples the edited timeline instead of a file. */
+    fun setCompMedia(id: Int, path: String) {
+        NativeEngine.nativeCompSetMedia(id, path)
+        NativeEngine.nativeSeek(time)
+        status = if (path.isEmpty()) "Read: timeline sequence" else "Read: ${path.substringAfterLast('/')}"
+    }
+
+    fun compMedia(id: Int): String = NativeEngine.nativeCompGetMedia(id)
+
     fun setCompEnabled(id: Int, enabled: Boolean) {
         NativeEngine.nativeCompSetEnabled(id, enabled)
         NativeEngine.nativeSeek(time)

@@ -74,6 +74,8 @@ object NativeEngine {
     external fun nativeCompDisconnect(from: Int, to: Int, slot: Int): Boolean
     external fun nativeCompSetParam(id: Int, name: String, value: Double): Boolean
     external fun nativeCompGetParam(id: Int, name: String, fallback: Double): Double
+    external fun nativeCompSetMedia(id: Int, path: String): Boolean
+    external fun nativeCompGetMedia(id: Int): String
     external fun nativeCompSetEnabled(id: Int, enabled: Boolean): Boolean
     external fun nativeCompSetPosition(id: Int, x: Float, y: Float): Boolean
     external fun nativeCompSetSink(id: Int): Boolean

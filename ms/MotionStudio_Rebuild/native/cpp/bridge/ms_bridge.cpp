@@ -86,6 +86,36 @@ int ms_comp_set_param(int id, const char* name, double value) {
     return ok ? 0 : -1;
 }
 
+int ms_comp_get_param(int id, const char* name, double* out) {
+    if (!name || !out) return -1;
+    const ms::GraphNode* n = eng().comp_graph().find(static_cast<uint64_t>(id));
+    if (!n) return -1;
+    for (const auto& p : n->params) {
+        if (p.name == name) { *out = p.value; return 0; }
+    }
+    return -1;
+}
+
+int ms_comp_set_media(int id, const char* path) {
+    ms::GraphNode* n = eng().comp_graph().find(static_cast<uint64_t>(id));
+    if (!n) return -1;
+    n->media_path = path ? path : "";
+    eng().invalidate_frames();
+    return 0;
+}
+
+int ms_comp_get_media(int id, char* buf, int size) {
+    const ms::GraphNode* n = eng().comp_graph().find(static_cast<uint64_t>(id));
+    if (!n) return -1;
+    const int need = static_cast<int>(n->media_path.size());
+    if (buf && size > 0) {
+        const int copy = need < size - 1 ? need : size - 1;
+        std::memcpy(buf, n->media_path.data(), static_cast<size_t>(copy));
+        buf[copy] = '\0';
+    }
+    return need;
+}
+
 int ms_comp_set_enabled(int id, int enabled) {
     ms::GraphNode* n = eng().comp_graph().find(static_cast<uint64_t>(id));
     if (!n) return -1;

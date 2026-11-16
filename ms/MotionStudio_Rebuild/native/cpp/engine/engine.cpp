@@ -5,6 +5,8 @@
 #include "../include/ms_types.hpp"
 #include "../include/ms_gpu.hpp"
 #include "../include/ms_image.hpp"
+#include "../include/ms_media.hpp"
+#include "../include/ms_ffmpeg_io.hpp"
 #include <atomic>
 #include <mutex>
 #include <chrono>
@@ -30,12 +32,23 @@ struct Engine::Impl {
     std::atomic<uint64_t> revision{0};
     std::chrono::steady_clock::time_point last_tick;
     FrameCallback frame_cb;
+    // Decoders owned by the comp's Read nodes, keyed by media path. Kept apart
+    // from the timeline player's so a comp read cannot disturb playback state.
+    std::unordered_map<std::string, std::unique_ptr<IMediaDecoder>> comp_decoders;
+    // The timeline frame the comp is currently cooking over, kept so several Read
+    // nodes with an empty media_path share one decode instead of one each.
+    ImageBuffer comp_sequence;
+    uint64_t comp_sequence_rev = ~0ull;
+    int64_t comp_sequence_frame = -1;
 };
 
 Engine& Engine::instance() { static Engine e; return e; }
 Engine::Engine() : impl_(std::make_unique<Impl>()), project_(std::make_unique<ProjectSession>()), last_frame_(std::make_unique<ImageBuffer>()), frame_cache_(std::make_unique<FrameCache>(48)), autosave_(project_.get()) {
     player_ = std::make_unique<TimelinePlayer>(project_.get());
     audio_ = std::make_unique<TimelineAudioPlayback>(project_.get());
+    comp_.set_read_provider([this](const GraphNode& node, double t, int w, int h, ImageBuffer& out) {
+        return read_comp_source(node, t, w, h, out);
+    });
 }
 Engine::~Engine() = default;
 
@@ -191,9 +204,13 @@ bool Engine::render_frame() {
             // the sequence at this time, so a comp can be built from the edit.
             ImageBuffer sequence;
             e = player_->render_frame(impl_->current_time.load(), sequence);
-            if (e.ok())
+            if (e.ok()) {
+                impl_->comp_sequence.copy_from(sequence);
+                impl_->comp_sequence_rev = revision;
+                impl_->comp_sequence_frame = fi;
                 e = comp_.evaluate(comp_.sink_id(), impl_->current_time.load(),
                                    impl_->width, impl_->height, *last_frame_);
+            }
         } else {
             e = player_->render_frame(impl_->current_time.load(), *last_frame_);
         }
@@ -627,6 +644,90 @@ ClipId Engine::add_clip(TrackId track, MediaId media, TimeSec start, TimeSec dur
     project_->mark_dirty();
     invalidate_frames();
     return id;
+}
+
+
+namespace {
+
+/** Bilinear RGBA8 resize used to normalise comp sources to the cook size. */
+void scale_rgba(const ImageBuffer& src, int w, int h, ImageBuffer& out) {
+    if (!src.valid() || w <= 0 || h <= 0) return;
+    if (src.width() == w && src.height() == h) { out.copy_from(src); return; }
+    if (!out.allocate(w, h, PixelFormat::RGBA8)) return;
+    const int sw = src.width(), sh = src.height();
+    const float sx = static_cast<float>(sw) / static_cast<float>(w);
+    const float sy = static_cast<float>(sh) / static_cast<float>(h);
+    for (int y = 0; y < h; ++y) {
+        const float fy = std::clamp((static_cast<float>(y) + 0.5f) * sy - 0.5f, 0.f, static_cast<float>(sh - 1));
+        const int y0 = static_cast<int>(fy);
+        const int y1 = std::min(y0 + 1, sh - 1);
+        const float ty = fy - static_cast<float>(y0);
+        const uint8_t* r0 = src.data() + static_cast<size_t>(y0) * src.stride();
+        const uint8_t* r1 = src.data() + static_cast<size_t>(y1) * src.stride();
+        uint8_t* dst = out.data() + static_cast<size_t>(y) * out.stride();
+        for (int x = 0; x < w; ++x) {
+            const float fx = std::clamp((static_cast<float>(x) + 0.5f) * sx - 0.5f, 0.f, static_cast<float>(sw - 1));
+            const int x0 = static_cast<int>(fx);
+            const int x1 = std::min(x0 + 1, sw - 1);
+            const float tx = fx - static_cast<float>(x0);
+            for (int c = 0; c < 4; ++c) {
+                const float a = r0[x0 * 4 + c] * (1.f - tx) + r0[x1 * 4 + c] * tx;
+                const float b = r1[x0 * 4 + c] * (1.f - tx) + r1[x1 * 4 + c] * tx;
+                dst[x * 4 + c] = static_cast<uint8_t>(std::clamp(a * (1.f - ty) + b * ty, 0.f, 255.f) + 0.5f);
+            }
+        }
+    }
+}
+
+} // namespace
+
+Error Engine::read_comp_source(const GraphNode& node, double time_sec, int w, int h,
+                               ImageBuffer& out) {
+    if (w <= 0 || h <= 0) return Error::make(ErrorCode::InvalidArgument, "invalid comp resolution");
+
+    // No media path: the node reads the edited sequence at this time, so a comp
+    // can be built on top of the timeline instead of only on raw files.
+    if (node.media_path.empty()) {
+        const int64_t frame = impl_->frame_index.load();
+        const uint64_t revision = impl_->revision.load();
+        if (impl_->comp_sequence.valid() && impl_->comp_sequence_frame == frame &&
+            impl_->comp_sequence_rev == revision) {
+            scale_rgba(impl_->comp_sequence, w, h, out);
+            return out.valid() ? Error::success() : Error::make(ErrorCode::OutOfMemory, "comp read output");
+        }
+        ImageBuffer sequence;
+        Error e = player_->render_frame(time_sec, sequence);
+        if (!e.ok() || !sequence.valid()) return e.ok() ? Error::make(ErrorCode::MediaDecodeFailed, "empty sequence frame") : e;
+        scale_rgba(sequence, w, h, out);
+        return Error::success();
+    }
+
+    IMediaDecoder* dec = nullptr;
+    auto it = impl_->comp_decoders.find(node.media_path);
+    if (it != impl_->comp_decoders.end()) {
+        dec = it->second.get();
+    } else {
+        const std::string path = node.media_path;
+        auto created = create_media_decoder(path);
+        if (!created) return Error::make(ErrorCode::MediaOpenFailed, "comp read cannot open " + path);
+        dec = created.get();
+        impl_->comp_decoders[path] = std::move(created);
+    }
+    if (!dec) return Error::make(ErrorCode::NotInitialized, "comp read has no decoder");
+
+    double offset = 0.0;
+    for (const auto& p : node.params) if (p.name == "offset") offset = p.value;
+    const double local = std::max(0.0, time_sec + offset);
+    const double duration = dec->info().duration_ms / 1000.0;
+    const double clamped = duration > 0.0 ? std::min(local, duration) : local;
+
+    dec->seek_ms(static_cast<int64_t>(clamped * 1000.0));
+    ImageBuffer frame;
+    int64_t pts = 0;
+    Error e = dec->read_video(frame, pts);
+    if (!e.ok() || !frame.valid()) return Error::make(ErrorCode::MediaDecodeFailed, "comp read decoded no frame");
+    scale_rgba(frame, w, h, out);
+    return out.valid() ? Error::success() : Error::make(ErrorCode::OutOfMemory, "comp read output");
 }
 
 bool Engine::comp_rendered() const {

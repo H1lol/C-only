@@ -316,6 +316,32 @@ Java_com_motionstudio_app_native_NativeEngine_nativeCompSetParam(JNIEnv* env, jo
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jdouble JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompGetParam(JNIEnv* env, jobject, jint id,
+                                                                 jstring name, jdouble fallback) {
+    const char* utf = name ? env->GetStringUTFChars(name, nullptr) : nullptr;
+    double value = fallback;
+    const bool ok = utf && ms_comp_get_param(id, utf, &value) == 0;
+    if (utf) env->ReleaseStringUTFChars(name, utf);
+    return ok ? value : fallback;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompSetMedia(JNIEnv* env, jobject, jint id,
+                                                                 jstring path) {
+    const char* utf = path ? env->GetStringUTFChars(path, nullptr) : nullptr;
+    const int rc = ms_comp_set_media(id, utf ? utf : "");
+    if (utf) env->ReleaseStringUTFChars(path, utf);
+    return rc == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeCompGetMedia(JNIEnv* env, jobject, jint id) {
+    char buf[1024];
+    if (ms_comp_get_media(id, buf, sizeof(buf)) < 0) return env->NewStringUTF("");
+    return env->NewStringUTF(buf);
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeCompSetEnabled(JNIEnv*, jobject, jint id,
                                                                    jboolean enabled) {

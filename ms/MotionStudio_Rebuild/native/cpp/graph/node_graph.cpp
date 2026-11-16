@@ -158,9 +158,16 @@ Error NodeGraph::eval_node(uint64_t id, double time, int w, int h,
     case NodeOp::Constant:
       result = cpu_solid(out, w, h, n->solid_r, n->solid_g, n->solid_b, n->solid_a); break;
     case NodeOp::Read:
-      // Actual media decode is supplied by the Read-node media provider; until then
-      // expose an explicit, predictable slate rather than reading uninitialized memory.
-      result = cpu_solid(out, w, h, n->solid_r, n->solid_g, n->solid_b, n->solid_a); break;
+      // Decode comes from the engine through the provider. Without one the node
+      // stays an explicit slate rather than reading uninitialised memory.
+      if (read_provider_) {
+        result = read_provider_(*n, time, w, h, out);
+        if (result.ok() && !out.valid())
+          result = Error::make(ErrorCode::MediaDecodeFailed, "read node produced no frame");
+      } else {
+        result = cpu_solid(out, w, h, n->solid_r, n->solid_g, n->solid_b, n->solid_a);
+      }
+      break;
     case NodeOp::Blur: {
       if (!a.valid()) cpu_solid(a, w, h, 0.2f, 0.2f, 0.25f, 1.f);
       result = cpu_gaussian_blur(a, out, static_cast<float>(std::max(0.0, param("radius", 4.0)))); break;

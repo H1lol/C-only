@@ -127,6 +127,13 @@ public:
     void set_comp_active(bool on);
     /** True when the comp is active and has a sink to cook. */
     bool comp_rendered() const;
+    /**
+     * Resolves a Read node to an image: an empty media_path reads the timeline
+     * sequence at `time_sec` (the comp sees the edit), a path decodes that media
+     * at the node's `offset` parameter, scaled to the comp resolution.
+     */
+    Error read_comp_source(const GraphNode& node, double time_sec, int w, int h,
+                           ImageBuffer& out);
     /** Reads the selected clip's grade; false when it has none. */
     bool clip_grade(TrackId track, ClipId clip, float* out7) const;
 

@@ -254,6 +254,31 @@ fun NodeGraphPane(engine: EditorEngine, modifier: Modifier = Modifier) {
                     CompParam(engine, selectedNode, "amount", "Amount", 0.0, 3.0, 1.0)
                 CompOps.MERGE ->
                     CompParam(engine, selectedNode, "mix", "Mix", 0.0, 1.0, 0.5)
+                CompOps.READ -> {
+                    val current = engine.compMedia(selectedNode.id)
+                    Text(
+                        "SOURCE  " + if (current.isEmpty()) "timeline sequence" else current.substringAfterLast('/'),
+                        color = MsColors.textTertiary,
+                        fontSize = 9.sp,
+                        fontFamily = MsFonts.mono,
+                        modifier = Modifier.padding(bottom = 3.dp),
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        SourceChip("TIMELINE", current.isEmpty()) {
+                            engine.setCompMedia(selectedNode.id, "")
+                        }
+                        engine.doc.media.forEach { media ->
+                            SourceChip(media.name.ifBlank { media.path.substringAfterLast('/') },
+                                current == media.path) {
+                                engine.setCompMedia(selectedNode.id, media.path)
+                            }
+                        }
+                    }
+                    CompParam(engine, selectedNode, "offset", "Offset sec", -30.0, 30.0, 0.0)
+                }
                 CompOps.CONSTANT -> Text(
                     "Constant renders a flat colour from the engine's defaults. " +
                         "Per-channel sliders are not bridged yet.",
@@ -267,6 +292,23 @@ fun NodeGraphPane(engine: EditorEngine, modifier: Modifier = Modifier) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SourceChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .border(1.dp, if (selected) MsColors.accent else MsColors.border, RoundedCornerShape(2.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 7.dp, vertical = 3.dp)
+    ) {
+        Text(
+            label.uppercase(),
+            color = if (selected) MsColors.accent else MsColors.textSecondary,
+            fontSize = 9.sp,
+            fontFamily = MsFonts.mono,
+        )
     }
 }
 

@@ -94,6 +94,52 @@ M0–M5 desktop spikes: PASSED
 - Checks at startup and every five minutes.
 - Project files, recovery snapshots, autosaves, source media and exports remain outside the cleanup scope.
 
+## 2026-11-16 — Read nodes decode real media, and the timeline is rebuilt
+Two things were blocking actual compositing: the comp's Read node was a slate, and the
+timeline pane could not be touched.
+
+### Read nodes
+- `NodeGraph` gained a read provider: `ReadProvider` is a callback the engine installs, and
+  a graph without one still renders its explicit slate. That keeps the unit tests
+  deterministic and stops a missing decoder from leaving uninitialised pixels on screen.
+- `Engine::read_comp_source` backs the provider. An empty `media_path` reads the *edited
+  sequence* at the cook time, so a comp can be built on top of the timeline. A path opens
+  that media through the same decoder factory the timeline uses (MediaCodec on Android,
+  FFmpeg on desktop), seeks to the node's `offset` parameter and bilinearly scales to the
+  comp resolution.
+- The timeline frame the comp cooks over is kept for the cook, so several Read nodes do not
+  each decode the same frame; comp decoders live in their own cache so a comp read cannot
+  disturb playback state.
+- Bridged end to end: `ms_comp_get_param`/`set_media`/`get_media`, three JNI entry points,
+  Kotlin externals, and a source chooser in the node inspector (Timeline, or any imported
+  media, plus a time offset).
+
+### Timeline
+- **Fixed a real hit-testing bug**: the scrub layer used to sit on top of the lanes, so it
+  swallowed every clip tap and drag. Scrubbing now lives *under* the clips — Compose only
+  hit-tests nodes that declare pointer input, so empty lane space scrubs and clips receive
+  their own gestures.
+- Ruler with adaptive tick/frame labels, marker dots, a grabbable playhead, and tap-or-drag
+  scrubbing.
+- Clip body and trim grips are now separate pointer regions, so one gesture can no longer
+  move and trim at once. Grips appear on every clip wide enough to hold them.
+- Snapping to the playhead, markers and neighbouring clip edges, with a snap guide line and
+  a SNAP/FREE toggle; drags commit through the engine so undo stays authoritative.
+- Track headers got mute, visibility and remove controls, a selection highlight and clip
+  counts; audio tracks draw their real peak envelope. Ruler and lanes share one horizontal
+  scroll, headers and lanes share one vertical scroll.
+- Zoom (0.4x–24x, FIT) with a timecode/frame readout, grid lines per lane, transition marks
+  on the cut, and per-clip FX/mute badges.
+
+### Checks
+`ctest` 16/16 suites (the comp graph test now also proves the provider receives the path,
+cook time and offset, that its output reaches the frame, and that a provider-less graph
+falls back to the slate). `:app:assembleDebug` and `:app:testDebugUnitTest` green. All 78
+Kotlin externals matched against the built `.so` symbol table — that audit caught three
+JNI/bridge functions my text edits had silently missed, which would have thrown
+`UnsatisfiedLinkError` the first time a parameter slider was touched. Nothing was run on a
+device: the layouts, gestures and decode path are compile- and test-verified only.
+
 ## 2026-11-16 — Comp network: a real node graph, wired end to end
 Built after reading how production compositors actually evaluate a graph rather than guessing:
 Foundry's NDK guide (an Op's hash comes from its inputs' hashes plus its knob values at that frame)
