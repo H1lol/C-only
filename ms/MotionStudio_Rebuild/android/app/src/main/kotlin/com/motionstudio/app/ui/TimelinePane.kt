@@ -4,6 +4,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -27,17 +30,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +83,8 @@ fun TimelinePane(engine: EditorEngine, modifier: Modifier = Modifier) {
     // An empty project has no duration yet; keep a usable axis instead of dividing by zero.
     val span = max(doc.timelineEnd, 4.0)
     var zoom by remember { mutableFloatStateOf(1f) }
+    var follow by remember { mutableStateOf(true) }
+    var pendingScroll by remember { mutableStateOf<Int?>(null) }
     var snapping by remember { mutableStateOf(true) }
     var snapTime by remember { mutableStateOf<Double?>(null) }
     val hScroll = rememberScrollState()
@@ -92,6 +100,47 @@ fun TimelinePane(engine: EditorEngine, modifier: Modifier = Modifier) {
             (xPx / with(density) { contentWidth.toPx() }).toDouble() * span
 
         fun xOf(seconds: Double): Dp = (seconds / span).toFloat().let { it * contentWidth.value }.dp
+
+        val laneViewportPx = with(density) { laneViewport.toPx() }
+        val contentWidthPx = contentWidth.value * density.density
+
+        // ---- follow the playhead while playing -------------------------------
+        // Page-style: once the playhead crosses the right margin, jump it back to
+        // the left margin. Scrolling every frame would fight the user's own drags
+        // for the scroll state.
+        LaunchedEffect(engine.time, engine.playing, follow, zoom) {
+            if (!follow || !engine.playing || laneViewportPx <= 0f) return@LaunchedEffect
+            val playX = (engine.time / span).toFloat() * contentWidthPx
+            val margin = laneViewportPx * 0.12f
+            when {
+                playX > hScroll.value + laneViewportPx - margin ->
+                    hScroll.scrollTo((playX - laneViewportPx + margin * 2f).roundToInt())
+                playX < hScroll.value + margin * 0.4f ->
+                    hScroll.scrollTo((playX - margin).roundToInt().coerceAtLeast(0))
+            }
+        }
+
+        // Pinch changes the content width, so the scroll offset can only be
+        // corrected after the new width has been laid out.
+        LaunchedEffect(pendingScroll, zoom) {
+            val target = pendingScroll ?: return@LaunchedEffect
+            withFrameNanos { }
+            // scrollTo clamps to the real maximum, which may still be the pre-zoom value.
+            hScroll.scrollTo(target.coerceAtLeast(0))
+            pendingScroll = null
+        }
+
+        fun pinch(factor: Float, focusX: Float) {
+            if (!factor.isFinite() || factor <= 0f) return
+            val pxPerSecond = contentWidthPx / span
+            if (pxPerSecond <= 0.0 || laneViewportPx <= 0f) return
+            val timeAtFocus = (hScroll.value + focusX) / pxPerSecond
+            val next = (zoom * factor).coerceIn(0.4f, 24f)
+            if (abs(next - zoom) < 1e-4f) return
+            zoom = next
+            val newContentPx = laneViewportPx * next
+            pendingScroll = ((timeAtFocus / span) * newContentPx - focusX).roundToInt().coerceAtLeast(0)
+        }
 
         Column(Modifier.fillMaxSize()) {
             // ---- head-up strip -------------------------------------------------
@@ -122,6 +171,11 @@ fun TimelinePane(engine: EditorEngine, modifier: Modifier = Modifier) {
                     active = snapping,
                     onClick = { snapping = !snapping },
                 )
+                Chip(
+                    label = "FOLLOW",
+                    active = follow,
+                    onClick = { follow = !follow },
+                )
                 Chip(label = "−", active = false) { zoom = (zoom / 1.5f).coerceAtLeast(0.4f) }
                 Text(
                     "${(zoom * 100).roundToInt()}%",
@@ -146,6 +200,7 @@ fun TimelinePane(engine: EditorEngine, modifier: Modifier = Modifier) {
                 }
                 Box(
                     Modifier.weight(1f).height(RulerHeight)
+                        .pinchToZoom { factor, focusX -> pinch(factor, focusX) }
                         .horizontalScroll(hScroll)
                         .background(MsColors.surface)
                 ) {
@@ -187,6 +242,7 @@ fun TimelinePane(engine: EditorEngine, modifier: Modifier = Modifier) {
 
                 Box(
                     Modifier.weight(1f).fillMaxHeight()
+                        .pinchToZoom { factor, focusX -> pinch(factor, focusX) }
                         .horizontalScroll(hScroll)
                         .verticalScroll(vScroll)
                 ) {
@@ -626,6 +682,31 @@ private fun TrimGrip(
         )
     }
 }
+
+/**
+ * Two-finger time-axis zoom.
+ *
+ * Deliberately not `detectTransformGestures`: that claims one-finger pans too and
+ * would fight the scroll containers and the clip drags underneath. This detector
+ * only acts once a second pointer is down, and consumes on the Initial pass so the
+ * scrollable never sees the gesture as a pan.
+ */
+private fun Modifier.pinchToZoom(onZoom: (factor: Float, focusX: Float) -> Unit): Modifier =
+    pointerInput(Unit) {
+        awaitEachGesture {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val pressed = event.changes.filter { it.pressed }
+                if (pressed.isEmpty()) break
+                if (pressed.size < 2) continue
+                val factor = event.calculateZoom()
+                if (!factor.isFinite() || factor == 1f) continue
+                val focus = event.calculateCentroid(useCurrent = true).x
+                onZoom(factor, focus)
+                pressed.forEach { it.consume() }
+            }
+        }
+    }
 
 @Composable
 private fun Chip(label: String, active: Boolean, onClick: () -> Unit) {

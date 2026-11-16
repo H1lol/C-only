@@ -94,6 +94,24 @@ M0–M5 desktop spikes: PASSED
 - Checks at startup and every five minutes.
 - Project files, recovery snapshots, autosaves, source media and exports remain outside the cleanup scope.
 
+## 2026-11-16 — Timeline follows the playhead, pinch zooms the time axis
+- **Playhead follow**: while playing, the shared horizontal scroll pages so the playhead never
+  leaves the viewport — it crosses the right margin, then resumes 12% in from the left, and it
+  scrolls back when playback loops or the user seeks behind the view. It is page-style on purpose:
+  sliding the offset on every frame would fight the user for the scroll state. A FOLLOW chip in the
+  strip turns it off.
+- **Two-finger pinch zoom** on both the ruler and the lanes, 0.4x–24x, anchored on the pinch focus:
+  the time under your fingers stays under your fingers. Because the content width changes with the
+  zoom, the corrected scroll offset is applied after the new width has been laid out rather than
+  guessed from the old one.
+- Deliberately **not** `detectTransformGestures`: that claims one-finger pans as well and would
+  fight the scroll containers and the clip drags beneath them. The detector here only acts once a
+  second pointer is down, and it consumes on the Initial pass so no scrollable sees the gesture as a
+  pan.
+- Checks: `:app:assembleDebug` and `:app:testDebugUnitTest` green. Not run on a device, so the
+  feel of the follow paging and the pinch anchor is unverified; the maths is the part that was
+  reasoned through and the gestures are the part that was not.
+
 ## 2026-11-16 — Read nodes decode real media, and the timeline is rebuilt
 Two things were blocking actual compositing: the comp's Read node was a slate, and the
 timeline pane could not be touched.
