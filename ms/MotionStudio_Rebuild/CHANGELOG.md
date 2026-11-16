@@ -113,10 +113,10 @@ and Houdini's Copernicus cooking notes (pull each node's inputs, cache intermedi
   into that slot, and cycles are rejected by the evaluator instead of being applied. Selecting a node
   exposes its parameters (blur radius, grade exposure/contrast, saturation amount, merge mix), Bypass,
   "View this" (promotes the node to the sink) and Delete.
-- **Tests**: `ms_comp_graph_test` (17 checks) covers cook, parameter change affecting pixels,
+- **Tests**: `ms_comp_graph_test` (27 checks) covers cook, parameter change affecting pixels,
   validation, self-link and cycle rejection, the save format, position/param survival and that a
   restored comp renders byte-identically. `ms_engine_load_test` now also proves a comp survives a
-  full project save/load cycle. `ctest` **17/17**, `:app:testDebugUnitTest` 6/6, APK green,
+  full project save/load cycle. `ctest` **16/16** suites, `:app:testDebugUnitTest` 6/6, APK green,
   76 Kotlin externals vs 76 JNI symbols.
 - Known limits, stated plainly: the `Read` node still renders a slate (media decode is not wired to
   the graph), Constant colour channels are not bridged to sliders, the node cache is per-cook rather
