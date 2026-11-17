@@ -55,6 +55,7 @@ import com.motionstudio.app.model.NativeClip
 import com.motionstudio.app.model.NativeTrack
 import com.motionstudio.app.ui.theme.MsColors
 import com.motionstudio.app.ui.theme.MsFonts
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.max
@@ -913,7 +914,7 @@ private fun xDp(seconds: Double, span: Double, width: Dp): Dp =
     ((seconds / span).toFloat() * width.value).dp
 
 /** Smallest step whose labels clear ~78dp at the current zoom. */
-private fun rulerStep(span: Double, width: Dp): Double {
+internal fun rulerStep(span: Double, width: Dp): Double {
     val perDp = span / width.value.coerceAtLeast(1f).toDouble()
     val minimum = perDp * 78.0
     val ladder = listOf(
@@ -930,16 +931,17 @@ private fun rulerStep(span: Double, width: Dp): Double {
  * The old label was mm:ss:ff, so a 15 s tick printed "00:15:00" and the axis
  * looked like it jumped from ten seconds to a minute and nineteen.
  */
-private fun rulerLabel(seconds: Double, step: Double): String {
+internal fun rulerLabel(seconds: Double, step: Double): String {
     val s = seconds.coerceAtLeast(0.0)
     if (step < 1.0) {
         val whole = floor(s).toInt()
-        if (whole < 60) return "%.1fs".format(s)
+        // Locale.US: a decimal comma would read as a separator in a timecode.
+        if (whole < 60) return "%.1fs".format(Locale.US, s)
         val frac = ((s - whole) * 10.0).roundToInt().coerceIn(0, 9)
-        return "%d:%02d.%d".format(whole / 60, whole % 60, frac)
+        return "%d:%02d.%d".format(Locale.US, whole / 60, whole % 60, frac)
     }
     val total = s.roundToInt()
-    return if (total < 60) "${total}s" else "%d:%02d".format(total / 60, total % 60)
+    return if (total < 60) "${total}s" else "%d:%02d".format(Locale.US, total / 60, total % 60)
 }
 
 /** Grid lines use a quarter of the label step so lanes read as a ruler, not a wall. */
