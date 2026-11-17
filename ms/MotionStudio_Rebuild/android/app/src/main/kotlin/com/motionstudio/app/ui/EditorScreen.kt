@@ -91,6 +91,7 @@ fun EditorScreen(
     var showMotion by remember { mutableStateOf(false) }
     var showText by remember { mutableStateOf(false) }
     var showMask by remember { mutableStateOf(false) }
+    var showAudio by remember { mutableStateOf(false) }
 
     val importScope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(
@@ -170,6 +171,7 @@ fun EditorScreen(
                                 onMotion = { showMotion = true },
                                 onText = { showText = true },
                                 onMask = { showMask = true },
+                                onAudio = { showAudio = true },
                                 onExport = { onExportFrame() },
                                 onMore = { showMore = true },
                             )
@@ -197,6 +199,7 @@ fun EditorScreen(
                         onMotion = { showMotion = true },
                         onText = { showText = true },
                         onMask = { showMask = true },
+                        onAudio = { showAudio = true },
                         onExport = { onExportFrame() },
                         onMore = { showMore = true },
                     )
@@ -216,6 +219,7 @@ fun EditorScreen(
             if (showMotion) MotionSheet(engine = engine, onDismiss = { showMotion = false })
             if (showText) TextSheet(engine = engine, onDismiss = { showText = false })
             if (showMask) MaskSheet(engine = engine, onDismiss = { showMask = false })
+            if (showAudio) AudioSheet(engine = engine, onDismiss = { showAudio = false })
         }
     }
 }
@@ -484,6 +488,7 @@ private fun ActionRail(
     onMotion: () -> Unit,
     onText: () -> Unit,
     onMask: () -> Unit,
+    onAudio: () -> Unit,
     onExport: () -> Unit,
     onMore: () -> Unit,
 ) {
@@ -507,6 +512,7 @@ private fun ActionRail(
             RailCommand("MOTION", onMotion)
             RailCommand("TITLE", onText)
             RailCommand("MASK", onMask)
+            RailCommand("MIX", onAudio)
             RailCommand("EXPORT", onExport)
             RailCommand("MORE", onMore)
         }

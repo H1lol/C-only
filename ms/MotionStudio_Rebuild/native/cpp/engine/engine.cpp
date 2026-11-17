@@ -808,6 +808,19 @@ bool Engine::set_track_flags(TrackId track, bool muted, bool locked, bool visibl
     return true;
 }
 
+bool Engine::set_track_gain(TrackId track, float gain) {
+    if (!project_) return false;
+    TrackInfo* t = project_->find_track(track);
+    if (!t) return false;
+    const float safe = std::clamp(gain, 0.f, 4.f);
+    if (std::abs(safe - t->gain) < 1e-6f) return true;
+    project_->push_undo();
+    t->gain = safe;
+    project_->mark_dirty();
+    // Only the audio mix changes; the picture cache stays valid.
+    return true;
+}
+
 int Engine::add_effect(TrackId track, ClipId clip, const std::string& base_id) {
     if (!project_ || base_id.empty()) return -1;
     TrackInfo* t = project_->find_track(track);

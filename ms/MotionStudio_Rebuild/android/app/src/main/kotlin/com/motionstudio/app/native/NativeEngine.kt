@@ -49,6 +49,18 @@ object NativeEngine {
     external fun nativeReadAudioPcm(buffer: FloatArray, frames: Int, channels: Int): Boolean
     external fun nativeSetMasterGain(db: Float): Boolean
 
+    // Master insert chain (0 Gain, 1 EQ, 2 Compressor, 3 Delay, 4 Reverb, 5 Limiter)
+    external fun nativeAudioFxCount(): Int
+    external fun nativeAudioFxAdd(kind: Int): Int
+    external fun nativeAudioFxRemove(index: Int): Boolean
+    external fun nativeAudioFxClear(): Boolean
+    external fun nativeAudioFxKind(index: Int): Int
+    external fun nativeAudioFxSetEnabled(index: Int, enabled: Boolean): Boolean
+    external fun nativeAudioFxEnabled(index: Int): Boolean
+    external fun nativeAudioFxSetParam(index: Int, name: String, value: Float): Boolean
+    external fun nativeAudioFxGetParam(index: Int, name: String, fallback: Float): Float
+    external fun nativeTrackGain(trackId: Int, gain: Float): Boolean
+
     // Master grade + scopes
     external fun nativeGradeSet(
         exposure: Float,

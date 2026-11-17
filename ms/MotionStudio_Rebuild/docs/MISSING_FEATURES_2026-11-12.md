@@ -61,10 +61,10 @@ Shapes are there (rectangle, ellipse, full frame, feather, invert). Missing: mor
 Both the master grade and per-clip grades work, each with seven parameters and a live histogram. Missing: curves, colour wheels, a highlight/shadow split, and per-clip LUTs (the `.cube` look is still display-wide).
 
 ### 6. Audio depth
-Export carries AAC audio, and audio clips now draw a real waveform from decoded PCM. Still missing: the audio effect chain is unexposed beyond master gain — no EQ, compressor or limiter UI — and there is no separate audio mixer panel.
+Export carries AAC audio, and audio clips now draw a real waveform from decoded PCM. The master insert chain is now editable from the app (Gain, 3-band EQ, compressor, delay, reverb, limiter) with a MIX sheet carrying per-track faders, mute and solo; clip gain and pan are honoured by the mix. Still missing: insert chains per track (only the master bus has one), audio automation curves, sample-rate choice, and loudness metering. The chain lives in engine state, so it is not saved with the project and chain edits are not undoable.
 
 ### 6b. Effect catalogue size
-23 CPU effects against Kdenlive's roughly 84 hand-written effect definitions plus 145 MLT avfilter and 118 frei0r entries. Most of that gap is provided by third-party GPL plugins we cannot link; adding them would relicense the app. Audio effects remain the thinnest area: only master gain is wired to the UI.
+23 CPU effects against Kdenlive's roughly 84 hand-written effect definitions plus 145 MLT avfilter and 118 frei0r entries. Most of that gap is provided by third-party GPL plugins we cannot link; adding them would relicense the app. Audio effects are still the thinnest area: the master bus has six inserts, but tracks cannot host their own chain and there is no audio keyframing.
 
 ### 7. Playback performance
 Decoding now uses MediaCodec, but playback is still seek-per-frame rather than a streaming pipeline, so 4K will not play smoothly. Compositing remains CPU into an RGBA8 buffer (`gpu_mock`), and there are no proxies or cache-management UI.

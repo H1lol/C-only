@@ -73,6 +73,30 @@ int ms_audio_read_pcm(float* interleaved, int frames, int channels);
 // Sets the master gain stage of the timeline insert chain (dB, 0 = unity).
 int ms_audio_set_master_gain(float gain_db);
 
+// ---- Master insert chain (the timeline's final mix bus) ----
+// Kinds: 0 Gain, 1 Parametric EQ, 2 Compressor, 3 Delay, 4 Reverb, 5 Limiter.
+// Inserts run in list order on the mixed timeline audio, for playback and
+// export alike. The chain is engine state, not document state.
+int ms_audio_fx_count(void);
+/** Appends an insert and returns its index, or -1 on a bad kind. */
+int ms_audio_fx_add(int kind);
+int ms_audio_fx_remove(int index);
+int ms_audio_fx_clear(void);
+/** Kind of the insert at `index`, or -1 when the index is out of range. */
+int ms_audio_fx_kind(int index);
+int ms_audio_fx_set_enabled(int index, int enabled);
+int ms_audio_fx_enabled(int index);
+/** Parameter names: wet, gain_db, low_gain_db, low_freq_hz, mid_gain_db,
+ *  mid_freq_hz, mid_q, high_gain_db, high_freq_hz, threshold_db, ratio,
+ *  attack_ms, release_ms, makeup_db, delay_ms, feedback, room_size, damping,
+ *  ceiling_db. Unknown names are rejected (0 / fallback) so a typo cannot
+ *  silently do nothing. */
+int ms_audio_fx_set_param(int index, const char* name, float value);
+float ms_audio_fx_get_param(int index, const char* name, float fallback);
+
+/** Track fader, linear gain (1 = unity). Applies to the timeline audio mix. */
+int ms_track_gain(int track_id, float gain);
+
 // Display look (3D .cube LUT) applied to the rendered preview frame.
 // Returns 0 on success, -1 if the file is missing or malformed.
 int ms_look_load(const char* path);

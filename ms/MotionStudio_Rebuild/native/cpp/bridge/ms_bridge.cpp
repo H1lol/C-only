@@ -439,4 +439,112 @@ int ms_audio_set_master_gain(float gain_db) {
     else if (!chain.set(0, gain)) return -1;
     return 0;
 }
+
+// ---- Master insert chain -------------------------------------------------
+namespace {
+// One row per writable AudioFxParams field. The names match the knob table the
+// UI builds, so a parameter added here is reachable from Kotlin immediately.
+struct AudioFxField {
+    const char* name;
+    float ms::AudioFxParams::*member;
+};
+const AudioFxField kAudioFxFields[] = {
+    {"wet", &ms::AudioFxParams::wet},
+    {"gain_db", &ms::AudioFxParams::gain_db},
+    {"low_gain_db", &ms::AudioFxParams::low_gain_db},
+    {"low_freq_hz", &ms::AudioFxParams::low_freq_hz},
+    {"mid_gain_db", &ms::AudioFxParams::mid_gain_db},
+    {"mid_freq_hz", &ms::AudioFxParams::mid_freq_hz},
+    {"mid_q", &ms::AudioFxParams::mid_q},
+    {"high_gain_db", &ms::AudioFxParams::high_gain_db},
+    {"high_freq_hz", &ms::AudioFxParams::high_freq_hz},
+    {"threshold_db", &ms::AudioFxParams::threshold_db},
+    {"ratio", &ms::AudioFxParams::ratio},
+    {"attack_ms", &ms::AudioFxParams::attack_ms},
+    {"release_ms", &ms::AudioFxParams::release_ms},
+    {"makeup_db", &ms::AudioFxParams::makeup_db},
+    {"delay_ms", &ms::AudioFxParams::delay_ms},
+    {"feedback", &ms::AudioFxParams::feedback},
+    {"room_size", &ms::AudioFxParams::room_size},
+    {"damping", &ms::AudioFxParams::damping},
+    {"ceiling_db", &ms::AudioFxParams::ceiling_db},
+};
+const AudioFxField* find_audio_fx_field(const char* name) {
+    if (!name) return nullptr;
+    for (const auto& f : kAudioFxFields)
+        if (std::strcmp(f.name, name) == 0) return &f;
+    return nullptr;
+}
+} // namespace
+
+int ms_audio_fx_count(void) {
+    return static_cast<int>(eng().audio_effects().parameters().size());
+}
+
+int ms_audio_fx_add(int kind) {
+    if (kind < 0 || kind > static_cast<int>(ms::AudioFxKind::Limiter)) return -1;
+    ms::AudioFxParams params;
+    params.kind = static_cast<ms::AudioFxKind>(kind);
+    return static_cast<int>(eng().audio_effects().add(params));
+}
+
+int ms_audio_fx_remove(int index) {
+    if (index < 0) return -1;
+    return eng().audio_effects().remove(static_cast<std::size_t>(index)) ? 0 : -1;
+}
+
+int ms_audio_fx_clear(void) {
+    eng().audio_effects().clear();
+    return 0;
+}
+
+int ms_audio_fx_kind(int index) {
+    if (index < 0) return -1;
+    const auto all = eng().audio_effects().parameters();
+    if (static_cast<std::size_t>(index) >= all.size()) return -1;
+    return static_cast<int>(all[static_cast<std::size_t>(index)].kind);
+}
+
+int ms_audio_fx_set_enabled(int index, int enabled) {
+    if (index < 0) return -1;
+    auto& chain = eng().audio_effects();
+    auto all = chain.parameters();
+    if (static_cast<std::size_t>(index) >= all.size()) return -1;
+    ms::AudioFxParams params = all[static_cast<std::size_t>(index)];
+    params.enabled = enabled != 0;
+    // set() drops the cached DSP state, so a bypass takes effect on the next block.
+    return chain.set(static_cast<std::size_t>(index), params) ? 0 : -1;
+}
+
+int ms_audio_fx_enabled(int index) {
+    if (index < 0) return -1;
+    const auto all = eng().audio_effects().parameters();
+    if (static_cast<std::size_t>(index) >= all.size()) return -1;
+    return all[static_cast<std::size_t>(index)].enabled ? 1 : 0;
+}
+
+int ms_audio_fx_set_param(int index, const char* name, float value) {
+    if (index < 0 || !name) return -1;
+    const AudioFxField* field = find_audio_fx_field(name);
+    if (!field) return -1;
+    auto& chain = eng().audio_effects();
+    auto all = chain.parameters();
+    if (static_cast<std::size_t>(index) >= all.size()) return -1;
+    ms::AudioFxParams params = all[static_cast<std::size_t>(index)];
+    params.*(field->member) = value;
+    return chain.set(static_cast<std::size_t>(index), params) ? 0 : -1;
+}
+
+float ms_audio_fx_get_param(int index, const char* name, float fallback) {
+    if (index < 0 || !name) return fallback;
+    const AudioFxField* field = find_audio_fx_field(name);
+    if (!field) return fallback;
+    const auto all = eng().audio_effects().parameters();
+    if (static_cast<std::size_t>(index) >= all.size()) return fallback;
+    return all[static_cast<std::size_t>(index)].*(field->member);
+}
+
+int ms_track_gain(int track_id, float gain) {
+    return eng().set_track_gain(static_cast<ms::TrackId>(track_id), gain) ? 0 : -1;
+}
 }

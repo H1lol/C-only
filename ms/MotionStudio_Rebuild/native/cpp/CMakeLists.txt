@@ -144,6 +144,9 @@ target_link_libraries(ms_lut_test PRIVATE ms_core)
 
 add_executable(ms_engine_audio_test tools/ms_engine_audio_test.cpp)
 target_link_libraries(ms_engine_audio_test PRIVATE motionstudio_native)
+
+add_executable(ms_audio_bridge_test tools/ms_audio_bridge_test.cpp)
+target_link_libraries(ms_audio_bridge_test PRIVATE motionstudio_native)
 target_include_directories(ms_engine_audio_test PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -163,6 +166,7 @@ add_test(NAME ms_comp_graph_test COMMAND ms_comp_graph_test)
 add_test(NAME ms_graph_safety_test COMMAND ms_graph_safety_test)
 add_test(NAME ms_export_profile_test COMMAND ms_export_profile_test)
 add_test(NAME ms_engine_audio_test COMMAND ms_engine_audio_test)
+add_test(NAME ms_audio_bridge_test COMMAND ms_audio_bridge_test)
 add_test(NAME ms_lut_test COMMAND ms_lut_test)
 add_test(NAME ms_edit_test COMMAND ms_edit_test)
 set_tests_properties(

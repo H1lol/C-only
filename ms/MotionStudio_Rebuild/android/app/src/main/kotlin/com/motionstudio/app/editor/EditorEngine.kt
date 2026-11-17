@@ -27,6 +27,11 @@ data class CompEdge(val from: Int, val to: Int, val slot: Int)
 /** A knob link: `param` on `node` follows `srcParam` on `src` (Natron semantics). */
 data class CompLink(val node: Int, val param: String, val src: Int, val srcParam: String)
 
+/** One insert on the master audio chain. kind mirrors ms::AudioFxKind. */
+data class AudioInsert(val index: Int, val kind: Int, val enabled: Boolean)
+
+val AUDIO_INSERT_NAMES = listOf("Gain", "Parametric EQ", "Compressor", "Delay", "Reverb", "Limiter")
+
 /** One numeric knob a node exposes, with the range the UI should offer. */
 data class Knob(
     val name: String,
@@ -1057,6 +1062,89 @@ class EditorEngine(
         runCatching { store.autosave(doc.name, json) }
         lastAutosaveAt = now
         status = "Autosaved"
+    }
+
+    // ---- Master audio inserts ------------------------------------------------
+
+    /** Bumped on every insert edit so an open sheet re-reads the chain. */
+    var audioRevision by mutableIntStateOf(0)
+        private set
+
+    fun audioInserts(): List<AudioInsert> {
+        val count = NativeEngine.nativeAudioFxCount()
+        if (count <= 0) return emptyList()
+        return (0 until count).mapNotNull { i ->
+            val kind = NativeEngine.nativeAudioFxKind(i)
+            if (kind < 0) null else AudioInsert(i, kind, NativeEngine.nativeAudioFxEnabled(i))
+        }
+    }
+
+    fun addAudioInsert(kind: Int): Boolean {
+        val index = NativeEngine.nativeAudioFxAdd(kind)
+        if (index < 0) {
+            status = "Could not add that insert"
+            return false
+        }
+        audioRevision++
+        markDirty()
+        status = "Added ${AUDIO_INSERT_NAMES.getOrElse(kind) { "insert" }} to the master chain"
+        return true
+    }
+
+    fun removeAudioInsert(index: Int): Boolean {
+        if (!NativeEngine.nativeAudioFxRemove(index)) {
+            status = "Could not remove that insert"
+            return false
+        }
+        audioRevision++
+        markDirty()
+        status = "Master insert removed"
+        return true
+    }
+
+    fun clearAudioInserts() {
+        NativeEngine.nativeAudioFxClear()
+        audioRevision++
+        markDirty()
+        status = "Master chain cleared"
+    }
+
+    fun setAudioInsertEnabled(index: Int, enabled: Boolean): Boolean {
+        val ok = NativeEngine.nativeAudioFxSetEnabled(index, enabled)
+        if (ok) {
+            audioRevision++
+            markDirty()
+        }
+        return ok
+    }
+
+    fun audioInsertParam(index: Int, name: String, fallback: Float): Float =
+        NativeEngine.nativeAudioFxGetParam(index, name, fallback)
+
+    fun setAudioInsertParam(index: Int, name: String, value: Float): Boolean {
+        val ok = NativeEngine.nativeAudioFxSetParam(index, name, value)
+        if (ok) markDirty()
+        return ok
+    }
+
+    fun setTrackGain(trackId: Int, gain: Float): Boolean {
+        val ok = NativeEngine.nativeTrackGain(trackId, gain)
+        if (ok) {
+            markDirty()
+            reload()
+        }
+        return ok
+    }
+
+    fun toggleTrackSolo(trackId: Int): Boolean {
+        val track = doc.tracks.firstOrNull { it.id == trackId } ?: return false
+        val ok = NativeEngine.nativeTrackFlags(trackId, track.muted, track.locked, track.visible, !track.solo)
+        if (ok) {
+            markDirty()
+            reload()
+            status = if (track.solo) "Solo off ${track.name}" else "Solo ${track.name}"
+        }
+        return ok
     }
 
     fun release() {

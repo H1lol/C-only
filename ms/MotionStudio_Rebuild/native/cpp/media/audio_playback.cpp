@@ -262,13 +262,18 @@ Error TimelineAudioPlayback::read_pcm(float* interleaved, int frames, int channe
   const int rate = 48000;
   double win = static_cast<double>(frames) / rate;
 
+  // Solo on any audible track mutes the rest, the way a mixing desk behaves.
+  bool any_solo = false;
+  for (const auto& t : session_->tracks()) if (t.solo && !t.muted) any_solo = true;
+
   for (const auto& track : session_->tracks()) {
     if (track.muted) continue;
-    // video tracks may still have audio in media — for audio tracks prefer type
+    if (any_solo && !track.solo) continue;
     for (const auto& clip : track.clips) {
+      if (clip.mute || clip.is_text) continue;
       if (time_ + win < clip.start || time_ >= clip.start + clip.duration) continue;
       const MediaInfo* mi = session_->find_media(clip.media_id);
-      if (!mi) continue;
+      if (!mi || !mi->has_audio) continue;
 
       auto it = decoders_.find(mi->path);
       if (it == decoders_.end()) {
@@ -282,18 +287,27 @@ Error TimelineAudioPlayback::read_pcm(float* interleaved, int frames, int channe
       int src_ch = pcm.channels > 0 ? pcm.channels : 2;
       int src_rate = pcm.sample_rate > 0 ? pcm.sample_rate : 48000;
 
+      // Clip fader × track fader, then a linear pan law. This used to read
+      // clip.opacity, which meant the mixer never heard a clip's own gain.
+      const float clip_gain = std::clamp(clip.gain * track.gain, 0.f, 4.f);
+      const float pan = std::clamp(clip.pan, -1.f, 1.f);
+      float ch_gain[32];
+      for (int c = 0; c < ch && c < 32; ++c) {
+        if (ch == 1) ch_gain[c] = clip_gain;
+        else ch_gain[c] = clip_gain * (c == 0 ? 1.f - std::max(0.f, pan)
+                                             : 1.f + std::min(0.f, pan));
+      }
+
       for (int i = 0; i < frames; ++i) {
         double t = time_ + static_cast<double>(i) / rate;
         if (t < clip.start || t >= clip.start + clip.duration) continue;
         double local = (t - clip.start) * clip.speed + clip.source_in;
         size_t si = static_cast<size_t>(local * src_rate);
-        float g = clip.opacity; // reuse as gain proxy 0..1
-        if (g <= 0) g = 1.f;
         for (int c = 0; c < ch; ++c) {
           float s = 0.f;
           size_t idx = si * src_ch + static_cast<size_t>(std::min(c, src_ch - 1));
           if (idx < pcm.samples.size()) s = pcm.samples[idx];
-          interleaved[i * ch + c] += s * g;
+          interleaved[i * ch + c] += s * ch_gain[c < 32 ? c : 0];
         }
       }
     }

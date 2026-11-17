@@ -81,6 +81,8 @@ public:
     TrackId add_track(const std::string& name, int type);
     bool remove_track(TrackId track);
     bool set_track_flags(TrackId track, bool muted, bool locked, bool visible, bool solo);
+    /** Track fader (linear, 1 = unity). Heard in the timeline audio mix. */
+    bool set_track_gain(TrackId track, float gain);
 
     // Clip effect stack (index = position in the clip's stack).
     int  add_effect(TrackId track, ClipId clip, const std::string& base_id);

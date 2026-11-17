@@ -57,6 +57,9 @@ data class NativeTrack(
     val visible: Boolean,
     val clips: List<NativeClip>,
     val transitions: List<NativeTransition> = emptyList(),
+    /** Timeline fader, linear (1 = unity). Read by the C++ audio mix. */
+    val gain: Double = 1.0,
+    val solo: Boolean = false,
 )
 
 /**
@@ -227,6 +230,8 @@ data class ProjectDoc(
                                     visible = t.optBoolean("visible", true),
                                     clips = clips,
                                     transitions = transitions,
+                                    gain = t.optDouble("gain", 1.0),
+                                    solo = t.optBoolean("solo", false),
                                 )
                             )
                         }

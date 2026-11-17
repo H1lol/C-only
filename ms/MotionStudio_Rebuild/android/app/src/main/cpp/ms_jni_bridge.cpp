@@ -181,6 +181,71 @@ Java_com_motionstudio_app_native_NativeEngine_nativeSetMasterGain(JNIEnv*, jobje
     return ms_audio_set_master_gain(db) == 0 ? JNI_TRUE : JNI_FALSE;
 }
 
+// ---- Master audio insert chain -------------------------------------------
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeAudioFxCount(JNIEnv*, jobject) {
+    return ms_audio_fx_count();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeAudioFxAdd(JNIEnv*, jobject, jint kind) {
+    return ms_audio_fx_add(kind);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeAudioFxRemove(JNIEnv*, jobject, jint index) {
+    return ms_audio_fx_remove(index) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeAudioFxClear(JNIEnv*, jobject) {
+    return ms_audio_fx_clear() == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeAudioFxKind(JNIEnv*, jobject, jint index) {
+    return ms_audio_fx_kind(index);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeAudioFxSetEnabled(JNIEnv*, jobject,
+                                                                     jint index, jboolean enabled) {
+    return ms_audio_fx_set_enabled(index, enabled == JNI_TRUE ? 1 : 0) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeAudioFxEnabled(JNIEnv*, jobject, jint index) {
+    return ms_audio_fx_enabled(index) == 1 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeAudioFxSetParam(JNIEnv* env, jobject,
+        jint index, jstring name, jfloat value) {
+    if (!name) return JNI_FALSE;
+    const char* utf = env->GetStringUTFChars(name, nullptr);
+    if (!utf) return JNI_FALSE;
+    const int rc = ms_audio_fx_set_param(index, utf, value);
+    env->ReleaseStringUTFChars(name, utf);
+    return rc == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jfloat JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeAudioFxGetParam(JNIEnv* env, jobject,
+        jint index, jstring name, jfloat fallback) {
+    if (!name) return fallback;
+    const char* utf = env->GetStringUTFChars(name, nullptr);
+    if (!utf) return fallback;
+    const float value = ms_audio_fx_get_param(index, utf, fallback);
+    env->ReleaseStringUTFChars(name, utf);
+    return value;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeTrackGain(JNIEnv*, jobject, jint track,
+                                                              jfloat gain) {
+    return ms_track_gain(track, gain) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeLookLoad(JNIEnv* env, jobject, jstring path) {
     if (!path) return JNI_FALSE;
