@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — purple interface pass
+
+### Changed
+- Palette is now black and lavender, the colour of the app mark: violet-tinted
+  neutrals, lavender accent on every control, playhead and selection
+- Timeline ruler rewritten: ticks are drawn in one canvas (major plus minor), labels
+  step by integer index instead of accumulating floats, and each zoom level prints one
+  unambiguous unit — `15s` below a minute, `1:19` above it, `0.5s` / `2:03.5` when
+  ticks are sub-second. The old `mm:ss:ff` label read like minutes for a 15 s tick
+- Timeline lanes alternate tone, the selected clip gets a 2 px lavender border and a
+  brighter fill, and the timeline takes more of a portrait screen
+
+### Added
+- Selection bar under the ruler: clip name, in/out timecode, and SPLIT · FX · MOTION ·
+  MASK · INSPECT · DEL for whatever is selected — tapping a clip now leads somewhere
+- Double-tap a clip to open the CLIP inspector
+- Empty-timeline state with an IMPORT MEDIA button instead of a one-line hint
+- Launcher icon, adaptive icon and round icon generated from the logo
+  (`android/tools/make_icons.py`), and the starter header now draws the same ring mark
+
 ## Unreleased — delivery pass
 
 ### Added

@@ -162,6 +162,10 @@ fun EditorScreen(
                                 engine = engine,
                                 workspace = workspace,
                                 modifier = Modifier.weight(1f),
+                                onImport = {
+                                    picker.launch(arrayOf("video/*", "audio/*", "image/*"))
+                                },
+                                onInspect = { workspace = Workspace.Clip },
                                 onOpenEffects = { showEffects = true },
                                 onOpenText = { showText = true },
                                 onOpenMask = { showMask = true },
@@ -189,7 +193,10 @@ fun EditorScreen(
                     WorkspacePanel(
                         engine = engine,
                         workspace = workspace,
-                        modifier = Modifier.weight(1.05f),
+                        // The timeline is where the work happens; give it the room.
+                        modifier = Modifier.weight(1.25f),
+                        onImport = { picker.launch(arrayOf("video/*", "audio/*", "image/*")) },
+                        onInspect = { workspace = Workspace.Clip },
                         onOpenEffects = { showEffects = true },
                         onOpenText = { showText = true },
                         onOpenMask = { showMask = true },
@@ -241,6 +248,8 @@ private fun WorkspacePanel(
     engine: EditorEngine,
     workspace: Workspace,
     modifier: Modifier,
+    onImport: () -> Unit,
+    onInspect: () -> Unit,
     onOpenEffects: () -> Unit,
     onOpenText: () -> Unit,
     onOpenMask: () -> Unit,
@@ -250,6 +259,11 @@ private fun WorkspacePanel(
         Workspace.Timeline -> TimelinePane(
             engine = engine,
             modifier = modifier.fillMaxWidth().background(MsColors.surface),
+            onImport = onImport,
+            onOpenEffects = onOpenEffects,
+            onOpenMotion = onOpenMotion,
+            onOpenMask = onOpenMask,
+            onInspect = onInspect,
         )
         Workspace.Nodes -> NodeGraphPane(engine, modifier.fillMaxWidth())
         Workspace.Keys -> KeyframePane(engine, modifier.fillMaxWidth())

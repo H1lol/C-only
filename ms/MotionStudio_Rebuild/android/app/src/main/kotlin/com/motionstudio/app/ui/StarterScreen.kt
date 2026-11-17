@@ -78,11 +78,20 @@ fun StarterScreen(
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // The mark, not a swatch: same ring and letters as the launcher icon.
             Box(
-                Modifier.size(24.dp).background(MsColors.accent, RoundedCornerShape(2.dp)),
+                Modifier.size(26.dp)
+                    .background(MsColors.background, RoundedCornerShape(7.dp))
+                    .border(1.5.dp, MsColors.accent, RoundedCornerShape(7.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("MS", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "MS",
+                    color = MsColors.accent,
+                    fontSize = 11.sp,
+                    fontFamily = MsFonts.sans,
+                    fontWeight = FontWeight.Bold,
+                )
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {

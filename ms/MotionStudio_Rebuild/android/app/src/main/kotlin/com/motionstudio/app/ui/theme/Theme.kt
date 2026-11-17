@@ -14,43 +14,45 @@ import androidx.compose.ui.unit.sp
 import com.motionstudio.app.R
 
 /**
- * Dense, near-black workspace with one warm amber accent — the palette of a
- * compositing tool, not a phone gallery. Every surface is a flat panel with a
- * 1 px edge; nothing is rounded or soft, because the numbers carry the colour.
+ * Black workspace, one lavender accent — the colour of the logo, and the palette
+ * of a compositor rather than a phone gallery. Every surface is a flat panel
+ * with a 1 px edge; nothing is rounded or soft, because the numbers carry the
+ * colour. Neutrals carry a little violet so the UI reads as one piece instead of
+ * grey plastic with a purple highlight pasted on.
  */
 object MsColors {
-    val background = Color(0xFF0A0A0C)
-    val surface = Color(0xFF101014)
-    val surfaceHigh = Color(0xFF16161B)
-    val surfaceHighest = Color(0xFF1D1D23)
-    val border = Color(0xFF2B2B33)
-    val borderSoft = Color(0xFF1F1F26)
+    val background = Color(0xFF07060B)
+    val surface = Color(0xFF0D0B14)
+    val surfaceHigh = Color(0xFF141020)
+    val surfaceHighest = Color(0xFF1C1630)
+    val border = Color(0xFF2B2340)
+    val borderSoft = Color(0xFF1A1526)
 
-    val accent = Color(0xFFFF7A1A)
-    val accentSoft = Color(0xFFFFA45C)
-    val accentDim = Color(0xFF7A3B0D)
+    val accent = Color(0xFFA98BFF)
+    val accentSoft = Color(0xFFC9B8FF)
+    val accentDim = Color(0xFF4B3480)
 
-    val textPrimary = Color(0xFFE9E9EC)
-    val textSecondary = Color(0xFFB2B2BA)
-    val textTertiary = Color(0xFF84848E)
-    val textMuted = Color(0xFF57575F)
+    val textPrimary = Color(0xFFF0EDF8)
+    val textSecondary = Color(0xFFB6AECB)
+    val textTertiary = Color(0xFF8B82A4)
+    val textMuted = Color(0xFF5D5573)
 
-    val success = Color(0xFF5FD08C)
+    val success = Color(0xFF63D6A2)
     val warning = Color(0xFFF0B429)
-    val error = Color(0xFFFF5C5C)
-    val info = Color(0xFF4CC2D6)
+    val error = Color(0xFFFF6B8A)
+    val info = Color(0xFF6FA8F5)
 
-    val viewerBg = Color(0xFF07070A)
-    val videoTrack = Color(0xFFB07434)
-    val audioTrack = Color(0xFF3E8E78)
-    val overlayTrack = Color(0xFF8A6BB8)
+    val viewerBg = Color(0xFF000000)
+    val videoTrack = Color(0xFF8A6BE0)
+    val audioTrack = Color(0xFF4E9E8C)
+    val overlayTrack = Color(0xFFC27AD6)
 
     // Node graph + viewport overlays.
-    val nodeBg = Color(0xFF141419)
-    val nodeBorder = Color(0xFF31313A)
-    val wire = Color(0xFF4A4A55)
-    val guide = Color(0xFF3C3C46)
-    val guideStrong = Color(0xFF5C5C68)
+    val nodeBg = Color(0xFF120E1D)
+    val nodeBorder = Color(0xFF332A4A)
+    val wire = Color(0xFF544873)
+    val guide = Color(0xFF37304A)
+    val guideStrong = Color(0xFF5E5480)
 }
 
 /**
@@ -87,7 +89,7 @@ fun MotionStudioTheme(accent: Color = MsColors.accent, content: @Composable () -
     val dark = isSystemInDarkTheme()
     val scheme = darkColorScheme(
         primary = accent,
-        onPrimary = Color.White,
+        onPrimary = Color(0xFF120A22),
         primaryContainer = accent.copy(alpha = 0.20f),
         onPrimaryContainer = MsColors.accentSoft,
         secondary = MsColors.accentSoft,

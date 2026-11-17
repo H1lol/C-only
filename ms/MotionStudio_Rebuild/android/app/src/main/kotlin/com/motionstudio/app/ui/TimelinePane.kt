@@ -61,7 +61,7 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 private val HeaderWidth = 104.dp
-private val RulerHeight = 26.dp
+private val RulerHeight = 30.dp
 private val LaneHeight = 48.dp
 private val ClipInset = 7.dp
 private val GripWidth = 14.dp
@@ -78,7 +78,15 @@ private val GripWidth = 14.dp
  * picture the drag was drawn from.
  */
 @Composable
-fun TimelinePane(engine: EditorEngine, modifier: Modifier = Modifier) {
+fun TimelinePane(
+    engine: EditorEngine,
+    modifier: Modifier = Modifier,
+    onImport: () -> Unit = {},
+    onOpenEffects: () -> Unit = {},
+    onOpenMotion: () -> Unit = {},
+    onOpenMask: () -> Unit = {},
+    onInspect: () -> Unit = {},
+) {
     val doc = engine.doc
     // An empty project has no duration yet; keep a usable axis instead of dividing by zero.
     val span = max(doc.timelineEnd, 4.0)
@@ -151,14 +159,14 @@ fun TimelinePane(engine: EditorEngine, modifier: Modifier = Modifier) {
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    tc(engine.time, engine.fps),
+                    EditorEngine.formatTimecode(engine.time, engine.fps),
                     color = MsColors.accent,
                     fontSize = 12.sp,
                     fontFamily = MsFonts.mono,
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    "/ ${tc(span, engine.fps)}",
+                    "/ ${EditorEngine.formatTimecode(span, engine.fps)}",
                     color = MsColors.textMuted,
                     fontSize = 10.sp,
                     fontFamily = MsFonts.mono,
@@ -202,18 +210,25 @@ fun TimelinePane(engine: EditorEngine, modifier: Modifier = Modifier) {
                     Modifier.weight(1f).height(RulerHeight)
                         .pinchToZoom { factor, focusX -> pinch(factor, focusX) }
                         .horizontalScroll(hScroll)
-                        .background(MsColors.surface)
+                        .background(MsColors.surfaceHigh)
                 ) {
                     Ruler(
                         span = span,
                         contentWidth = contentWidth,
                         time = engine.time,
-                        fps = engine.fps,
                         markers = doc.markers.map { it.time },
                         onSeek = { x -> engine.seek(timeAt(x)) },
                     )
                 }
             }
+
+            SelectionBar(
+                engine = engine,
+                onOpenEffects = onOpenEffects,
+                onOpenMotion = onOpenMotion,
+                onOpenMask = onOpenMask,
+                onInspect = onInspect,
+            )
 
             // ---- tracks --------------------------------------------------------
             Row(Modifier.fillMaxWidth().weight(1f)) {
@@ -274,17 +289,30 @@ fun TimelinePane(engine: EditorEngine, modifier: Modifier = Modifier) {
                                 gridStep = gridStep(secondsPerDp),
                                 secondsPerDp = secondsPerDp,
                                 snapping = snapping,
+                                even = index % 2 == 0,
                                 onSnapChange = { snapTime = it },
+                                onInspect = onInspect,
                             )
                         }
 
                         if (doc.tracks.isEmpty() || doc.tracks.all { it.clips.isEmpty() }) {
-                            Text(
-                                "Import media, then drag it onto a lane",
-                                color = MsColors.textMuted,
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(start = 14.dp, top = 16.dp),
-                            )
+                            Column(Modifier.padding(start = 14.dp, top = 12.dp)) {
+                                Text(
+                                    "TIMELINE IS EMPTY",
+                                    color = MsColors.textTertiary,
+                                    fontSize = 9.sp,
+                                    fontFamily = MsFonts.mono,
+                                    letterSpacing = 1.sp,
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "Import a clip \u2014 it lands at the playhead, then drag it along the lane.",
+                                    color = MsColors.textMuted,
+                                    fontSize = 11.sp,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Chip("IMPORT MEDIA", true) { onImport() }
+                            }
                         }
 
                         snapTime?.let { snapped ->
@@ -316,11 +344,14 @@ private fun Ruler(
     span: Double,
     contentWidth: Dp,
     time: Double,
-    fps: Double,
     markers: List<Double>,
     onSeek: (Float) -> Unit,
 ) {
-    val step = tickStep(span, contentWidth)
+    val step = rulerStep(span, contentWidth)
+    val minorStep = step / 5.0
+    val density = LocalDensity.current.density
+    val minorPx = (minorStep / span).toFloat() * contentWidth.value * density
+
     Box(
         Modifier.width(contentWidth).height(RulerHeight)
             .pointerInput(span, contentWidth) {
@@ -330,35 +361,57 @@ private fun Ruler(
                 detectDragGestures { change, _ -> onSeek(change.position.x) }
             },
     ) {
-        var t = 0.0
-        while (t <= span + 1e-6) {
-            val x = xDp(t, span, contentWidth)
-            Box(
-                Modifier.offset(x = x).width(1.dp).height(if (isMajor(t, step)) 10.dp else 6.dp)
-                    .background(MsColors.border)
-                    .align(Alignment.BottomStart)
-            )
-            if (isMajor(t, step)) {
-                Text(
-                    tickLabel(t, fps, step),
-                    color = MsColors.textMuted,
-                    fontSize = 8.sp,
-                    fontFamily = MsFonts.mono,
-                    modifier = Modifier.offset(x = x + 3.dp, y = 2.dp),
-                )
+        // Ticks go into one canvas: a few hundred offset Boxes are slower to lay
+        // out and land on half pixels, which reads as a fuzzy axis.
+        Canvas(Modifier.fillMaxSize()) {
+            val h = size.height
+            if (minorPx >= 5f) {
+                var j = 0
+                while (j * minorStep <= span) {
+                    if (j % 5 != 0) {
+                        val x = ((j * minorStep) / span).toFloat() * size.width
+                        drawLine(MsColors.border, Offset(x, h), Offset(x, h * 0.78f), 1f)
+                    }
+                    j++
+                }
             }
-            t += step
+            var i = 0
+            while (i * step <= span) {
+                val x = ((i * step) / span).toFloat() * size.width
+                drawLine(MsColors.guideStrong, Offset(x, h), Offset(x, h * 0.45f), 1f)
+                i++
+            }
+            drawLine(MsColors.border, Offset(0f, h - 0.5f), Offset(size.width, h - 0.5f), 1f)
+        }
+
+        // Labels are stepped by an integer index, so no float drift can repeat or
+        // drop a label the way the old accumulating loop did.
+        var i = 0
+        while (i * step <= span) {
+            val t = i * step
+            Text(
+                rulerLabel(t, step),
+                color = MsColors.textTertiary,
+                fontSize = 9.sp,
+                fontFamily = MsFonts.mono,
+                maxLines = 1,
+                modifier = Modifier.offset(
+                    x = ((t / span).toFloat() * contentWidth.value + 3f).dp,
+                    y = 3.dp,
+                ),
+            )
+            i++
         }
 
         markers.forEach { marker ->
             Box(
-                Modifier.offset(x = xDp(marker, span, contentWidth) - 3.dp, y = 13.dp)
+                Modifier.offset(x = xDp(marker, span, contentWidth) - 3.dp, y = 16.dp)
                     .size(6.dp)
                     .background(MsColors.info, CircleShape)
             )
         }
 
-        // Playhead grip: a triangle the user can actually grab.
+        // Playhead grip: a tab the user can actually grab.
         val playX = xDp(time, span, contentWidth)
         Box(
             Modifier.offset(x = playX - 5.dp).width(10.dp).height(9.dp)
@@ -368,6 +421,69 @@ private fun Ruler(
             Modifier.offset(x = playX - 0.5.dp).width(1.dp).fillMaxHeight()
                 .background(MsColors.accent)
         )
+    }
+}
+
+/**
+ * What is selected, and what can be done to it. Tapping a clip used to change
+ * colour and nothing else, which on a phone reads as "nothing happened"; this
+ * strip is the answer to "where do I edit this".
+ */
+@Composable
+private fun SelectionBar(
+    engine: EditorEngine,
+    onOpenEffects: () -> Unit,
+    onOpenMotion: () -> Unit,
+    onOpenMask: () -> Unit,
+    onInspect: () -> Unit,
+) {
+    val track = engine.doc.tracks.firstOrNull { it.id == engine.selectedTrackId }
+    val clip = engine.doc.clipById(engine.selectedTrackId, engine.selectedClipId)
+    Column {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(MsColors.border))
+        Row(
+            Modifier.fillMaxWidth().height(38.dp).background(MsColors.surfaceHigh)
+                .horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (clip == null) {
+                Text(
+                    "TAP A CLIP TO SELECT IT",
+                    color = MsColors.textMuted,
+                    fontSize = 9.sp,
+                    fontFamily = MsFonts.mono,
+                    letterSpacing = 1.sp,
+                )
+            } else {
+                Column(Modifier.padding(end = 2.dp)) {
+                    Text(
+                        clip.name.ifBlank { if (clip.isText) "TITLE" else "Clip" },
+                        color = MsColors.accentSoft,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                    )
+                    Text(
+                        "%s \u2192 %s  %s".format(
+                            EditorEngine.formatTimecode(clip.start, engine.fps),
+                            EditorEngine.formatTimecode(clip.end, engine.fps),
+                            track?.name?.uppercase() ?: "",
+                        ),
+                        color = MsColors.textMuted,
+                        fontSize = 8.sp,
+                        fontFamily = MsFonts.mono,
+                        maxLines = 1,
+                    )
+                }
+                Chip("SPLIT", false) { engine.splitAtPlayhead() }
+                Chip("FX ${clip.effects.size}", clip.effects.isNotEmpty()) { onOpenEffects() }
+                Chip("MOTION", false) { onOpenMotion() }
+                Chip("MASK", false) { onOpenMask() }
+                Chip("INSPECT", false) { onInspect() }
+                Chip("DEL", false) { engine.removeSelectedClip() }
+            }
+        }
     }
 }
 
@@ -451,7 +567,9 @@ private fun Lane(
     gridStep: Double,
     secondsPerDp: Double,
     snapping: Boolean,
+    even: Boolean,
     onSnapChange: (Double?) -> Unit,
+    onInspect: () -> Unit,
 ) {
     Box(
         Modifier
@@ -461,8 +579,8 @@ private fun Lane(
             .background(
                 when {
                     !track.visible -> MsColors.viewerBg
-                    engine.selectedTrackId == track.id -> MsColors.surface.copy(alpha = 0.55f)
-                    else -> Color.Transparent
+                    even -> MsColors.surface
+                    else -> MsColors.background
                 }
             )
     ) {
@@ -498,6 +616,7 @@ private fun Lane(
                 selected = clip.id == engine.selectedClipId,
                 snapping = snapping,
                 onSnapChange = onSnapChange,
+                onInspect = onInspect,
             )
         }
     }
@@ -514,6 +633,7 @@ private fun ClipBox(
     selected: Boolean,
     snapping: Boolean,
     onSnapChange: (Double?) -> Unit,
+    onInspect: () -> Unit,
 ) {
     val audio = track.type == 1
     var start by remember(clip.id, clip.start) { mutableFloatStateOf(clip.start.toFloat()) }
@@ -529,19 +649,36 @@ private fun ClipBox(
             .offset(x = leftDp.dp, y = ClipInset)
             .width(widthDp.dp)
             .height(LaneHeight - ClipInset * 2)
-            .clip(RoundedCornerShape(4.dp))
-            .background(trackColor(track, audio).copy(alpha = if (track.visible) 0.42f else 0.16f))
+            .clip(RoundedCornerShape(3.dp))
+            .background(
+                trackColor(track, audio).copy(
+                    alpha = when {
+                        !track.visible -> 0.14f
+                        selected -> 0.58f
+                        dragging -> 0.5f
+                        else -> 0.32f
+                    }
+                )
+            )
             .border(
-                width = if (selected || dragging) 1.5.dp else 0.5.dp,
+                width = if (selected) 2.dp else if (dragging) 1.5.dp else 0.5.dp,
                 color = when {
-                    dragging -> MsColors.accent
-                    selected -> MsColors.accentSoft
-                    else -> trackColor(track, audio).copy(alpha = 0.8f)
+                    selected -> MsColors.accent
+                    dragging -> MsColors.accentSoft
+                    else -> trackColor(track, audio).copy(alpha = 0.7f)
                 },
-                shape = RoundedCornerShape(4.dp),
+                shape = RoundedCornerShape(3.dp),
             )
             .pointerInput(clip.id) {
-                detectTapGestures(onTap = { engine.select(track.id, clip.id) })
+                detectTapGestures(
+                    onTap = { engine.select(track.id, clip.id) },
+                    // Double tap opens the inspector: the shortest path from
+                    // "that clip" to "edit this clip" on a phone.
+                    onDoubleTap = {
+                        engine.select(track.id, clip.id)
+                        onInspect()
+                    },
+                )
             },
     ) {
         Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
@@ -775,33 +912,39 @@ private fun trackColor(track: NativeTrack, audio: Boolean): Color = when {
 private fun xDp(seconds: Double, span: Double, width: Dp): Dp =
     ((seconds / span).toFloat() * width.value).dp
 
-/** Smallest nice step whose tick spacing clears ~54dp at the current zoom. */
-private fun tickStep(span: Double, width: Dp): Double {
+/** Smallest step whose labels clear ~78dp at the current zoom. */
+private fun rulerStep(span: Double, width: Dp): Double {
     val perDp = span / width.value.coerceAtLeast(1f).toDouble()
-    val minimum = perDp * 54.0
-    val candidates = listOf(
-        1.0 / 30.0, 1.0 / 15.0, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0,
+    val minimum = perDp * 78.0
+    val ladder = listOf(
+        1.0 / 30.0, 1.0 / 15.0, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0,
+        60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0,
     )
-    return candidates.firstOrNull { it >= minimum } ?: 240.0
+    return ladder.firstOrNull { it >= minimum } ?: 7200.0
+}
+
+/**
+ * One unambiguous unit per zoom level: seconds below a minute, m:ss above it, and
+ * a decimal only when ticks are closer together than a second.
+ *
+ * The old label was mm:ss:ff, so a 15 s tick printed "00:15:00" and the axis
+ * looked like it jumped from ten seconds to a minute and nineteen.
+ */
+private fun rulerLabel(seconds: Double, step: Double): String {
+    val s = seconds.coerceAtLeast(0.0)
+    if (step < 1.0) {
+        val whole = floor(s).toInt()
+        if (whole < 60) return "%.1fs".format(s)
+        val frac = ((s - whole) * 10.0).roundToInt().coerceIn(0, 9)
+        return "%d:%02d.%d".format(whole / 60, whole % 60, frac)
+    }
+    val total = s.roundToInt()
+    return if (total < 60) "${total}s" else "%d:%02d".format(total / 60, total % 60)
 }
 
 /** Grid lines use a quarter of the label step so lanes read as a ruler, not a wall. */
 private fun gridStep(secondsPerDp: Double): Double =
     max(secondsPerDp * 54.0, 1.0 / 30.0)
 
-private fun isMajor(t: Double, step: Double): Boolean =
-    step > 0 && floor(t / step + 1e-6) >= 0 && abs(t / step - (t / step).roundToInt()) < 1e-6
 
-private fun tickLabel(t: Double, fps: Double, step: Double): String =
-    if (step < 0.2) "${(t * fps).roundToInt()}f" else tc(t, fps)
-
-private fun tc(seconds: Double, fps: Double): String {
-    val clamped = seconds.coerceAtLeast(0.0)
-    val totalFrames = (clamped * fps).roundToInt()
-    val fr = (totalFrames % fps.roundToInt().coerceAtLeast(1))
-    val totalSeconds = totalFrames / fps.roundToInt().coerceAtLeast(1)
-    val m = totalSeconds / 60
-    val s = totalSeconds % 60
-    return "%02d:%02d:%02d".format(m, s, fr)
-}
 
