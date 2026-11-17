@@ -92,6 +92,7 @@ fun EditorScreen(
     var showText by remember { mutableStateOf(false) }
     var showMask by remember { mutableStateOf(false) }
     var showAudio by remember { mutableStateOf(false) }
+    var showExport by remember { mutableStateOf(false) }
 
     val importScope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(
@@ -120,7 +121,11 @@ fun EditorScreen(
                         file.delete()
                         return@runCatching false
                     }
-                    engine.importMedia(file.absolutePath, name)
+                    engine.importMedia(
+                        file.absolutePath,
+                        name,
+                        appendToEnd = engine.appendImportsAtEnd,
+                    )
                 }.getOrDefault(false)
             }
             if (!imported) engine.note("Could not import that file")
@@ -172,7 +177,7 @@ fun EditorScreen(
                                 onText = { showText = true },
                                 onMask = { showMask = true },
                                 onAudio = { showAudio = true },
-                                onExport = { onExportFrame() },
+                                onExport = { showExport = true },
                                 onMore = { showMore = true },
                             )
                         }
@@ -211,7 +216,14 @@ fun EditorScreen(
                     engine = engine,
                     onDismiss = { showMore = false },
                     onExportFrame = onExportFrame,
+                    onOpenExport = {
+                        showMore = false
+                        showExport = true
+                    },
                 )
+            }
+            if (showExport) {
+                ExportSheet(engine = engine, onDismiss = { showExport = false })
             }
             if (showLooks) LooksSheet(engine = engine, onDismiss = { showLooks = false })
             if (showEffects) EffectsSheet(engine = engine, onDismiss = { showEffects = false })

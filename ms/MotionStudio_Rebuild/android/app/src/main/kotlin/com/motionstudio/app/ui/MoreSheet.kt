@@ -2,6 +2,10 @@ package com.motionstudio.app.ui
 
 import android.content.Context
 import android.graphics.Bitmap
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,9 +13,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -21,21 +30,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.motionstudio.app.editor.EditorEngine
-import com.motionstudio.app.export.VideoExporter
+import com.motionstudio.app.export.ExportSettings
+import com.motionstudio.app.model.CanvasRatio
+import com.motionstudio.app.model.PreviewRatio
 import com.motionstudio.app.native.NativeEngine
 import com.motionstudio.app.ui.theme.MsColors
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 
@@ -45,21 +53,24 @@ fun MoreSheet(
     engine: EditorEngine,
     onDismiss: () -> Unit,
     onExportFrame: () -> Unit,
+    onOpenExport: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var gainDb by remember { mutableFloatStateOf(0f) }
+    var fpsText by remember { mutableStateOf(ExportSettings.formatFps(engine.fps)) }
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var exporting by remember { mutableStateOf(false) }
-    var exportProgress by remember { mutableFloatStateOf(0f) }
-    var exportMessage by remember { mutableStateOf<String?>(null) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MsColors.surface,
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 4.dp)
+        ) {
             Text(
                 "Session",
                 color = MsColors.textPrimary,
@@ -68,7 +79,8 @@ fun MoreSheet(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "${engine.doc.width} × ${engine.doc.height} · ${engine.fps.toInt()} fps · " +
+                "${engine.doc.width} × ${engine.doc.height} · " +
+                    "${ExportSettings.formatFps(engine.fps)} fps · " +
                     "${engine.doc.media.size} media · ${engine.doc.tracks.sumOf { it.clips.size }} clips",
                 color = MsColors.textTertiary,
                 fontSize = 12.sp,
@@ -81,8 +93,96 @@ fun MoreSheet(
                 TextButton(onClick = { engine.redo() }) { Text("Redo") }
             }
 
+            Spacer(Modifier.height(6.dp))
+            SectionLabel("CANVAS RATIO")
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                CanvasRatio.entries.forEach { ratio ->
+                    val active = ratio.matches(engine.doc.width, engine.doc.height)
+                    SessionChip(ratio.label, active) {
+                        if (!active) {
+                            engine.setProjectSettings(ratio.width, ratio.height, engine.fps)
+                        }
+                    }
+                }
+            }
+            Text(
+                "Changing the canvas resizes the composited frame; clip times are untouched.",
+                color = MsColors.textMuted,
+                fontSize = 10.sp,
+            )
+
             Spacer(Modifier.height(10.dp))
-            Text("Markers", color = MsColors.textSecondary, fontSize = 13.sp)
+            SectionLabel("PROJECT FRAME RATE")
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                listOf(23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 59.94, 60.0).forEach { f ->
+                    val active = kotlin.math.abs(engine.fps - f) < 0.005
+                    SessionChip(ExportSettings.formatFps(f), active) {
+                        if (!active) {
+                            engine.setProjectSettings(engine.doc.width, engine.doc.height, f)
+                        }
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedTextField(
+                    value = fpsText,
+                    onValueChange = { text ->
+                        fpsText = text.filter { it.isDigit() || it == '.' }.take(6)
+                    },
+                    singleLine = true,
+                    label = { Text("Custom fps", fontSize = 10.sp) },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.width(112.dp),
+                )
+                TextButton(
+                    enabled = (fpsText.toDoubleOrNull() ?: 0.0) in 1.0..240.0,
+                    onClick = {
+                        val f = fpsText.toDoubleOrNull() ?: return@TextButton
+                        engine.setProjectSettings(engine.doc.width, engine.doc.height, f)
+                    },
+                ) {
+                    Text("Set", color = MsColors.accentSoft, fontSize = 11.sp)
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            SectionLabel("PREVIEW RATIO")
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                PreviewRatio.entries.forEach { ratio ->
+                    SessionChip(ratio.label, engine.previewRatio == ratio) {
+                        engine.previewRatio = ratio
+                    }
+                }
+            }
+            Text(
+                "Guide only: the delivery crop is shaded, the composite is never cut.",
+                color = MsColors.textMuted,
+                fontSize = 10.sp,
+            )
+
+            Spacer(Modifier.height(10.dp))
+            SectionLabel("IMPORT PLACEMENT")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SessionChip("At playhead", !engine.appendImportsAtEnd) {
+                    engine.appendImportsAtEnd = false
+                }
+                SessionChip("Append to end", engine.appendImportsAtEnd) {
+                    engine.appendImportsAtEnd = true
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            SectionLabel("MARKERS")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = { engine.addMarker() }) {
                     Text("Add at playhead (${engine.time.toInt()}s)", fontSize = 12.sp)
@@ -98,42 +198,6 @@ fun MoreSheet(
                     )
                     TextButton(onClick = { engine.removeMarker(m.id) }) {
                         Text("Remove", color = MsColors.textTertiary, fontSize = 11.sp)
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(10.dp))
-            Text("Project size", color = MsColors.textSecondary, fontSize = 13.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf(
-                    "1080×1920" to (1080 to 1920),
-                    "1920×1080" to (1920 to 1080),
-                    "1080×1080" to (1080 to 1080),
-                    "2160×3840" to (2160 to 3840),
-                ).forEach { (label, dims) ->
-                    val active = engine.doc.width == dims.first && engine.doc.height == dims.second
-                    TextButton(
-                        onClick = { engine.setProjectSettings(dims.first, dims.second, engine.fps) },
-                    ) {
-                        Text(
-                            label,
-                            color = if (active) MsColors.accentSoft else MsColors.textSecondary,
-                            fontSize = 11.sp,
-                        )
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf(24.0, 30.0, 60.0).forEach { f ->
-                    val active = kotlin.math.abs(engine.fps - f) < 0.5
-                    TextButton(
-                        onClick = { engine.setProjectSettings(engine.doc.width, engine.doc.height, f) },
-                    ) {
-                        Text(
-                            "${f.toInt()} fps",
-                            color = if (active) MsColors.accentSoft else MsColors.textSecondary,
-                            fontSize = 11.sp,
-                        )
                     }
                 }
             }
@@ -168,44 +232,13 @@ fun MoreSheet(
             )
 
             Spacer(Modifier.height(12.dp))
-            TextButton(
-                enabled = !exporting,
-                onClick = {
-                    scope.launch {
-                        exporting = true
-                        exportProgress = 0f
-                        exportMessage = null
-                        val dir = File(context.filesDir, "exports").apply { mkdirs() }
-                        val out = File(dir, "export_${System.currentTimeMillis()}.mp4")
-                        val result = withContext(Dispatchers.Default) {
-                            VideoExporter(engine).export(out) { exportProgress = it }
-                        }
-                        exporting = false
-                        exportMessage = if (result.error == null) {
-                            "Exported ${out.name} · ${result.frames} frames · H.264 (no audio)"
-                        } else {
-                            "Export failed: ${result.error}"
-                        }
-                    }
-                },
-            ) {
+            TextButton(onClick = onOpenExport) {
                 Text(
-                    if (exporting) "Encoding… ${(exportProgress * 100).toInt()}%" else "Export MP4",
+                    "Export…",
                     color = MsColors.accentSoft,
                     fontWeight = FontWeight.Medium,
                 )
             }
-            Text(
-                "Encoded on-device with MediaCodec (H.264, video only). Audio muxing is " +
-                    "not wired yet.",
-                color = MsColors.textMuted,
-                fontSize = 11.sp,
-            )
-            exportMessage?.let { msg ->
-                Spacer(Modifier.height(6.dp))
-                Text(msg, color = MsColors.textSecondary, fontSize = 11.sp)
-            }
-            Spacer(Modifier.height(10.dp))
             TextButton(onClick = onExportFrame) {
                 Text(
                     "Render current frame to PNG",
@@ -213,9 +246,37 @@ fun MoreSheet(
                     fontWeight = FontWeight.Medium,
                 )
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(28.dp))
         }
     }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text,
+        color = MsColors.textTertiary,
+        fontSize = 10.sp,
+        letterSpacing = 1.sp,
+    )
+}
+
+@Composable
+private fun SessionChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (selected) MsColors.accentSoft else MsColors.textSecondary,
+        fontSize = 11.sp,
+        modifier = Modifier
+            .background(MsColors.surfaceHigh, RoundedCornerShape(3.dp))
+            .border(
+                1.dp,
+                if (selected) MsColors.accentSoft else MsColors.border,
+                RoundedCornerShape(3.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 5.dp),
+    )
 }
 
 /** Renders the current engine frame and writes it as a PNG. */

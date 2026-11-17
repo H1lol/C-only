@@ -15,7 +15,10 @@ Legend: ✅ done in this pass · ❌ still missing · ⚠️ partial / untested 
 | ✅ Effect stack UI | `add_effect` / `remove_effect` / `set_effect_param` / `set_effect_enabled` bridged; `EffectsSheet` lists eight CPU effects with live parameter sliders, per-effect enable switch and remove. Clip chips show `FX n`. |
 | ✅ Effect persistence | Clip effects are now serialized in `.msproj` (`"effects": [{id, enabled, params:[{name,value}]}]`) and restored on load; previously they were memory-only and silently lost on save. |
 | ✅ Frame-cache invalidation | Every edit and effect change clears the frame cache; before this, retimed or re-effected clips could show stale pixels. |
-| ✅ Video export (video-only) | `VideoExporter` renders frames from the engine and encodes H.264 with `MediaCodec` + `MediaMuxer` into an MP4 in `filesDir/exports`. No ffmpeg. ⚠️ Compiled only — never executed, because there is no device or emulator here. |
+| ✅ Video export | `VideoExporter` renders frames from the engine and encodes them with `MediaCodec` + `MediaMuxer` into an MP4 in `filesDir/exports`, muxing the engine's mixed audio as AAC. No ffmpeg. ⚠️ Compiled only — never executed, because there is no device or emulator here. |
+| ✅ Export options | `ExportSettings` + `ExportSheet`: delivery presets, custom frame size, custom frame rate (1–240 fps), H.264/HEVC, bitrate and full/playhead-start range. Scaling preserves the delivery aspect; HEVC falls back to H.264 when the device has no encoder. |
+| ✅ Canvas and preview shape | Canvas ratio presets resize the real composited canvas; preview ratio guides shade the delivery crop without cutting the composite; project frame rate accepts custom values. |
+| ✅ Import placement | Imports land at the playhead or are appended to the end of the timeline (`EditorEngine.appendImportsAtEnd`). |
 | ✅ Import durability | Imports now copy to `filesDir/imports` instead of `cacheDir`, which the OS can purge out from under a project. |
 | ✅ Typography | Inter + JetBrains Mono (OFL) bundled and wired, mono for all numeric readouts. |
 | ✅ LUT looks | `.cube` engine module, six baked looks, strength blend, applied after the cache. |

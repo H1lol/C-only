@@ -1,6 +1,10 @@
 package com.motionstudio.app.export
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -12,12 +16,16 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Renders the timeline out of the C++ engine and encodes it to H.264 with the
- * device encoder, muxing the engine's mixed PCM as AAC — no ffmpeg CLI.
+ * Renders the timeline out of the C++ engine and encodes it with the device
+ * codec, muxing the engine's mixed PCM as AAC — no ffmpeg CLI.
  *
  * Video frames and audio spans are fed from one loop. Both output formats must
  * be known before the muxer can start, so any sample produced earlier is
  * buffered briefly rather than dropped.
+ *
+ * [ExportSettings] decides the delivery: size (the composited frame is scaled,
+ * never stretched), frame rate, bitrate, codec and in/out range. The project
+ * canvas itself is untouched, so exporting 60p from a 24p project is safe.
  */
 class VideoExporter(private val engine: EditorEngine) {
 
@@ -26,24 +34,50 @@ class VideoExporter(private val engine: EditorEngine) {
         val frames: Int,
         val hasAudio: Boolean,
         val error: String?,
+        val note: String? = null,
     )
 
     private class Pending(val track: Int, val data: ByteArray, val ptsUs: Long, val flags: Int)
 
-    fun export(outFile: File, onProgress: (Float) -> Unit = {}): Result {
-        val width = (engine.doc.width / 2 * 2).coerceAtLeast(2)
-        val height = (engine.doc.height / 2 * 2).coerceAtLeast(2)
-        val fps = (if (engine.fps > 1.0) engine.fps else 30.0).toInt().coerceIn(1, 120)
-        val duration = engine.duration.coerceAtLeast(0.1)
-        val totalFrames = (duration * fps).toInt().coerceIn(1, 60 * 60 * fps)
+    fun export(
+        outFile: File,
+        settings: ExportSettings,
+        onProgress: (Float) -> Unit = {},
+    ): Result {
+        val width = settings.evenWidth
+        val height = settings.evenHeight
+        val fps = settings.saneFps
+        val projectW = (engine.doc.width / 2 * 2).coerceAtLeast(2)
+        val projectH = (engine.doc.height / 2 * 2).coerceAtLeast(2)
+        val timelineEnd = engine.doc.timelineEnd
+        val start = settings.startSec.coerceIn(0.0, timelineEnd)
+        val end = settings.resolvedEnd(timelineEnd)
+        val duration = (end - start).coerceAtLeast(1.0 / fps)
+        val totalFrames = (duration * fps).toInt().coerceIn(1, 240 * 60 * 60)
         val sampleRate = 48_000
         val channels = 2
+        val videoBitrate = (settings.bitrateKbps.coerceIn(500, 120_000)) * 1000
+        val audioBitrate = settings.audioBitrateKbps.coerceIn(64, 320) * 1000
+
+        // Resolve the encoder first: a device without HEVC still exports H.264
+        // instead of failing the whole job.
+        var codec = settings.codec
+        var note: String? = null
+        val firstEncoder = runCatching { MediaCodec.createEncoderByType(codec.mime) }.getOrElse {
+            if (codec == ExportSettings.Codec.HEVC) {
+                codec = ExportSettings.Codec.H264
+                note = "This device has no HEVC encoder — encoded H.264 instead."
+                MediaCodec.createEncoderByType(codec.mime)
+            } else {
+                throw it
+            }
+        }
 
         val wasPlaying = engine.playing
         val resumeTime = engine.time
         if (wasPlaying) engine.togglePlay()
 
-        var videoCodec: MediaCodec? = null
+        var videoCodec: MediaCodec? = firstEncoder
         var audioCodec: MediaCodec? = null
         var muxer: MediaMuxer? = null
         var videoTrack = -1
@@ -55,24 +89,23 @@ class VideoExporter(private val engine: EditorEngine) {
         val info = MediaCodec.BufferInfo()
 
         try {
-            val videoFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
+            val videoFormat = MediaFormat.createVideoFormat(codec.mime, width, height).apply {
                 setInteger(
                     MediaFormat.KEY_COLOR_FORMAT,
                     MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar,
                 )
-                setInteger(MediaFormat.KEY_BIT_RATE, bitrateFor(width, height, fps))
-                setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                setInteger(MediaFormat.KEY_BIT_RATE, videoBitrate)
+                setInteger(MediaFormat.KEY_FRAME_RATE, fps.toInt().coerceAtLeast(1))
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
-            videoCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-            videoCodec.configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            videoCodec.start()
+            firstEncoder.configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            firstEncoder.start()
 
             val audioFormat = MediaFormat.createAudioFormat(
                 MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channels,
             ).apply {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, 160_000)
+                setInteger(MediaFormat.KEY_BIT_RATE, audioBitrate)
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 32_768)
             }
             audioCodec = runCatching {
@@ -84,11 +117,29 @@ class VideoExporter(private val engine: EditorEngine) {
 
             muxer = MediaMuxer(outFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val sourceBitmap = Bitmap.createBitmap(projectW, projectH, Bitmap.Config.ARGB_8888)
+            val outBitmap = if (projectW == width && projectH == height) sourceBitmap
+            else Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val outCanvas = if (outBitmap === sourceBitmap) null else Canvas(outBitmap)
+            val scalePaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+            val srcRect = Rect(0, 0, projectW, projectH)
+            val dstRect = Rect(0, 0, width, height)
             val pixels = IntArray(width * height)
             val yuv = ByteArray(width * height * 3 / 2)
-            val frameDurationUs = 1_000_000L / fps
-            val audioChunk = (sampleRate / fps).coerceAtLeast(256)
+            val frameDurationUs = (1_000_000.0 / fps).toLong().coerceAtLeast(1L)
+            val audioChunk = (sampleRate / fps).toInt().coerceAtLeast(256)
+
+            fun renderFrame(t: Double): Boolean {
+                engine.seek(t)
+                if (!NativeEngine.nativeRenderFrame()) return false
+                if (!NativeEngine.nativeCopyFrame(sourceBitmap)) return false
+                if (outCanvas != null) {
+                    outCanvas.drawColor(Color.BLACK)
+                    outCanvas.drawBitmap(sourceBitmap, srcRect, dstRect, scalePaint)
+                }
+                outBitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+                return true
+            }
 
             fun writeSample(track: Int, codec: MediaCodec, index: Int) {
                 val buffer = codec.getOutputBuffer(index)
@@ -155,43 +206,50 @@ class VideoExporter(private val engine: EditorEngine) {
             while (!videoDone) {
                 // --- video input
                 if (framesQueued < totalFrames) {
-                    val inIndex = videoCodec.dequeueInputBuffer(5_000L)
+                    val inIndex = firstEncoder.dequeueInputBuffer(5_000L)
                     if (inIndex >= 0) {
-                        val buffer = videoCodec.getInputBuffer(inIndex)!!
-                        val t = framesQueued.toDouble() / fps
-                        if (!renderInto(bitmap, pixels, t, width, height)) {
-                            return Result(null, framesQueued, audioMuxed, "Engine could not render frame $framesQueued")
+                        val buffer = firstEncoder.getInputBuffer(inIndex)!!
+                        val t = start + framesQueued.toDouble() / fps
+                        if (!renderFrame(t)) {
+                            return Result(
+                                null, framesQueued, audioMuxed,
+                                "Engine could not render frame $framesQueued", note,
+                            )
                         }
                         rgbaToNv12(pixels, width, height, yuv)
                         buffer.clear()
                         buffer.put(yuv)
-                        videoCodec.queueInputBuffer(inIndex, 0, yuv.size, framesQueued * frameDurationUs, 0)
+                        firstEncoder.queueInputBuffer(
+                            inIndex, 0, yuv.size, framesQueued * frameDurationUs, 0,
+                        )
                         framesQueued++
                         onProgress(0.7f * framesQueued / totalFrames)
                     }
                 } else if (!videoEosQueued) {
-                    val inIndex = videoCodec.dequeueInputBuffer(5_000L)
+                    val inIndex = firstEncoder.dequeueInputBuffer(5_000L)
                     if (inIndex >= 0) {
-                        videoCodec.queueInputBuffer(
-                            inIndex, 0, 0, framesQueued * frameDurationUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+                        firstEncoder.queueInputBuffer(
+                            inIndex, 0, 0, framesQueued * frameDurationUs,
+                            MediaCodec.BUFFER_FLAG_END_OF_STREAM,
                         )
                         videoEosQueued = true
                     }
                 }
 
-                // --- audio input (one span per video frame)
+                // --- audio input (one span per video frame, aligned to the range)
                 if (!audioEos && audioCodec != null) {
-                    val startSec = audioFed.toDouble() / sampleRate
-                    if (startSec >= duration) {
+                    val audioTime = audioFed.toDouble() / sampleRate
+                    if (start + audioTime >= end) {
                         val aIn = audioCodec.dequeueInputBuffer(5_000L)
                         if (aIn >= 0) {
                             audioCodec.queueInputBuffer(
-                                aIn, 0, 0, framesQueued * frameDurationUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+                                aIn, 0, 0, framesQueued * frameDurationUs,
+                                MediaCodec.BUFFER_FLAG_END_OF_STREAM,
                             )
                             audioEos = true
                         }
                     } else {
-                        engine.seek(startSec)
+                        engine.seek(start + audioTime)
                         val read = if (NativeEngine.nativeReadAudioPcm(pcm, audioChunk, channels)) audioChunk else 0
                         val aIn = audioCodec.dequeueInputBuffer(5_000L)
                         if (aIn >= 0 && read > 0) {
@@ -205,14 +263,15 @@ class VideoExporter(private val engine: EditorEngine) {
                             ab.clear()
                             ab.put(audioBytes, 0, read * channels * 2)
                             audioCodec.queueInputBuffer(
-                                aIn, 0, read * channels * 2, audioFed * 1_000_000L / sampleRate, 0,
+                                aIn, 0, read * channels * 2,
+                                audioFed * 1_000_000L / sampleRate, 0,
                             )
                             audioFed += read
                         }
                     }
                 }
 
-                val vDone = drain(videoCodec, true) { videoTrack }
+                val vDone = drain(firstEncoder, true) { videoTrack }
                 if (audioCodec != null) drain(audioCodec, false) { audioTrack }
                 startMuxerIfReady()
                 if (vDone && videoEosQueued) videoDone = true
@@ -223,7 +282,8 @@ class VideoExporter(private val engine: EditorEngine) {
                 val aIn = audioCodec.dequeueInputBuffer(5_000L)
                 if (aIn >= 0) {
                     audioCodec.queueInputBuffer(
-                        aIn, 0, 0, framesQueued * frameDurationUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+                        aIn, 0, 0, framesQueued * frameDurationUs,
+                        MediaCodec.BUFFER_FLAG_END_OF_STREAM,
                     )
                     audioEos = true
                 }
@@ -243,11 +303,12 @@ class VideoExporter(private val engine: EditorEngine) {
                 }
             }
 
-            bitmap.recycle()
-            return Result(outFile, framesWritten, audioMuxed, null)
+            if (outBitmap !== sourceBitmap) outBitmap.recycle()
+            sourceBitmap.recycle()
+            return Result(outFile, framesWritten, audioMuxed, null, note)
         } catch (t: Throwable) {
             runCatching { outFile.delete() }
-            return Result(null, framesWritten, audioMuxed, t.message ?: t.javaClass.simpleName)
+            return Result(null, framesWritten, audioMuxed, t.message ?: t.javaClass.simpleName, note)
         } finally {
             runCatching { videoCodec?.stop() }
             runCatching { videoCodec?.release() }
@@ -258,20 +319,6 @@ class VideoExporter(private val engine: EditorEngine) {
             engine.seek(resumeTime)
             if (wasPlaying) engine.togglePlay()
         }
-    }
-
-    private fun renderInto(bitmap: Bitmap, pixels: IntArray, time: Double, w: Int, h: Int): Boolean {
-        engine.seek(time)
-        if (!NativeEngine.nativeRenderFrame()) return false
-        if (!NativeEngine.nativeCopyFrame(bitmap)) return false
-        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
-        return true
-    }
-
-    private fun bitrateFor(w: Int, h: Int, fps: Int): Int {
-        val pixels = w.toLong() * h.toLong() * fps.toLong()
-        val target = (pixels * 0.09).toLong()
-        return target.coerceIn(1_000_000L, 40_000_000L).toInt()
     }
 
     /** ARGB ints → NV12 (BT.601, full range). */
@@ -296,5 +343,4 @@ class VideoExporter(private val engine: EditorEngine) {
             i++
         }
     }
-
 }

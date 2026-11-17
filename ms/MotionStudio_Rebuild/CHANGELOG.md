@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — delivery pass
+
+### Added
+- Export sheet: delivery presets, custom frame size, custom frame rate (1–240 fps,
+  including 23.976 / 29.97 / 59.94), H.264 or HEVC, bitrate slider and
+  whole-timeline / from-playhead range
+- `ExportSettings` model: output scaling keeps the delivery aspect, frame and size
+  estimates are shown before encoding, and a device without HEVC falls back to H.264
+- `VideoExporter` now honours size, frame rate, bitrate, codec and range, and encodes
+  the engine's mixed audio as AAC
+- Canvas ratio presets (9:16, 16:9, 1:1, 4:5, 21:9, 4:3) and a custom project frame rate
+- Preview ratio guides (16:9, 9:16, 1:1, 4:5, 21:9): the delivery crop is shaded, the
+  composite itself is never cut
+- Import placement: at the playhead or appended to the end of the timeline
+
 ## 2026.0.0-alpha — 2026-10-30
 
 ### Added

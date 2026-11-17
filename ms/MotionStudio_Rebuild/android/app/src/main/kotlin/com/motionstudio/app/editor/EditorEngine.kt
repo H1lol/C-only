@@ -454,7 +454,11 @@ class EditorEngine(
     }
 
     /** Imports media and drops it on the first track at the playhead. */
-    fun importMedia(path: String, displayName: String? = null): Boolean {
+    fun importMedia(
+        path: String,
+        displayName: String? = null,
+        appendToEnd: Boolean = false,
+    ): Boolean {
         val mediaId = NativeEngine.nativeImportMedia(path)
         if (mediaId <= 0) {
             status = "Could not import that file"
@@ -464,8 +468,9 @@ class EditorEngine(
         val media = doc.media.firstOrNull { it.id == mediaId }
         val length = media?.duration?.takeIf { it > 0.05 } ?: 5.0
         val trackId = selectedTrackId.takeIf { it > 0 } ?: doc.tracks.firstOrNull()?.id ?: -1
+        val at = if (appendToEnd) doc.timelineEnd else time
         if (trackId > 0) {
-            val clipId = NativeEngine.nativeAddClip(trackId, mediaId, time, length)
+            val clipId = NativeEngine.nativeAddClip(trackId, mediaId, at, length)
             if (clipId > 0) {
                 selectedTrackId = trackId
                 selectedClipId = clipId
@@ -473,7 +478,7 @@ class EditorEngine(
         }
         markDirty()
         reload()
-        status = "Imported ${displayName ?: media?.name ?: "media"}"
+        status = "Imported ${displayName ?: media?.name ?: "media"} at " + "%.2f".format(at) + "s"
         return true
     }
 
@@ -670,6 +675,14 @@ class EditorEngine(
         status = "Project set to ${width}×${height} @ ${fps.toInt()} fps"
         return true
     }
+
+    // ---- Canvas / preview shape --------------------------------------------
+
+    /** Aspect guide drawn by the preview; [PreviewRatio.Project] follows the frame. */
+    var previewRatio by mutableStateOf(com.motionstudio.app.model.PreviewRatio.Project)
+
+    /** Where an import lands: the playhead, or the end of the timeline. */
+    var appendImportsAtEnd by mutableStateOf(false)
 
     // ---- Shape masks -------------------------------------------------------
 
