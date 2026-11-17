@@ -72,6 +72,8 @@ object NativeEngine {
         gain: Float,
     )
     external fun nativeGradeClear()
+    /** Fills 7 floats with the persisted master grade; true when one is active. */
+    external fun nativeGradeGet(out: FloatArray): Boolean
     external fun nativeScopesHistogram(out: IntArray, bins: Int): Boolean
 
     /** "mediacodec", "ffmpeg" or "slate" — the last one means no real decoding. */

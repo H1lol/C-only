@@ -80,6 +80,82 @@ double extract_number(const std::string& j, const std::string& key, double def =
 }
 
 
+// One row per writable AudioFxParams field, shared by the writer and the reader
+// so a new knob cannot be persisted under one name and parsed under another.
+struct FxField {
+  const char* key;
+  float AudioFxParams::*member;
+};
+const FxField kFxFields[] = {
+    {"wet", &AudioFxParams::wet},
+    {"gain_db", &AudioFxParams::gain_db},
+    {"low_gain_db", &AudioFxParams::low_gain_db},
+    {"low_freq_hz", &AudioFxParams::low_freq_hz},
+    {"mid_gain_db", &AudioFxParams::mid_gain_db},
+    {"mid_freq_hz", &AudioFxParams::mid_freq_hz},
+    {"mid_q", &AudioFxParams::mid_q},
+    {"high_gain_db", &AudioFxParams::high_gain_db},
+    {"high_freq_hz", &AudioFxParams::high_freq_hz},
+    {"threshold_db", &AudioFxParams::threshold_db},
+    {"ratio", &AudioFxParams::ratio},
+    {"attack_ms", &AudioFxParams::attack_ms},
+    {"release_ms", &AudioFxParams::release_ms},
+    {"makeup_db", &AudioFxParams::makeup_db},
+    {"delay_ms", &AudioFxParams::delay_ms},
+    {"feedback", &AudioFxParams::feedback},
+    {"room_size", &AudioFxParams::room_size},
+    {"damping", &AudioFxParams::damping},
+    {"ceiling_db", &AudioFxParams::ceiling_db},
+};
+
+// Reads the balanced object that follows `"key":`, skipping braces inside
+// strings. Returns the object including its braces, or an empty string.
+std::string extract_object(const std::string& j, const std::string& key) {
+  const auto k = j.find("\"" + key + "\"");
+  if (k == std::string::npos) return {};
+  const auto open = j.find('{', k);
+  if (open == std::string::npos) return {};
+  int depth = 0;
+  bool in_string = false, escaped = false;
+  for (size_t i = open; i < j.size(); ++i) {
+    const char c = j[i];
+    if (in_string) {
+      if (escaped) escaped = false;
+      else if (c == '\\') escaped = true;
+      else if (c == '"') in_string = false;
+      continue;
+    }
+    if (c == '"') { in_string = true; continue; }
+    if (c == '{') ++depth;
+    else if (c == '}') { if (--depth == 0) return j.substr(open, i - open + 1); }
+  }
+  return {};
+}
+
+// Reads a flat number array written as "key": [a, b, c].
+int parse_float_array(const std::string& obj, const std::string& key, float* out, int n) {
+  if (!out || n <= 0) return 0;
+  const auto p = obj.find("\"" + key + "\"");
+  if (p == std::string::npos) return 0;
+  const auto open = obj.find('[', p);
+  if (open == std::string::npos) return 0;
+  const auto close = obj.find(']', open);
+  if (close == std::string::npos) return 0;
+  std::string nums = obj.substr(open + 1, close - open - 1);
+  int slot = 0;
+  std::string cur;
+  nums += ',';
+  for (char ch : nums) {
+    if (ch == ',') {
+      if (slot < n) out[slot++] = static_cast<float>(std::atof(cur.c_str()));
+      cur.clear();
+    } else if (ch != ' ' && ch != '\n' && ch != '\t') {
+      cur.push_back(ch);
+    }
+  }
+  return slot;
+}
+
 std::vector<std::string> array_objects(const std::string& j, const std::string& key) {
   std::vector<std::string> out;
   auto k = j.find("\"" + key + "\""); if (k == std::string::npos) return out;
@@ -111,6 +187,7 @@ struct ProjectSession::Impl {
   ClipId next_clip = 1;
   uint64_t next_marker = 1;
   std::vector<TimelineMarker> marker_list;
+  MasterState master;
   static constexpr int kMaxUndo = 50;
   std::vector<std::string> undo_stack;
   std::vector<std::string> redo_stack;
@@ -175,6 +252,13 @@ const std::vector<TimelineMarker>& ProjectSession::markers() const {
   return impl_->marker_list;
 }
 
+const MasterState& ProjectSession::master() const { return impl_->master; }
+
+void ProjectSession::set_master(const MasterState& state) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->master = state;
+}
+
 Error ProjectSession::new_project(const std::string& name, int width, int height, float fps) {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->meta = {};
@@ -191,6 +275,7 @@ Error ProjectSession::new_project(const std::string& name, int width, int height
   impl_->next_clip = 1;
   impl_->next_marker = 1;
   impl_->marker_list.clear();
+  impl_->master = MasterState{};
   impl_->ensure_default_tracks();
   impl_->current_time = 0.0;
   impl_->playing = false;
@@ -326,7 +411,25 @@ std::string ProjectSession::to_json() const {
     if (ti + 1 < impl_->track_list.size()) ss << ",";
     ss << "\n";
   }
-  ss << "  ]\n}\n";
+  ss << "  ],\n  \"master\": {";
+  {
+    const MasterState& m = impl_->master;
+    ss << "\"grade_enabled\": " << (m.grade_enabled ? "true" : "false") << ", \"grade\": [";
+    for (int i = 0; i < 7; ++i) {
+      ss << m.grade[i];
+      if (i < 6) ss << ", ";
+    }
+    ss << "],\n    \"audio\": [";
+    for (size_t i = 0; i < m.audio.size(); ++i) {
+      const AudioFxParams& p = m.audio[i];
+      ss << "{\"kind\": " << static_cast<int>(p.kind)
+         << ", \"enabled\": " << (p.enabled ? "true" : "false");
+      for (const auto& f : kFxFields) ss << ", \"" << f.key << "\": " << p.*(f.member);
+      ss << "}";
+      if (i + 1 < m.audio.size()) ss << ", ";
+    }
+    ss << "]}\n}\n";
+  }
   return ss.str();
 }
 
@@ -454,6 +557,26 @@ Error ProjectSession::load_from_json(const std::string& json) {
       if (x.outgoing && x.incoming) t.transitions.push_back(x);
     }
     if(t.name.empty())t.name="Track"; impl_->track_list.push_back(std::move(t));
+  }
+  // Master finish state: absent in older documents, which means "no grade and
+  // no inserts" rather than an error.
+  impl_->master = MasterState{};
+  {
+    const std::string mobj = extract_object(json, "master");
+    if (!mobj.empty()) {
+      impl_->master.grade_enabled = mobj.find("\"grade_enabled\": true") != std::string::npos;
+      parse_float_array(mobj, "grade", impl_->master.grade, 7);
+      for (const auto& ao : array_objects(mobj, "audio")) {
+        AudioFxParams p;
+        const int kind = static_cast<int>(extract_number(ao, "kind", 0));
+        if (kind < 0 || kind > static_cast<int>(AudioFxKind::Limiter)) continue;
+        p.kind = static_cast<AudioFxKind>(kind);
+        p.enabled = ao.find("\"enabled\": false") == std::string::npos;
+        for (const auto& f : kFxFields)
+          p.*(f.member) = static_cast<float>(extract_number(ao, f.key, p.*(f.member)));
+        impl_->master.audio.push_back(p);
+      }
+    }
   }
   impl_->ensure_default_tracks();
   impl_->dirty=false; impl_->current_time=0; impl_->playing=false;

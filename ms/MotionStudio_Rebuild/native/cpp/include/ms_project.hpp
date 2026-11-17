@@ -8,6 +8,7 @@
 #include "ms_clip_motion.hpp"
 #include "ms_text.hpp"
 #include "ms_mask.hpp"
+#include "ms_audio_fx.hpp"
 #include <string>
 #include <vector>
 #include <memory>
@@ -94,6 +95,18 @@ struct ProjectMeta {
   int version = 1;
 };
 
+/**
+ * Finish-stage state that the document owns: the master preview grade and the
+ * master audio insert chain. The engine holds the live copies (a grade is not a
+ * clip property, and the DSP chain keeps running state), so it hands them to the
+ * document on every change and takes them back on load/undo.
+ */
+struct MasterState {
+  bool grade_enabled = false;
+  float grade[7] = {0.f, 1.f, 1.f, 0.f, 0.f, 1.f, 1.f};
+  std::vector<AudioFxParams> audio;
+};
+
 class ProjectSession {
 public:
   ProjectSession();
@@ -126,6 +139,10 @@ public:
   uint64_t add_marker(TimeSec time, const std::string& name = "");
   bool remove_marker(uint64_t id);
   const std::vector<TimelineMarker>& markers() const;
+
+  // Master grade + master audio inserts, serialized with the document.
+  const MasterState& master() const;
+  void set_master(const MasterState& state);
 
   // Clips / timeline edit
   ClipId add_clip(TrackId track, const ClipInfo& clip);

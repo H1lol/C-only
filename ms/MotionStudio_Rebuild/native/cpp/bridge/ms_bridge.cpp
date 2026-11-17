@@ -255,6 +255,7 @@ void ms_grade_set(float exposure, float contrast, float saturation, float temper
     ms::Engine::instance().set_grade(exposure, contrast, saturation, temperature, lift, gamma, gain);
 }
 void ms_grade_clear() { ms::Engine::instance().clear_grade(); }
+int ms_grade_get(float* out7) { return ms::Engine::instance().get_grade(out7) ? 1 : 0; }
 int ms_scopes_histogram(int* out, int bins) {
     return ms::Engine::instance().scopes_histogram(out, bins) ? 0 : -1;
 }
@@ -430,14 +431,13 @@ int ms_effect_set_enabled(int track_id, int clip_id, int index, int enabled) {
     return ms::Engine::instance().set_effect_enabled(track_id, clip_id, index, enabled != 0) ? 0 : -1;
 }
 int ms_audio_set_master_gain(float gain_db) {
-    ms::AudioEffectChain& chain = ms::Engine::instance().audio_effects();
+    ms::Engine& engine = ms::Engine::instance();
     ms::AudioFxParams gain;
     gain.kind = ms::AudioFxKind::Gain;
     gain.gain_db = gain_db;
     gain.enabled = true;
-    if (chain.parameters().empty()) chain.add(gain);
-    else if (!chain.set(0, gain)) return -1;
-    return 0;
+    if (engine.audio_insert_count() == 0) return engine.add_audio_insert(gain) >= 0 ? 0 : -1;
+    return engine.set_audio_insert(0, gain) ? 0 : -1;
 }
 
 // ---- Master insert chain -------------------------------------------------
@@ -485,16 +485,18 @@ int ms_audio_fx_add(int kind) {
     if (kind < 0 || kind > static_cast<int>(ms::AudioFxKind::Limiter)) return -1;
     ms::AudioFxParams params;
     params.kind = static_cast<ms::AudioFxKind>(kind);
-    return static_cast<int>(eng().audio_effects().add(params));
+    // Through the engine so the insert lands in the project document and on the
+    // undo stack.
+    return eng().add_audio_insert(params);
 }
 
 int ms_audio_fx_remove(int index) {
     if (index < 0) return -1;
-    return eng().audio_effects().remove(static_cast<std::size_t>(index)) ? 0 : -1;
+    return eng().remove_audio_insert(index) ? 0 : -1;
 }
 
 int ms_audio_fx_clear(void) {
-    eng().audio_effects().clear();
+    eng().clear_audio_inserts();
     return 0;
 }
 
@@ -507,13 +509,12 @@ int ms_audio_fx_kind(int index) {
 
 int ms_audio_fx_set_enabled(int index, int enabled) {
     if (index < 0) return -1;
-    auto& chain = eng().audio_effects();
-    auto all = chain.parameters();
+    auto all = eng().audio_effects().parameters();
     if (static_cast<std::size_t>(index) >= all.size()) return -1;
     ms::AudioFxParams params = all[static_cast<std::size_t>(index)];
     params.enabled = enabled != 0;
     // set() drops the cached DSP state, so a bypass takes effect on the next block.
-    return chain.set(static_cast<std::size_t>(index), params) ? 0 : -1;
+    return eng().set_audio_insert_enabled(index, params.enabled) ? 0 : -1;
 }
 
 int ms_audio_fx_enabled(int index) {
@@ -527,12 +528,11 @@ int ms_audio_fx_set_param(int index, const char* name, float value) {
     if (index < 0 || !name) return -1;
     const AudioFxField* field = find_audio_fx_field(name);
     if (!field) return -1;
-    auto& chain = eng().audio_effects();
-    auto all = chain.parameters();
+    auto all = eng().audio_effects().parameters();
     if (static_cast<std::size_t>(index) >= all.size()) return -1;
     ms::AudioFxParams params = all[static_cast<std::size_t>(index)];
     params.*(field->member) = value;
-    return chain.set(static_cast<std::size_t>(index), params) ? 0 : -1;
+    return eng().set_audio_insert(index, params) ? 0 : -1;
 }
 
 float ms_audio_fx_get_param(int index, const char* name, float fallback) {

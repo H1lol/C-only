@@ -268,6 +268,42 @@ int main() {
         check(!e.clip_peaks(track, clip, 0, peaks), "peaks refused for zero bins");
     }
 
+    // Master finish state: the grade and the master insert chain belong to the
+    // document, so they survive save/load and the chain is undoable.
+    {
+        e.set_grade(0.4f, 1.2f, 0.9f, 0.1f, 0.f, 1.1f, 1.f);
+        AudioFxParams eq;
+        eq.kind = AudioFxKind::ParametricEq;
+        eq.low_gain_db = 3.5f;
+        check(e.add_audio_insert(eq) == 0, "master insert added");
+
+        const std::string mj = e.project_to_json();
+        check(mj.find("\"master\"") != std::string::npos, "master state serialized");
+        check(mj.find("\"low_gain_db\": 3.5") != std::string::npos, "insert params serialized");
+        check(e.load_project_json(mj), "reload with master state");
+
+        float g7[7] = {};
+        check(e.get_grade(g7), "master grade restored as active");
+        check(std::fabs(g7[0] - 0.4f) < 1e-4f && std::fabs(g7[1] - 1.2f) < 1e-4f,
+              "master grade values restored");
+        auto inserts = e.audio_effects().parameters();
+        check(inserts.size() == 1 && inserts[0].kind == AudioFxKind::ParametricEq &&
+                  std::fabs(inserts[0].low_gain_db - 3.5f) < 1e-4f,
+              "master insert restored");
+
+        check(e.remove_audio_insert(0), "master insert removed");
+        check(e.audio_effects().parameters().empty(), "chain empty after remove");
+        check(e.undo(), "undo after a chain edit");
+        check(e.audio_effects().parameters().size() == 1, "undo restored the insert");
+        e.clear_audio_inserts();
+        check(e.audio_effects().parameters().empty(), "chain cleared");
+        check(e.has_grade(), "clearing the chain leaves the grade alone");
+        e.clear_grade();
+        check(!e.has_grade(), "grade cleared");
+        const ms::ClipInfo* still = e.project().find_clip(track, clip);
+        check(still != nullptr, "undo of a chain edit kept the timeline");
+    }
+
     // Tracks
     const TrackId audio = e.add_track("A1", 1);
     check(audio != 0, "audio track added");

@@ -67,6 +67,9 @@ bool Engine::new_project(const std::string& name, int width, int height, float f
     audio_->set_session(project_.get());
     audio_->stop();
     audio_->prepare();
+    // A new project starts with no grade and empty inserts, whatever the last
+    // one left in the engine.
+    apply_master_state();
     impl_->current_time = 0.0;
     impl_->frame_index = 0;
     impl_->playing = false;
@@ -113,6 +116,8 @@ bool Engine::load_project_json(const std::string& json) {
     audio_->set_session(project_.get());
     audio_->stop();
     audio_->prepare();
+    // The document's grade and master inserts are the truth after a load.
+    apply_master_state();
     auto prep = player_->prepare();
     // Opening a saved project never goes through new_project(), so this has to
     // bring the engine up itself: render_frame() bails immediately while
@@ -124,7 +129,8 @@ bool Engine::load_project_json(const std::string& json) {
     return prep.ok();
 }
 
-std::string Engine::project_to_json() const {
+std::string Engine::project_to_json() {
+    sync_master_state();
     std::string json = project_->to_json();
     // The comp is stored as its own record string inside the project document so
     // a saved node network reopens with the timeline that fed it.
@@ -266,8 +272,15 @@ void Engine::set_look_strength(float strength) {
     look_strength_ = std::clamp(strength, 0.f, 1.f);
 }
 
-Error Engine::save_project(const std::string& path) { return project_->save_to_file(path); }
-Error Engine::autosave_project(const std::string& path) { autosave_.set_path(path); return autosave_.force(); }
+Error Engine::save_project(const std::string& path) {
+    sync_master_state();
+    return project_->save_to_file(path);
+}
+Error Engine::autosave_project(const std::string& path) {
+    sync_master_state();
+    autosave_.set_path(path);
+    return autosave_.force();
+}
 PerformanceStats Engine::performance() const { return perf_.stats(); }
 
 void Engine::resize(int width, int height) {
@@ -302,6 +315,84 @@ AudioPlaybackInfo Engine::audio_info() const {
 
 AudioEffectChain& Engine::audio_effects() { return audio_->effects(); }
 
+void Engine::sync_master_state() {
+    if (!project_ || !audio_) return;
+    MasterState s;
+    s.grade_enabled = grade_active_;
+    std::copy(std::begin(grade_), std::end(grade_), s.grade);
+    s.audio = audio_->effects().parameters();
+    project_->set_master(s);
+}
+
+void Engine::apply_master_state() {
+    if (!project_ || !audio_) return;
+    const MasterState& s = project_->master();
+    grade_active_ = s.grade_enabled;
+    std::copy(std::begin(s.grade), std::end(s.grade), grade_);
+    AudioEffectChain& chain = audio_->effects();
+    chain.clear();
+    for (const auto& p : s.audio) chain.add(p);
+    frame_cache_->clear();
+}
+
+int Engine::add_audio_insert(const AudioFxParams& params) {
+    if (!audio_ || !project_) return -1;
+    sync_master_state();
+    project_->push_undo();
+    const std::size_t index = audio_->effects().add(params);
+    sync_master_state();
+    project_->mark_dirty();
+    return static_cast<int>(index);
+}
+
+bool Engine::remove_audio_insert(int index) {
+    if (!audio_ || !project_ || index < 0) return false;
+    if (static_cast<std::size_t>(index) >= audio_->effects().parameters().size()) return false;
+    sync_master_state();
+    project_->push_undo();
+    if (!audio_->effects().remove(static_cast<std::size_t>(index))) return false;
+    sync_master_state();
+    project_->mark_dirty();
+    return true;
+}
+
+void Engine::clear_audio_inserts() {
+    if (!audio_ || !project_) return;
+    if (audio_->effects().parameters().empty()) return;
+    sync_master_state();
+    project_->push_undo();
+    audio_->effects().clear();
+    sync_master_state();
+    project_->mark_dirty();
+}
+
+bool Engine::set_audio_insert(int index, const AudioFxParams& params) {
+    if (!audio_ || !project_ || index < 0) return false;
+    if (!audio_->effects().set(static_cast<std::size_t>(index), params)) return false;
+    sync_master_state();
+    project_->mark_dirty();
+    return true;
+}
+
+bool Engine::set_audio_insert_enabled(int index, bool enabled) {
+    if (!audio_ || !project_ || index < 0) return false;
+    const auto all = audio_->effects().parameters();
+    if (static_cast<std::size_t>(index) >= all.size()) return false;
+    AudioFxParams params = all[static_cast<std::size_t>(index)];
+    if (params.enabled == enabled) return true;
+    params.enabled = enabled;
+    sync_master_state();
+    project_->push_undo();
+    if (!audio_->effects().set(static_cast<std::size_t>(index), params)) return false;
+    sync_master_state();
+    project_->mark_dirty();
+    return true;
+}
+
+int Engine::audio_insert_count() const {
+    return audio_ ? static_cast<int>(audio_->effects().parameters().size()) : 0;
+}
+
 bool Engine::set_effect_param(EffectId effect, const std::string& name, float value) {
     (void)effect; (void)name; (void)value;
     // Effect IDs are intentionally lightweight in the first native API. Parameters are stored by name in EffectOp.
@@ -318,9 +409,22 @@ void Engine::set_grade(float exposure, float contrast, float saturation, float t
     grade_[5] = gamma > 0.01f ? gamma : 1.f;
     grade_[6] = gain < 0.f ? 0.f : gain;
     grade_active_ = true;
+    // Persisted with the document, but not undoable per slider frame.
+    sync_master_state();
+    project_->mark_dirty();
 }
 
-void Engine::clear_grade() { grade_active_ = false; }
+void Engine::clear_grade() {
+    grade_active_ = false;
+    sync_master_state();
+    project_->mark_dirty();
+}
+
+bool Engine::get_grade(float* out7) const {
+    if (!out7) return false;
+    std::copy(std::begin(grade_), std::end(grade_), out7);
+    return grade_active_;
+}
 
 bool Engine::scopes_histogram(int* out, int bins) const {
     if (!out || bins < 2 || bins > 256 || !last_frame_ || !last_frame_->valid()) return false;
@@ -616,14 +720,20 @@ bool Engine::render_title_preview(const std::string& text, const TextStyle& styl
 bool Engine::undo() {
     if (!project_) return false;
     const bool ok = project_->undo();
-    if (ok) invalidate_frames();
+    if (ok) {
+        apply_master_state();
+        invalidate_frames();
+    }
     return ok;
 }
 
 bool Engine::redo() {
     if (!project_) return false;
     const bool ok = project_->redo();
-    if (ok) invalidate_frames();
+    if (ok) {
+        apply_master_state();
+        invalidate_frames();
+    }
     return ok;
 }
 

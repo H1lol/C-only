@@ -283,6 +283,15 @@ Java_com_motionstudio_app_native_NativeEngine_nativeGradeClear(JNIEnv*, jobject)
 }
 
 JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeGradeGet(JNIEnv* env, jobject, jfloatArray out) {
+    if (!out || env->GetArrayLength(out) < 7) return JNI_FALSE;
+    float tmp[7] = {};
+    const int active = ms_grade_get(tmp);
+    env->SetFloatArrayRegion(out, 0, 7, tmp);
+    return active ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeScopesHistogram(JNIEnv* env, jobject, jintArray out, jint bins) {
     if (!out || bins <= 0) return JNI_FALSE;
     if (env->GetArrayLength(out) < bins * 4) return JNI_FALSE;

@@ -118,6 +118,9 @@ int ms_track_flags(int track_id, int muted, int locked, int visible, int solo);
 void ms_grade_set(float exposure, float contrast, float saturation, float temperature,
                   float lift, float gamma, float gain);
 void ms_grade_clear();
+/** Fills 7 floats (exposure, contrast, saturation, temperature, lift, gamma,
+ *  gain). Returns 1 when a master grade is active, 0 otherwise. */
+int ms_grade_get(float* out7);
 // Fills 4*bins ints (R, G, B, luma). Returns 0 on success.
 int ms_scopes_histogram(int* out, int bins);
 

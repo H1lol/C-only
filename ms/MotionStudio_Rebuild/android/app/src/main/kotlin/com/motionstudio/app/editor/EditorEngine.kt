@@ -381,6 +381,10 @@ class EditorEngine(
             playing = state[3] == 1.0
         }
         if (selectedTrackId == -1) selectedTrackId = doc.tracks.firstOrNull()?.id ?: -1
+        // The document carries the master grade and the insert chain, so both can
+        // have changed under us (open, undo, redo).
+        syncGradeFromEngine()
+        audioRevision++
     }
 
     fun seek(seconds: Double) {
@@ -521,6 +525,26 @@ class EditorEngine(
         gradeGain = gain
         NativeEngine.nativeGradeSet(exposure, contrast, saturation, temperature, lift, gamma, gain)
         gradeActive = true
+    }
+
+    private val gradeScratch = FloatArray(7)
+
+    /**
+     * Pulls the master grade back from the engine. The document owns it now, so a
+     * load or an undo can change it without the sliders being told.
+     */
+    fun syncGradeFromEngine(): Boolean {
+        val active = NativeEngine.nativeGradeGet(gradeScratch)
+        gradeActive = active
+        if (!active) return false
+        gradeExposure = gradeScratch[0]
+        gradeContrast = gradeScratch[1]
+        gradeSaturation = gradeScratch[2]
+        gradeTemperature = gradeScratch[3]
+        gradeLift = gradeScratch[4]
+        gradeGamma = gradeScratch[5]
+        gradeGain = gradeScratch[6]
+        return true
     }
 
     fun resetGrade() {

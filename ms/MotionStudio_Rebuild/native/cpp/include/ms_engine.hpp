@@ -4,6 +4,7 @@
 #include "ms_project.hpp"
 #include "ms_timeline_player.hpp"
 #include "ms_audio_playback.hpp"
+#include "ms_audio_fx.hpp"
 #include "ms_image.hpp"
 #include "ms_lut.hpp"
 #include "ms_node_graph.hpp"
@@ -31,7 +32,7 @@ public:
 
     // Project
     bool load_project_json(const std::string& json);
-    std::string project_to_json() const;
+    std::string project_to_json();
 
     // Playback
     void seek(TimeSec t);
@@ -57,6 +58,22 @@ public:
     Error read_audio(float* interleaved, int frames, int channels = 2);
     AudioPlaybackInfo audio_info() const;
     AudioEffectChain& audio_effects();
+
+    // ---- Document-persisted master state ----------------------------------
+    // The master grade and the master audio insert chain are engine state, but
+    // the project document owns them: they survive save/load/restart. Structure
+    // edits of the chain are undoable; knob values are persisted without an
+    // undo entry each, so one slider drag cannot bury the timeline edits.
+    /** Writes the live grade + chain into the document (no undo entry). */
+    void sync_master_state();
+    /** Pushes the document's master state back into the engine after a load. */
+    void apply_master_state();
+    int  add_audio_insert(const AudioFxParams& params);
+    bool remove_audio_insert(int index);
+    void clear_audio_inserts();
+    bool set_audio_insert(int index, const AudioFxParams& params);
+    bool set_audio_insert_enabled(int index, bool enabled);
+    int  audio_insert_count() const;
 
     // Effect helpers
     bool add_effect_to_clip(ClipId clip, const std::string& base_id);
@@ -96,6 +113,9 @@ public:
                    float lift, float gamma, float gain);
     void clear_grade();
     bool has_grade() const { return grade_active_; }
+    /** Fills 7 floats (exposure, contrast, saturation, temperature, lift, gamma,
+     *  gain) and reports whether a master grade is active. */
+    bool get_grade(float* out7) const;
     /** Fills 4*bins ints: R, G, B, luma. bins <= 256. */
     bool scopes_histogram(int* out, int bins) const;
 
