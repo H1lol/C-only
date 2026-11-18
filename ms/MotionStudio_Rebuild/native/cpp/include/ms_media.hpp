@@ -49,6 +49,20 @@ public:
   virtual void close() = 0;
   virtual Error seek_ms(int64_t ms) = 0;
   virtual Error read_video(ImageBuffer& out, int64_t& pts_ms) = 0;
+
+  /**
+   * Reads the frame that should be showing at `ms`.
+   *
+   * The default is a seek followed by one read, which makes every frame cost a
+   * keyframe seek. Decoders that can decode forward override this to reuse the
+   * codec position when the request is a small step ahead of the last frame,
+   * which is what sequential playback and export actually ask for.
+   */
+  virtual Error read_video_at(int64_t ms, ImageBuffer& out, int64_t& pts_ms) {
+    Error e = seek_ms(ms);
+    if (!e.ok()) return e;
+    return read_video(out, pts_ms);
+  }
   virtual Error read_audio(AudioBuffer& out, int64_t& pts_ms) = 0;
   virtual const MediaProbeResult& info() const = 0;
 };

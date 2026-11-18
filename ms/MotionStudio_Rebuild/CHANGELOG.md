@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — streaming decode and an off-thread preview
+
+### Changed
+- Playback and export no longer seek to the previous keyframe for every frame.
+  `IMediaDecoder::read_video_at` has a streaming fast path in the MediaCodec
+  decoder: a small step forward decodes ahead from the current codec position
+  instead of flushing and re-decoding the whole GOP, and a request for the same
+  instant returns a cached frame. On a 2-second GOP the old path decoded up to
+  60 frames to show one; the forward path decodes one
+- The preview renders on its own thread. It used to be a Runnable on the UI
+  thread, so a heavy composite blocked input and could trip the ANR watchdog
+- Playhead time now comes from the UI thread (`post` from the render thread), so
+  Compose state is never written from the worker
+
+### Fixed
+- `MediaCodecDecoder` reported the *seek target* as every frame's timestamp
+  (`pts_ms = pos_ms_`) instead of the decoded frame's own presentation time. The
+  timestamp handed back for a frame is now the frame's real PTS
+
 ## Unreleased — crash-proofing and diagnostics
 
 ### Added

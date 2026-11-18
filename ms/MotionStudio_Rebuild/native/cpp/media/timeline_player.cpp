@@ -170,9 +170,10 @@ Error TimelinePlayer::render_frame(TimeSec t, ImageBuffer& out) {
         frame.clear(0.f, 0.f, 0.f, 0.f);
       }
     } else if (dec) {
-      dec->seek_ms(ms);
+      // Streaming read: a step forward decodes one frame instead of seeking
+      // back to the keyframe and re-decoding the whole GOP.
       int64_t pts = 0;
-      Error e = dec->read_video(frame, pts);
+      Error e = dec->read_video_at(ms, frame, pts);
       if (!e.ok() || !frame.valid()) {
         frame.allocate(W, H);
         frame.clear(0.2f, 0.25f, 0.35f, 1.f);

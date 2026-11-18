@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -254,8 +255,14 @@ public:
           const Error e = convert(yuv, static_cast<size_t>(info.size), out);
           AMediaCodec_releaseOutputBuffer(codec_, static_cast<size_t>(out_index), false);
           if (!e.ok()) return e;
-          pts_ms = pos_ms_;
-          pos_ms_ = info.presentationTimeUs > 0 ? info.presentationTimeUs / 1000 : pos_ms_ + 33;
+          // Report the frame's own timestamp. This used to report pos_ms_ — the
+          // position that was *asked for* — so a frame decoded after a seek was
+          // labelled with the seek target rather than with when it really is.
+          const int64_t frame_pts =
+              info.presentationTimeUs > 0 ? info.presentationTimeUs / 1000 : pos_ms_;
+          pts_ms = frame_pts;
+          last_pts_ = frame_pts;
+          pos_ms_ = frame_pts;
           have_frame_ = true;
           return Error::success();
         }
@@ -275,6 +282,59 @@ public:
       return Error::success();
     }
     return Error::make(ErrorCode::MediaDecodeFailed, "no frame decoded");
+  }
+
+  /**
+   * Frame-at-time with a streaming fast path.
+   *
+   * Playback and export both step forward one frame at a time, but the plain
+   * seek+read path restarts decoding at the previous keyframe for every frame,
+   * so a 2-second GOP costs 60 frame decodes per displayed frame. When the
+   * request is a small step ahead of the frame already decoded, this decodes
+   * forward instead and only skips the frames in between.
+   *
+   * Requests for the same instant still hit the codec's released buffer, so the
+   * frame is cached once and copied; rendering a paused playhead asks for that
+   * instant repeatedly.
+   */
+  Error read_video_at(int64_t ms, ImageBuffer& out, int64_t& pts_ms) override {
+    if (!open_) return Error::make(ErrorCode::NotInitialized, "decoder closed");
+    const int64_t target = std::max<int64_t>(0, ms);
+
+    if (cached_valid_ && std::llabs(target - cached_request_ms_) <= kSameFrameMs) {
+      if (!copy_cached(out)) return Error::make(ErrorCode::OutOfMemory, "frame copy");
+      pts_ms = cached_pts_;
+      return Error::success();
+    }
+
+    const int64_t ahead = target - last_pts_;
+    const bool stream_forward =
+        have_frame_ && !eos_ && !input_done_ && ahead > 0 && ahead <= kStreamWindowMs;
+    if (!stream_forward) {
+      Error seek = seek_ms(target);
+      if (!seek.ok()) return seek;
+    }
+
+    int64_t got = 0;
+    Error e = read_video(out, got);
+    if (!e.ok()) {
+      cached_valid_ = false;
+      return e;
+    }
+
+    // Decoding forward from a keyframe returns frames before the request; walk
+    // to the one that covers it.
+    for (int guard = 0; guard < 64 && got + 1 < target; ++guard) {
+      ImageBuffer next;
+      int64_t next_pts = got;
+      if (!read_video(next, next_pts).ok()) break;
+      got = next_pts;
+      out = std::move(next);
+    }
+
+    pts_ms = got;
+    store_cache(out, target, got);
+    return Error::success();
   }
 
   Error read_audio(AudioBuffer& out, int64_t& pts_ms) override {
@@ -357,6 +417,45 @@ private:
   int slice_h_ = 0;
   int32_t color_format_ = kColorFormatFlexible;
   int64_t pos_ms_ = 0;
+  int64_t last_pts_ = -1;
+
+  // One-frame cache so a repeated request for the same instant does not have to
+  // reopen the codec at a keyframe.
+  ImageBuffer cached_;
+  int64_t cached_pts_ = 0;
+  int64_t cached_request_ms_ = -1;
+  bool cached_valid_ = false;
+  static constexpr int64_t kSameFrameMs = 2;
+  static constexpr int64_t kStreamWindowMs = 500;
+
+  bool copy_cached(ImageBuffer& out) const {
+    if (!cached_valid_ || !cached_.valid()) return false;
+    if (!out.allocate(cached_.width(), cached_.height(), cached_.format(), cached_.color_space()))
+      return false;
+    std::memcpy(out.data(), cached_.data(), cached_.stride() * static_cast<size_t>(cached_.height()));
+    return true;
+  }
+
+  void store_cache(const ImageBuffer& src, int64_t request_ms, int64_t pts) {
+    if (!src.valid()) {
+      cached_valid_ = false;
+      return;
+    }
+    // Bounded: one 4K RGBA frame is 33 MB and is not worth holding.
+    const size_t bytes = src.stride() * static_cast<size_t>(src.height());
+    if (bytes == 0 || bytes > (64u << 20)) {
+      cached_valid_ = false;
+      return;
+    }
+    if (!cached_.allocate(src.width(), src.height(), src.format(), src.color_space())) {
+      cached_valid_ = false;
+      return;
+    }
+    std::memcpy(cached_.data(), src.data(), bytes);
+    cached_pts_ = pts;
+    cached_request_ms_ = request_ms;
+    cached_valid_ = true;
+  }
 };
 
 std::unique_ptr<IMediaDecoder> create_android_decoder(const std::string& path) {
