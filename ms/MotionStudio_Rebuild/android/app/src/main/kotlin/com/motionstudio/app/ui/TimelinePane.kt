@@ -28,6 +28,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -217,6 +223,7 @@ fun TimelinePane(
                         span = span,
                         contentWidth = contentWidth,
                         time = engine.time,
+                        fps = engine.fps,
                         markers = doc.markers.map { it.time },
                         onSeek = { x -> engine.seek(timeAt(x)) },
                     )
@@ -345,6 +352,7 @@ private fun Ruler(
     span: Double,
     contentWidth: Dp,
     time: Double,
+    fps: Double,
     markers: List<Double>,
     onSeek: (Float) -> Unit,
 ) {
@@ -412,12 +420,24 @@ private fun Ruler(
             )
         }
 
-        // Playhead grip: a tab the user can actually grab.
+        // Playhead tab carrying its own timecode, so the current position is
+        // readable where the eye already is instead of only in a corner readout.
         val playX = xDp(time, span, contentWidth)
         Box(
-            Modifier.offset(x = playX - 5.dp).width(10.dp).height(9.dp)
-                .background(MsColors.accent, RoundedCornerShape(bottomStart = 3.dp, bottomEnd = 3.dp))
-        )
+            Modifier.offset(x = (playX - 28.dp).coerceAtLeast(0.dp), y = 1.dp)
+                .width(56.dp).height(13.dp)
+                .background(MsColors.accent, RoundedCornerShape(3.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                EditorEngine.formatTimecode(time, fps),
+                color = MsColors.background,
+                fontSize = 8.sp,
+                fontFamily = MsFonts.mono,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
+        }
         Box(
             Modifier.offset(x = playX - 0.5.dp).width(1.dp).fillMaxHeight()
                 .background(MsColors.accent)
@@ -528,31 +548,44 @@ private fun TrackHeader(
                 fontFamily = MsFonts.mono,
             )
         }
-        Column(Modifier.padding(end = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        // The eye is always there, because "which layer can I see" is the first
+        // question on a stacked timeline. Mute and remove only appear on the
+        // selected track, so an unselected row stays quiet and leaves the name
+        // the width it needs.
+        Row(
+            Modifier.padding(end = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier.size(26.dp).clickable { onVisible() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    if (track.visible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                    if (track.visible) "Hide ${track.name}" else "Show ${track.name}",
+                    tint = if (track.visible) MsColors.textSecondary else MsColors.textMuted,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            if (selected) {
                 Box(
-                    Modifier.size(15.dp)
-                        .background(
-                            if (track.muted) MsColors.warning.copy(alpha = 0.25f) else MsColors.surfaceHighest,
-                            RoundedCornerShape(2.dp),
-                        )
-                        .clickable { onMute() },
+                    Modifier.size(24.dp).clickable { onMute() },
                     contentAlignment = Alignment.Center,
-                ) { Text("M", color = MsColors.textSecondary, fontSize = 8.sp, fontFamily = MsFonts.mono) }
+                ) {
+                    Icon(
+                        if (track.muted) Icons.AutoMirrored.Filled.VolumeOff
+                        else Icons.AutoMirrored.Filled.VolumeUp,
+                        if (track.muted) "Unmute ${track.name}" else "Mute ${track.name}",
+                        tint = if (track.muted) MsColors.warning else MsColors.textSecondary,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
                 Box(
-                    Modifier.size(15.dp)
-                        .background(
-                            if (!track.visible) MsColors.error.copy(alpha = 0.2f) else MsColors.surfaceHighest,
-                            RoundedCornerShape(2.dp),
-                        )
-                        .clickable { onVisible() },
+                    Modifier.size(20.dp).clickable { onRemove() },
                     contentAlignment = Alignment.Center,
-                ) { Text("V", color = MsColors.textSecondary, fontSize = 8.sp, fontFamily = MsFonts.mono) }
-                Box(
-                    Modifier.size(15.dp).background(MsColors.surfaceHighest, RoundedCornerShape(2.dp))
-                        .clickable { onRemove() },
-                    contentAlignment = Alignment.Center,
-                ) { Text("×", color = MsColors.textMuted, fontSize = 9.sp) }
+                ) {
+                    Text("×", color = MsColors.textMuted, fontSize = 14.sp)
+                }
             }
         }
     }
@@ -682,6 +715,14 @@ private fun ClipBox(
                 )
             },
     ) {
+        // Selected clips get a solid cap line so the selection reads across the
+        // whole timeline at a glance, not only from the tint behind the name.
+        if (selected) {
+            Box(
+                Modifier.align(Alignment.TopCenter).fillMaxWidth().height(3.dp)
+                    .background(MsColors.accent)
+            )
+        }
         Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
             if (wideEnoughForGrips) {
                 TrimGrip(

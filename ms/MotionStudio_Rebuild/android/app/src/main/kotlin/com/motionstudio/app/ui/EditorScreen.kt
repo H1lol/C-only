@@ -24,13 +24,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.BlurOn
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.OpenWith
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Redo
-import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
@@ -46,13 +55,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.motionstudio.app.editor.EditorEngine
+import com.motionstudio.app.editor.TitleOptions
 import com.motionstudio.app.native.NativeEngine
 import com.motionstudio.app.ui.theme.MsColors
 import com.motionstudio.app.ui.theme.MsFonts
@@ -146,7 +158,12 @@ fun EditorScreen(
         BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
             val landscape = maxWidth > maxHeight
             Column(Modifier.fillMaxSize()) {
-                CommandBar(engine = engine, onBack = onBack, onSave = { engine.save() })
+                EditorHeader(
+                    engine = engine,
+                    onBack = onBack,
+                    onSettings = { showMore = true },
+                    onExport = { showExport = true },
+                )
                 if (landscape) {
                     Row(Modifier.weight(1f).fillMaxWidth()) {
                         Column(Modifier.weight(0.60f).fillMaxHeight()) {
@@ -171,17 +188,18 @@ fun EditorScreen(
                                 onOpenMask = { showMask = true },
                                 onOpenMotion = { showMotion = true },
                             )
-                            ActionRail(
+                            ToolDock(
                                 onImport = { picker.launch(arrayOf("video/*", "audio/*", "image/*")) },
-                                onSplit = { engine.splitAtPlayhead() },
+                                onText = {
+                                    engine.addTitle("TITLE", TitleOptions())
+                                    showText = true
+                                },
                                 onEffects = { showEffects = true },
                                 onLook = { showLooks = true },
                                 onColor = { showColor = true },
                                 onMotion = { showMotion = true },
-                                onText = { showText = true },
                                 onMask = { showMask = true },
                                 onAudio = { showAudio = true },
-                                onExport = { showExport = true },
                                 onMore = { showMore = true },
                             )
                         }
@@ -202,17 +220,18 @@ fun EditorScreen(
                         onOpenMask = { showMask = true },
                         onOpenMotion = { showMotion = true },
                     )
-                    ActionRail(
+                    ToolDock(
                         onImport = { picker.launch(arrayOf("video/*", "audio/*", "image/*")) },
-                        onSplit = { engine.splitAtPlayhead() },
+                        onText = {
+                            engine.addTitle("TITLE", TitleOptions())
+                            showText = true
+                        },
                         onEffects = { showEffects = true },
                         onLook = { showLooks = true },
                         onColor = { showColor = true },
                         onMotion = { showMotion = true },
-                        onText = { showText = true },
                         onMask = { showMask = true },
                         onAudio = { showAudio = true },
-                        onExport = { onExportFrame() },
                         onMore = { showMore = true },
                     )
                 }
@@ -281,12 +300,22 @@ private fun WorkspacePanel(
 
 // --------------------------------------------------------------- chrome ----
 
+/**
+ * Header: project identity on the left, the delivery button on the right.
+ * Export is the one filled control on the screen because it is the thing a
+ * phone editor is ultimately for; everything else is an icon.
+ */
 @Composable
-private fun CommandBar(engine: EditorEngine, onBack: () -> Unit, onSave: () -> Unit) {
+private fun EditorHeader(
+    engine: EditorEngine,
+    onBack: () -> Unit,
+    onSettings: () -> Unit,
+    onExport: () -> Unit,
+) {
     Column {
         Row(
-            Modifier.fillMaxWidth().height(48.dp).background(MsColors.surface)
-                .padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth().height(58.dp).background(MsColors.surface)
+                .padding(start = 2.dp, end = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
@@ -299,13 +328,14 @@ private fun CommandBar(engine: EditorEngine, onBack: () -> Unit, onSave: () -> U
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        engine.doc.name,
+                        engine.doc.name.ifBlank { "Untitled" },
                         color = MsColors.textPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(7.dp))
                     Box(
                         Modifier.size(5.dp).background(
                             if (engine.dirty) MsColors.warning else MsColors.success,
@@ -314,22 +344,30 @@ private fun CommandBar(engine: EditorEngine, onBack: () -> Unit, onSave: () -> U
                     )
                 }
                 Text(
-                    "${engine.doc.width}×${engine.doc.height}  ·  ${engine.fps.toInt()} FPS  ·  " +
-                        "${EditorEngine.formatTimecode(engine.duration, engine.fps)}",
+                    EditorEngine.formatTimecode(engine.time, engine.fps) + " / " +
+                        EditorEngine.formatTimecode(engine.duration, engine.fps),
                     color = MsColors.textTertiary,
-                    fontSize = 9.sp,
+                    fontSize = 11.sp,
                     fontFamily = MsFonts.mono,
                     maxLines = 1,
                 )
             }
-            IconButton(onClick = { engine.undo() }, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Filled.Undo, "Undo", tint = MsColors.textSecondary)
+            IconButton(onClick = onSettings, modifier = Modifier.size(38.dp)) {
+                Icon(Icons.Filled.Settings, "Settings", tint = MsColors.textSecondary)
             }
-            IconButton(onClick = { engine.redo() }, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Filled.Redo, "Redo", tint = MsColors.textSecondary)
-            }
-            IconButton(onClick = onSave, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Filled.Save, "Save", tint = MsColors.accentSoft)
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MsColors.accent)
+                    .clickable { onExport() }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    "Export",
+                    color = MsColors.background,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                )
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(MsColors.border))
@@ -450,21 +488,27 @@ private fun Viewport(engine: EditorEngine, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Transport: previous/next keyframe around a large play button, then undo/redo.
+ * The keyframe buttons fall back to a single frame when the selected clip has no
+ * keys, so they never feel dead.
+ */
 @Composable
 private fun TransportBar(engine: EditorEngine) {
     Column {
         Box(Modifier.fillMaxWidth().height(1.dp).background(MsColors.border))
         Row(
-            Modifier.fillMaxWidth().height(46.dp).background(MsColors.surface)
-                .padding(horizontal = 6.dp),
+            Modifier.fillMaxWidth().height(54.dp).background(MsColors.surface)
+                .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            IconButton(onClick = { engine.step(-1) }, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Filled.SkipPrevious, "Previous frame", tint = MsColors.textSecondary)
+            IconButton(onClick = { engine.jumpToKeyframe(-1) }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Filled.SkipPrevious, "Previous keyframe", tint = MsColors.textSecondary)
             }
             Box(
                 Modifier
-                    .size(34.dp)
+                    .size(42.dp)
                     .background(MsColors.accent, CircleShape)
                     .clickable { engine.togglePlay() },
                 contentAlignment = Alignment.Center,
@@ -473,13 +517,13 @@ private fun TransportBar(engine: EditorEngine) {
                     if (engine.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                     if (engine.playing) "Pause" else "Play",
                     tint = Color.Black,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(24.dp),
                 )
             }
-            IconButton(onClick = { engine.step(1) }, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Filled.SkipNext, "Next frame", tint = MsColors.textSecondary)
+            IconButton(onClick = { engine.jumpToKeyframe(1) }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Filled.SkipNext, "Next keyframe", tint = MsColors.textSecondary)
             }
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.weight(1f))
             Text(
                 EditorEngine.formatTimecode(engine.time, engine.fps),
                 color = MsColors.accentSoft,
@@ -487,35 +531,32 @@ private fun TransportBar(engine: EditorEngine) {
                 fontFamily = MsFonts.mono,
                 fontWeight = FontWeight.Bold,
             )
-            Text(
-                " / ${EditorEngine.formatTimecode(engine.duration, engine.fps)}",
-                color = MsColors.textMuted,
-                fontSize = 11.sp,
-                fontFamily = MsFonts.mono,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                "F${(engine.time * engine.fps).toInt()}",
-                color = MsColors.textMuted,
-                fontSize = 9.sp,
-                fontFamily = MsFonts.mono,
-            )
+            Spacer(Modifier.width(10.dp))
+            IconButton(onClick = { engine.undo() }, modifier = Modifier.size(38.dp)) {
+                Icon(Icons.AutoMirrored.Filled.Undo, "Undo", tint = MsColors.textSecondary)
+            }
+            IconButton(onClick = { engine.redo() }, modifier = Modifier.size(38.dp)) {
+                Icon(Icons.AutoMirrored.Filled.Redo, "Redo", tint = MsColors.textSecondary)
+            }
         }
     }
 }
 
+/**
+ * The tool dock: one icon and one word per action, at thumb size.
+ * Mono-labelled chips were the previous rail and they read as debug output; a
+ * layer tool has to look like something you press.
+ */
 @Composable
-private fun ActionRail(
+private fun ToolDock(
     onImport: () -> Unit,
-    onSplit: () -> Unit,
+    onText: () -> Unit,
     onEffects: () -> Unit,
     onLook: () -> Unit,
     onColor: () -> Unit,
     onMotion: () -> Unit,
-    onText: () -> Unit,
     onMask: () -> Unit,
     onAudio: () -> Unit,
-    onExport: () -> Unit,
     onMore: () -> Unit,
 ) {
     Column {
@@ -523,43 +564,40 @@ private fun ActionRail(
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(46.dp)
-                .background(MsColors.surfaceHigh)
+                .height(66.dp)
+                .background(MsColors.surface)
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp),
+                .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            RailCommand("IMPORT", onImport)
-            RailCommand("SPLIT", onSplit)
-            RailCommand("FX", onEffects)
-            RailCommand("LOOK", onLook)
-            RailCommand("GRADE", onColor)
-            RailCommand("MOTION", onMotion)
-            RailCommand("TITLE", onText)
-            RailCommand("MASK", onMask)
-            RailCommand("MIX", onAudio)
-            RailCommand("EXPORT", onExport)
-            RailCommand("MORE", onMore)
+            DockButton(Icons.Filled.VideoLibrary, "Media", onImport)
+            DockButton(Icons.Filled.TextFields, "Text", onText)
+            DockButton(Icons.Filled.AutoFixHigh, "Effects", onEffects)
+            DockButton(Icons.Filled.Palette, "Look", onLook)
+            DockButton(Icons.Filled.Tune, "Grade", onColor)
+            DockButton(Icons.Filled.OpenWith, "Motion", onMotion)
+            DockButton(Icons.Filled.BlurOn, "Mask", onMask)
+            DockButton(Icons.Filled.GraphicEq, "Audio", onAudio)
+            DockButton(Icons.Filled.MoreHoriz, "More", onMore)
         }
     }
 }
 
 @Composable
-private fun RailCommand(label: String, onClick: () -> Unit) {
-    Box(
+private fun DockButton(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Column(
         Modifier
-            .border(1.dp, MsColors.border, RoundedCornerShape(2.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 9.dp, vertical = 5.dp)
+            .width(62.dp)
+            .height(58.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        Text(
-            label,
-            color = MsColors.textSecondary,
-            fontSize = 9.sp,
-            fontFamily = MsFonts.mono,
-            letterSpacing = 0.6.sp,
-        )
+        Icon(icon, label, tint = MsColors.accentSoft, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.height(5.dp))
+        Text(label, color = MsColors.textSecondary, fontSize = 10.sp, maxLines = 1)
     }
 }
 

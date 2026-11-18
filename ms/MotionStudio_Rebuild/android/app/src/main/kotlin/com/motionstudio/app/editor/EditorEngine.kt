@@ -409,6 +409,43 @@ class EditorEngine(
 
     fun step(frames: Int) = seek(time + frames / fps)
 
+    /**
+     * Every keyframe time on the selected clip, on the timeline clock.
+     * The engine reports keys in clip-local seconds, so the clip start is added
+     * back; duplicate times across channels are folded so a frame with four
+     * curves is one stop, not four.
+     */
+    fun keyframeTimes(): List<Double> {
+        val (trackId, clipId) = selection() ?: return emptyList()
+        val clip = doc.clipById(trackId, clipId) ?: return emptyList()
+        val times = mutableListOf<Double>()
+        for (prop in 0..3) keyframes(prop).forEach { times += clip.start + it.time }
+        return times.sorted().fold(mutableListOf()) { acc, t ->
+            if (acc.isEmpty() || t - acc.last() > 1e-3) acc.add(t)
+            acc
+        }
+    }
+
+    /**
+     * Jumps to the nearest key before or after the playhead (direction -1/+1).
+     * With nothing animated there is no key to land on, so the same button steps
+     * one frame rather than doing nothing at all.
+     */
+    fun jumpToKeyframe(direction: Int): Boolean {
+        val times = keyframeTimes()
+        val target = if (direction < 0) {
+            times.lastOrNull { it < time - 1e-3 }
+        } else {
+            times.firstOrNull { it > time + 1e-3 }
+        }
+        if (target == null) {
+            step(if (direction < 0) -1 else 1)
+            return false
+        }
+        seek(target)
+        return true
+    }
+
     fun togglePlay() {
         if (playing) {
             NativeEngine.nativePause()

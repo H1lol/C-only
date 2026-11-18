@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — editor chrome
+
+### Changed
+- The editor is laid out the way a phone editor is laid out: a header with the project
+  name, `time / duration` and one filled **Export** button; a transport row of previous
+  keyframe / play / next keyframe / undo / redo; and a bottom tool dock of icon+label
+  buttons (Media, Text, Effects, Look, Grade, Motion, Mask, Audio, More) instead of a
+  strip of mono-uppercase chips that read as debug output
+- Undo and redo moved out of the header into the transport, where they sit next to the
+  playhead they act on, and the save icon gave way to the settings sheet (autosave saves)
+- Text in the dock creates a title at the playhead and opens the text sheet, instead of
+  only editing an existing title
+- Timeline: the playhead carries its own timecode tab, the selected clip gets a solid
+  accent cap, and track headers show a visibility (eye) toggle with mute/remove only on
+  the selected track, so an unselected row stays quiet
+
+### Added
+- `Engine.keyframeTimes()` and `jumpToKeyframe(dir)`: the transport jumps to the nearest
+  key on the selected clip and falls back to a one-frame step when nothing is animated
+
 ## Unreleased — proxy media
 
 ### Added
