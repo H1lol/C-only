@@ -227,6 +227,23 @@ int ms_keyframe_set_interp(int track_id, int clip_id, int prop, int index, int i
 int ms_keyframe_sample(int track_id, int clip_id, int prop, double t0, double t1, float* out,
                        int bins);
 
+// ---- Proxy media ---------------------------------------------------------
+// A proxy is a small, already-encoded stand-in for a large source file. The app
+// generates it with the platform codec and registers the file it wrote here;
+// preview then decodes the proxy instead of the source. Export calls
+// ms_proxy_enabled(0) first so the delivered master still comes from the source.
+// Registered proxies are per-process state, not project data: they are rebuilt
+// from disk by registering whatever files exist when a project opens.
+int ms_proxy_register(const char* media_path, const char* proxy_path);
+int ms_proxy_unregister(const char* media_path);
+void ms_proxy_clear(void);
+int ms_proxy_count(void);
+// Writes the registered proxy path into buf (empty when none). Returns its length.
+int ms_proxy_for(const char* media_path, char* buf, int size);
+// Returns the previous state. Changing it reopens cached decoders.
+int ms_proxy_enabled(int on);
+int ms_proxy_is_enabled(void);
+
 // ---- Clip effect stack ----
 // Returns the new effect's stack index, or -1 on failure.
 int ms_effect_add(int track_id, int clip_id, const char* base_id);

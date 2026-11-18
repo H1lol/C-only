@@ -76,7 +76,17 @@ Export carries AAC audio, and audio clips now draw a real waveform from decoded 
 23 CPU effects against Kdenlive's roughly 84 hand-written effect definitions plus 145 MLT avfilter and 118 frei0r entries. Most of that gap is provided by third-party GPL plugins we cannot link; adding them would relicense the app. Audio effects are still the thinnest area: the master bus has six inserts, but tracks cannot host their own chain and there is no audio keyframing.
 
 ### 7. Playback performance
-Decoding now uses MediaCodec, but playback is still seek-per-frame rather than a streaming pipeline, so 4K will not play smoothly. Compositing remains CPU into an RGBA8 buffer (`gpu_mock`), and there are no proxies or cache-management UI.
+Closed since this list was written: decode is no longer seek-per-frame (`IMediaDecoder::read_video_at`
+streams forward from the codec position and caches the frame for a repeated instant), the preview
+renders on its own thread, and proxy media exists — `ProxyGenerator` transcodes a source to
+1280×720 H.264 with the platform codecs, `ProxyStore` manages and re-registers the files, and
+`create_media_decoder` decodes the proxy for preview while export disables it so delivery still
+comes from the source. Generation is a button in MORE → PROXY MEDIA.
+
+Still missing: proxies are not created automatically on import, there is no per-clip override or
+"which clips are proxied" indicator, no frame-cache size/eviction UI, compositing is still CPU
+into RGBA8 (`gpu_mock`) with no GPU path, and nothing here has run on a device, so thermal and
+battery behaviour at 4K is unmeasured.
 
 ### 7b. Comp network depth
 The node graph evaluates (Constant, Blur, Grade, Saturate, Invert, Merge, Over, Viewer) and is saved
@@ -101,7 +111,7 @@ Size presets and 24/30/60 fps are editable in the session sheet. Missing: arbitr
 
 ## Test coverage now
 
-- `ctest` **13/13**: existing suites plus `ms_lut_test` (cube parsing, blend, rejection) and `ms_edit_test` (move, trim, ripple, tracks, effect add/param/enable, JSON round-trip, undo, delete, transition add/persist/remove, font resolution, title rasterisation, word wrap, title persistence).
+- `ctest` **18/18**: existing suites plus `ms_lut_test` (cube parsing, blend, rejection), `ms_edit_test` (move, trim, ripple, tracks, effect add/param/enable, JSON round-trip, undo, delete, transition add/persist/remove, font resolution, title rasterisation, word wrap, title persistence, keyframe curves) and `ms_proxy_test` (proxy resolution, enable/disable, no-op registration, generation counter).
 - `:app:testDebugUnitTest` **6/6**: native JSON contract, timeline end, malformed JSON, aspect ratio, timecode, clip lookup.
 - Android build: `:app:assembleDebug` green, both ABIs, all assets packaged (6 title fonts, 6 looks, 7 UI fonts).
 - `ms_title_demo <dir>` renders four title cards to PPM for visual inspection without a device — this is how the rasteriser was confirmed, not just unit-tested.

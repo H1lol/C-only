@@ -450,6 +450,51 @@ Java_com_motionstudio_app_native_NativeEngine_nativeCompGetMedia(JNIEnv* env, jo
     return env->NewStringUTF(buf);
 }
 
+// ------------------------------------------------------------- proxies -----
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeProxyRegister(JNIEnv* env, jobject,
+                                                                 jstring media, jstring proxy) {
+    return ms_proxy_register(to_std(env, media).c_str(), to_std(env, proxy).c_str()) == 0
+               ? JNI_TRUE
+               : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeProxyUnregister(JNIEnv* env, jobject,
+                                                                   jstring media) {
+    ms_proxy_unregister(to_std(env, media).c_str());
+}
+
+JNIEXPORT void JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeProxyClear(JNIEnv*, jobject) {
+    ms_proxy_clear();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeProxyCount(JNIEnv*, jobject) {
+    return ms_proxy_count();
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeProxyFor(JNIEnv* env, jobject,
+                                                            jstring media) {
+    char buf[1024];
+    const std::string path = to_std(env, media);
+    ms_proxy_for(path.c_str(), buf, sizeof(buf));
+    return env->NewStringUTF(buf);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeProxySetEnabled(JNIEnv*, jobject,
+                                                                   jboolean on) {
+    return ms_proxy_enabled(on ? 1 : 0) == 1 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeProxyEnabled(JNIEnv*, jobject) {
+    return ms_proxy_is_enabled() == 1 ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeCompSetEnabled(JNIEnv*, jobject, jint id,
                                                                    jboolean enabled) {

@@ -2,6 +2,7 @@ package com.motionstudio.app
 
 import android.app.Application
 import com.motionstudio.app.diag.Diagnostics
+import com.motionstudio.app.media.ProxyStore
 
 /**
  * Earliest hook in the process. The crash handler has to exist before the
@@ -13,5 +14,8 @@ class MsApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         Diagnostics.install(this)
+        // Proxy files live under filesDir, so the storage root is known before
+        // the editor can open a project.
+        ProxyStore.init(this)
     }
 }

@@ -76,6 +76,10 @@ class VideoExporter(private val engine: EditorEngine) {
         val wasPlaying = engine.playing
         val resumeTime = engine.time
         if (wasPlaying) engine.togglePlay()
+        // Delivery must come from the source files, never from a preview proxy.
+        // The engine reopens its decoders when this flips, and the finally block
+        // puts proxies back for the preview.
+        val proxiesWereOn = NativeEngine.available && NativeEngine.nativeProxySetEnabled(false)
 
         var videoCodec: MediaCodec? = firstEncoder
         var audioCodec: MediaCodec? = null
@@ -316,6 +320,7 @@ class VideoExporter(private val engine: EditorEngine) {
             runCatching { audioCodec?.release() }
             if (muxerStarted) runCatching { muxer?.stop() }
             runCatching { muxer?.release() }
+            if (proxiesWereOn) NativeEngine.nativeProxySetEnabled(true)
             engine.seek(resumeTime)
             if (wasPlaying) engine.togglePlay()
         }

@@ -28,8 +28,10 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,12 +42,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.motionstudio.app.editor.EditorEngine
 import com.motionstudio.app.export.ExportSettings
+import com.motionstudio.app.media.ProxyGenerator
+import com.motionstudio.app.media.ProxyStore
 import com.motionstudio.app.model.CanvasRatio
 import com.motionstudio.app.model.PreviewRatio
 import com.motionstudio.app.native.NativeEngine
 import com.motionstudio.app.ui.theme.MsColors
 import java.io.File
 import java.io.FileOutputStream
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,6 +65,11 @@ fun MoreSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var gainDb by remember { mutableFloatStateOf(0f) }
     var fpsText by remember { mutableStateOf(ExportSettings.formatFps(engine.fps)) }
+    var proxyBusy by remember { mutableStateOf(false) }
+    var proxyProgress by remember { mutableFloatStateOf(0f) }
+    var proxyStatus by remember { mutableStateOf<String?>(null) }
+    var proxyRevision by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
     ModalBottomSheet(
@@ -200,6 +212,85 @@ fun MoreSheet(
                         Text("Remove", color = MsColors.textTertiary, fontSize = 11.sp)
                     }
                 }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            SectionLabel("PROXY MEDIA")
+            val proxyFiles = remember(proxyRevision) { ProxyStore.count() }
+            val proxyBytes = remember(proxyRevision) { ProxyStore.totalBytes() }
+            Text(
+                "$proxyFiles file(s) · ${"%.1f".format(proxyBytes / 1_048_576.0)} MB · " +
+                    "preview decodes 720p stand-ins, export still reads the originals",
+                color = MsColors.textTertiary,
+                fontSize = 11.sp,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    enabled = !proxyBusy,
+                    onClick = {
+                        val media = engine.doc.media
+                        scope.launch {
+                            proxyBusy = true
+                            proxyProgress = 0f
+                            proxyStatus = null
+                            val missing = withContext(Dispatchers.IO) { ProxyStore.missing(media) }
+                            if (missing.isEmpty()) {
+                                proxyStatus =
+                                    "Nothing to build: every source is already small enough or proxied."
+                            } else {
+                                var done = 0
+                                var failed = 0
+                                for ((index, m) in missing.withIndex()) {
+                                    val result = withContext(Dispatchers.IO) {
+                                        ProxyGenerator.generate(m.path) { p ->
+                                            proxyProgress = (index + p) / missing.size
+                                        }
+                                    }
+                                    when (result) {
+                                        is ProxyGenerator.Result.Done -> {
+                                            NativeEngine.nativeProxyRegister(
+                                                m.path, result.file.absolutePath,
+                                            )
+                                            done++
+                                        }
+                                        is ProxyGenerator.Result.Skipped -> done++
+                                        is ProxyGenerator.Result.Failed -> failed++
+                                    }
+                                }
+                                proxyStatus = buildString {
+                                    append("Built $done of ${missing.size} proxy file(s)")
+                                    if (failed > 0) append(", $failed failed")
+                                    append("\nPlayback uses them now; export re-reads the source.")
+                                }
+                            }
+                            proxyBusy = false
+                            proxyRevision++
+                        }
+                    },
+                ) {
+                    Text(
+                        if (proxyBusy) {
+                            "Building… ${(proxyProgress * 100).toInt()}%"
+                        } else {
+                            "Generate for this project"
+                        },
+                        color = MsColors.accentSoft,
+                        fontSize = 13.sp,
+                    )
+                }
+                TextButton(
+                    enabled = !proxyBusy && proxyFiles > 0,
+                    onClick = {
+                        ProxyStore.clear()
+                        proxyStatus = "Deleted every proxy file. Preview decodes the sources again."
+                        proxyRevision++
+                    },
+                ) {
+                    Text("Delete all", color = MsColors.textSecondary, fontSize = 13.sp)
+                }
+            }
+            proxyStatus?.let {
+                Text(it, color = MsColors.textSecondary, fontSize = 11.sp)
             }
 
             Spacer(Modifier.height(8.dp))

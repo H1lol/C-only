@@ -6,6 +6,7 @@
 #include "ms_text.hpp"
 #include "ms_finishing.hpp"
 #include "ms_mask.hpp"
+#include "ms_proxy_registry.hpp"
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -32,9 +33,19 @@ float TimelinePlayer::output_fps() const {
   return session_ ? session_->meta().fps : 24.f;
 }
 
+void TimelinePlayer::reopen_after_proxy_change() {
+  const int generation = proxy_registry().generation();
+  if (generation == proxy_generation_) return;
+  proxy_generation_ = generation;
+  // The decoders still point at the files they were opened with, which may now
+  // be the wrong ones. Dropping them makes the next lookup reopen.
+  decoders_.clear();
+}
+
 Error TimelinePlayer::prepare() {
   if (!session_) return Error::make(ErrorCode::NotInitialized, "no session");
   decoders_.clear();
+  proxy_generation_ = proxy_registry().generation();
   for (const auto& m : session_->media()) {
     auto dec = create_media_decoder(m.path);
     Error e = Error::success();
@@ -48,6 +59,7 @@ Error TimelinePlayer::prepare() {
 }
 
 IMediaDecoder* TimelinePlayer::decoder_for(MediaId id) {
+  reopen_after_proxy_change();
   auto it = decoders_.find(id);
   if (it != decoders_.end()) return it->second.get();
   if (!session_) return nullptr;
@@ -144,6 +156,7 @@ static void composite_premul(const ImageBuffer& src, ImageBuffer& dst) {
 
 Error TimelinePlayer::render_frame(TimeSec t, ImageBuffer& out) {
   if (!session_) return Error::make(ErrorCode::NotInitialized, "no session");
+  reopen_after_proxy_change();
   const int W = output_width();
   const int H = output_height();
   if (!out.allocate(W, H, PixelFormat::RGBA8))

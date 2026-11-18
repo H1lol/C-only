@@ -1,5 +1,6 @@
 #include "ms_ffmpeg_io.hpp"
 #include "ms_android_decode.hpp"
+#include "ms_proxy_registry.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
@@ -279,15 +280,19 @@ Error FFmpegDecoder::read_audio(AudioBuffer& out, int64_t& pts_ms) {
 
 std::unique_ptr<IMediaDecoder> create_media_decoder(const std::string& path,
                                                     const FFmpegPaths& paths) {
+  // Every decoder in the app is made here, which is why the proxy swap lives
+  // here too: preview opens the registered 720p stand-in, export disables the
+  // registry first so delivery always comes from the source file.
+  const std::string decode_path = proxy_registry().resolve(path);
 #if defined(__ANDROID__)
   // The platform decoder comes first: there is no ffmpeg binary on Android, and
   // silently falling through to SlateDecoder is what made imported clips render
   // as a flat placeholder colour.
-  if (auto android_dec = create_android_decoder(path)) return android_dec;
+  if (auto android_dec = create_android_decoder(decode_path)) return android_dec;
 #endif
   if (ffmpeg_available(paths)) {
     auto d = std::make_unique<FFmpegDecoder>(paths);
-    if (d->open(path).ok()) return d;
+    if (d->open(decode_path).ok()) return d;
   }
   auto s = std::make_unique<SlateDecoder>();
   s->open(path);

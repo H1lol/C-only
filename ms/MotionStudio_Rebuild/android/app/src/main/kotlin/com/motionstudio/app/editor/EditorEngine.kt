@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import com.motionstudio.app.audio.NativeAudioPlayer
 import com.motionstudio.app.data.ProjectStore
 import com.motionstudio.app.diag.Diagnostics
+import com.motionstudio.app.media.ProxyStore
 import com.motionstudio.app.model.ProjectDoc
 import com.motionstudio.app.native.NativeEngine
 import java.io.File
@@ -385,6 +386,9 @@ class EditorEngine(
     fun reload() {
         runCatching { refreshComp() }
         doc = ProjectDoc.parse(NativeEngine.nativeProjectToJson())
+        // Proxies are files on disk, not project data: re-register whatever is
+        // there so a reopened project previews through them again.
+        if (NativeEngine.available) runCatching { ProxyStore.sync(doc.media) }
         val state = NativeEngine.nativePreviewState()
         if (state.size >= 4) {
             time = state[0]

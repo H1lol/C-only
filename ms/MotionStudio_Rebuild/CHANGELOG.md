@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased — proxy media
+
+### Added
+- Proxy media. A large source is transcoded once into a 1280×720 H.264 stand-in and
+  the engine decodes that while you scrub and play. `ProxyGenerator` decodes to an
+  `ImageReader` surface, nearest-neighbour downscales the Y and UV planes into NV12
+  and encodes/muxes with `MediaCodec` + `MediaMuxer` — there is no ffmpeg on Android
+  and shipping one would drag the whole GPL toolchain in
+- `ProxyStore`: proxies are named from a SHA-1 of the absolute source path under
+  `filesDir/proxies`, so regenerating replaces the old file and two projects pointing
+  at the same footage share it. Existing proxies are re-registered on every project
+  load, which is why they never appear in the document
+- MORE → PROXY MEDIA: generate for the open project with live progress, see file count
+  and disk use, delete all
+- C ABI `ms_proxy_register/unregister/clear/count/for/enabled/is_enabled` plus the JNI
+  mirrors. The swap lives in `create_media_decoder`, the single place every decoder is
+  built, so preview, scrubbing and the comp viewer all pick it up
+- `ms_proxy_test`: resolution, the enabled/disabled switch, no-op re-registration and
+  the generation counter (18/18 under `ctest`)
+
+### Changed
+- Export disables proxies before it renders and restores them in `finally`, so a
+  delivered master is still encoded from the source rather than from a 720p stand-in
+- `TimelinePlayer` tracks the registry generation and drops its cached decoders when
+  proxies are registered, enabled or disabled — otherwise a decoder opened before a
+  proxy existed would keep reading the original
+
+### Notes
+- Proxies carry no audio on purpose: preview audio decodes from the source through
+  `android_decode_audio`, so a video-only proxy changes nothing about sound
+- Compiled and unit-tested only. Generation and playback have not run on a device
+
 ## Unreleased — keyframe curves
 
 ### Added

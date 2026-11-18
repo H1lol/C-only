@@ -1,8 +1,11 @@
 #include "ms_bridge.h"
 #include "../include/ms_engine.hpp"
 #include "../include/ms_android_decode.hpp"
+#include "../include/ms_proxy_registry.hpp"
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 
 extern "C" {
 // ---------------------------------------------------------------- comp ------
@@ -575,4 +578,39 @@ float ms_audio_fx_get_param(int index, const char* name, float fallback) {
 int ms_track_gain(int track_id, float gain) {
     return eng().set_track_gain(static_cast<ms::TrackId>(track_id), gain) ? 0 : -1;
 }
+
+// ------------------------------------------------------------- proxies ------
+int ms_proxy_register(const char* media_path, const char* proxy_path) {
+    if (!media_path || !proxy_path) return -1;
+    if (!std::filesystem::exists(proxy_path)) return -1;
+    ms::proxy_registry().set(media_path, proxy_path);
+    return 0;
+}
+
+int ms_proxy_unregister(const char* media_path) {
+    if (!media_path) return -1;
+    ms::proxy_registry().erase(media_path);
+    return 0;
+}
+
+void ms_proxy_clear(void) { ms::proxy_registry().clear(); }
+
+int ms_proxy_count(void) { return static_cast<int>(ms::proxy_registry().size()); }
+
+int ms_proxy_for(const char* media_path, char* buf, int size) {
+    if (!media_path || !buf || size <= 0) return 0;
+    const std::string p = ms::proxy_registry().proxy_for(media_path);
+    const int n = static_cast<int>(std::min<size_t>(p.size(), static_cast<size_t>(size - 1)));
+    std::memcpy(buf, p.data(), static_cast<size_t>(n));
+    buf[n] = '\0';
+    return n;
+}
+
+int ms_proxy_enabled(int on) {
+    const bool previous = ms::proxy_registry().enabled();
+    ms::proxy_registry().set_enabled(on != 0);
+    return previous ? 1 : 0;
+}
+
+int ms_proxy_is_enabled(void) { return ms::proxy_registry().enabled() ? 1 : 0; }
 }

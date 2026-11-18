@@ -75,6 +75,16 @@ object NativeEngine {
     external fun nativeFrameBytes(): Long
     external fun nativeCopyFrame(bitmap: Bitmap): Boolean
 
+    // Proxy media: preview decodes the registered stand-in, export turns proxies
+    // off first so the delivered master always comes from the source file.
+    external fun nativeProxyRegister(media: String, proxy: String): Boolean
+    external fun nativeProxyUnregister(media: String)
+    external fun nativeProxyClear()
+    external fun nativeProxyCount(): Int
+    external fun nativeProxyFor(media: String): String
+    external fun nativeProxySetEnabled(on: Boolean): Boolean
+    external fun nativeProxyEnabled(): Boolean
+
     // Editing
     external fun nativeImportMedia(path: String): Int
     external fun nativeAddClip(trackId: Int, mediaId: Int, start: Double, duration: Double): Int

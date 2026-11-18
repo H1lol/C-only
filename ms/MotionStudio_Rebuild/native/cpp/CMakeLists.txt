@@ -52,6 +52,7 @@ set(MS_CORE_SOURCES
   engine/studio_hub.cpp
   tools/copilot_service.cpp
   cache_proxy.cpp
+  proxy_registry.cpp
   autosave.cpp
   performance.cpp
   effect_presets.cpp
@@ -135,6 +136,9 @@ target_link_libraries(ms_title_demo PRIVATE ms_core)
 add_executable(ms_effects_catalogue_test tools/ms_effects_catalogue_test.cpp)
 target_link_libraries(ms_effects_catalogue_test PRIVATE ms_core)
 
+add_executable(ms_proxy_test tools/ms_proxy_test.cpp)
+target_link_libraries(ms_proxy_test PRIVATE ms_core)
+
 add_executable(ms_engine_load_test tools/ms_engine_load_test.cpp)
 target_link_libraries(ms_engine_load_test PRIVATE motionstudio_native)
 
@@ -169,6 +173,7 @@ add_test(NAME ms_engine_audio_test COMMAND ms_engine_audio_test)
 add_test(NAME ms_audio_bridge_test COMMAND ms_audio_bridge_test)
 add_test(NAME ms_lut_test COMMAND ms_lut_test)
 add_test(NAME ms_edit_test COMMAND ms_edit_test)
+add_test(NAME ms_proxy_test COMMAND ms_proxy_test)
 set_tests_properties(
   ms_studio_test ms_pass345_deep ms_pass6_test ms_11_16_test ms_17_22_test
   ms_23_30_test ms_audio_fx_test ms_audio_playback_test ms_graph_safety_test ms_export_profile_test

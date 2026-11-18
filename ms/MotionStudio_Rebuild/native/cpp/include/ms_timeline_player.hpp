@@ -37,6 +37,14 @@ private:
   ProjectSession* session_ = nullptr;
   std::unordered_map<MediaId, std::unique_ptr<IMediaDecoder>> decoders_;
 
+  /**
+   * Proxy registry generation the cached decoders were opened under. Turning
+   * proxies on or off, or registering a freshly generated one, changes the file
+   * a decoder should be reading, so the cache is reopened when it moves.
+   */
+  int proxy_generation_ = 0;
+  void reopen_after_proxy_change();
+
   IMediaDecoder* decoder_for(MediaId id);
   static void blit_scaled(const ImageBuffer& src, ImageBuffer& dst,
                           float opacity, int dst_x, int dst_y);
