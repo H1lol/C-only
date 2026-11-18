@@ -42,6 +42,12 @@ data class Knob(
     val default: Double,
 )
 
+/** One keyframe as the engine reports it, in clip-local seconds. */
+data class KeyPoint(val index: Int, val time: Double, val value: Double, val interp: Int)
+
+/** Interpolation names, in the engine's CurveInterp order. */
+val KEY_INTERP_NAMES = listOf("LINEAR", "HOLD", "EASE IN", "EASE OUT", "IN-OUT", "SMOOTH")
+
 object CompOps {
     const val READ = 0
     const val WRITE = 1
@@ -595,6 +601,51 @@ class EditorEngine(
         reload()
         status = "Keyframe at ${formatTimecode(time)}"
         return true
+    }
+
+    /** Every key on one channel of the selected clip, in time order. */
+    fun keyframes(prop: Int): List<KeyPoint> {
+        val (track, clip) = selection() ?: return emptyList()
+        val count = NativeEngine.nativeKeyframeCount(track, clip, prop)
+        if (count <= 0) return emptyList()
+        val out = ArrayList<KeyPoint>(count)
+        val buf = DoubleArray(3)
+        for (i in 0 until count) {
+            if (NativeEngine.nativeKeyframeGet(track, clip, prop, i, buf)) {
+                out += KeyPoint(i, buf[0], buf[1], buf[2].toInt())
+            }
+        }
+        return out
+    }
+
+    /** Retimes/retargets one key and sets its interpolation. */
+    fun setKeyframe(prop: Int, index: Int, time: Double, value: Double, interp: Int): Boolean {
+        val (track, clip) = selection() ?: return false
+        val ok = NativeEngine.nativeKeyframeSet(track, clip, prop, index, time, value, interp)
+        if (ok) {
+            markDirty()
+            reload()
+        }
+        return ok
+    }
+
+    fun setKeyframeInterp(prop: Int, index: Int, interp: Int): Boolean {
+        val (track, clip) = selection() ?: return false
+        val ok = NativeEngine.nativeKeyframeSetInterp(track, clip, prop, index, interp)
+        if (ok) {
+            markDirty()
+            reload()
+        }
+        return ok
+    }
+
+    /** The curve the renderer will actually use, sampled between two clip-local times. */
+    fun sampleCurve(prop: Int, t0: Double, t1: Double, bins: Int = 128): FloatArray {
+        val empty = FloatArray(bins.coerceAtLeast(2))
+        val (track, clip) = selection() ?: return empty
+        val out = FloatArray(bins.coerceAtLeast(2))
+        val ok = NativeEngine.nativeKeyframeSample(track, clip, prop, t0, t1, out, out.size)
+        return if (ok) out else empty
     }
 
     fun clearKeyframes(prop: Int): Boolean {

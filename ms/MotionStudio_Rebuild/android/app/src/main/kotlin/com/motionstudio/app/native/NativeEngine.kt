@@ -187,6 +187,20 @@ object NativeEngine {
     external fun nativeKeyframeAdd(trackId: Int, clipId: Int, prop: Int, time: Double, value: Double): Boolean
     external fun nativeKeyframeClear(trackId: Int, clipId: Int, prop: Int): Boolean
 
+    // Curve editing. Keys are addressed by index in time order; interp is
+    // 0 linear, 1 hold, 2 ease-in, 3 ease-out, 4 ease-in-out, 5 smooth (bezier).
+    external fun nativeKeyframeCount(trackId: Int, clipId: Int, prop: Int): Int
+    /** Fills [time, value, interp]; false when that key does not exist. */
+    external fun nativeKeyframeGet(trackId: Int, clipId: Int, prop: Int, index: Int, out: DoubleArray): Boolean
+    external fun nativeKeyframeSet(
+        trackId: Int, clipId: Int, prop: Int, index: Int, time: Double, value: Double, interp: Int,
+    ): Boolean
+    external fun nativeKeyframeSetInterp(trackId: Int, clipId: Int, prop: Int, index: Int, interp: Int): Boolean
+    /** Samples the real engine curve so the drawn shape cannot drift from the render. */
+    external fun nativeKeyframeSample(
+        trackId: Int, clipId: Int, prop: Int, t0: Double, t1: Double, out: FloatArray, bins: Int,
+    ): Boolean
+
     // Timeline editing
     external fun nativeClipRemove(trackId: Int, clipId: Int): Boolean
     external fun nativeClipMove(trackId: Int, clipId: Int, start: Double): Boolean

@@ -55,7 +55,13 @@ The `.msp` format is specified (`docs/plugins/MSP_FORMAT.md`: zip + `manifest.js
 Needed: a Kotlin zip extractor, manifest validation, checksum, a browser with thumbnails, and a decision on whether third-party code execution is in scope.
 
 ### 3. Keyframe curve editor
-Keyframes exist end-to-end now, but authoring is value-at-playhead plus add/clear. There is no curve view, no per-key interpolation choice, and no drag-to-retime in the UI.
+Closed since this list was written: the KEYS tab draws the real curve from engine samples,
+every key carries its own interpolation (linear, hold, ease in/out/in-out, smooth), and theselected key can be retimed and retargeted. Six interpolation modes and smooth
+(Catmull-Rom Hermite) evaluation are covered by `ms_edit_test`.
+
+Still missing: dragging a key directly on the curve (the steppers are exact but not
+fluid), editing in/out tangents by hand, easing presets shared between keys, and
+automation curves on effect parameters, audio and the grade.
 
 ### 4. Mask depth
 Shapes are there (rectangle, ellipse, full frame, feather, invert). Missing: more than one mask per clip, bezier/roto shapes, mask tracking to follow motion, and mask keyframes.

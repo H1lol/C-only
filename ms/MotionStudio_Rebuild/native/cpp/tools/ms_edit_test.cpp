@@ -304,6 +304,69 @@ int main() {
         check(still != nullptr, "undo of a chain edit kept the timeline");
     }
 
+    // Keyframe curves: read-back, interpolation modes and a save/load round trip.
+    {
+        check(e.add_keyframe(track, clip, 0, 0.0, 0.0), "curve: key 0 added");
+        check(e.add_keyframe(track, clip, 0, 1.0, 1.0), "curve: key 1 added");
+        check(e.add_keyframe(track, clip, 0, 2.0, 1.0), "curve: key 2 added");
+        check(e.keyframe_count(track, clip, 0) == 3, "curve: three keys reported");
+
+        double kt = -1.0, kv = -1.0;
+        int ki = -1;
+        check(e.keyframe_at(track, clip, 0, 0, &kt, &kv, &ki), "curve: key reads back");
+        check(std::fabs(kt) < 1e-9 && std::fabs(kv) < 1e-9 && ki == 0,
+              "curve: key values are the ones stored");
+        check(!e.keyframe_at(track, clip, 0, 99, &kt, &kv, &ki),
+              "curve: out-of-range key is refused");
+
+        float lin[5] = {0, 0, 0, 0, 0};
+        check(e.sample_keyframe(track, clip, 0, 0.0, 2.0, lin, 5), "curve: samples");
+        check(std::fabs(lin[1] - 0.5f) < 0.02f, "curve: linear midpoint is halfway");
+
+        // Hold keeps the outgoing key's value for the whole segment.
+        check(e.set_keyframe_interp(track, clip, 0, 0, 1), "curve: hold set");
+        check(e.sample_keyframe(track, clip, 0, 0.0, 2.0, lin, 5), "curve: hold samples");
+        check(std::fabs(lin[1]) < 0.02f, "curve: hold stays on the key value");
+
+        // Smooth (cubic Hermite through the neighbouring keys) leaves the
+        // straight line when the segment before it is not a straight run.
+        check(e.set_keyframe_interp(track, clip, 0, 0, 5), "curve: smooth set");
+        float smooth[5] = {0, 0, 0, 0, 0};
+        check(e.sample_keyframe(track, clip, 0, 0.0, 2.0, smooth, 5), "curve: smooth samples");
+        check(std::fabs(smooth[1] - 0.5f) > 0.01f, "curve: smooth is not the straight line");
+        check(smooth[0] < 1e-6f && std::fabs(smooth[4] - 1.0f) < 1e-3f,
+              "curve: smooth still passes through its end keys");
+
+        // Retiming re-sorts, so indices follow the new order.
+        check(e.set_keyframe(track, clip, 0, 2, 1.5, 1.0, 0), "curve: key retimed");
+        check(e.keyframe_at(track, clip, 0, 2, &kt, nullptr, nullptr) &&
+                  std::fabs(kt - 1.5) < 1e-9,
+              "curve: retimed key keeps its slot");
+
+        const std::string json = e.project_to_json();
+        check(json.find("[0, 0, 5]") != std::string::npos, "curve: interpolation is saved");
+        check(e.load_project_json(json), "curve: project reloads");
+        // Ids are assigned by the loader, so find the clip by name again.
+        TrackId reloaded_track = 0;
+        ClipId reloaded_clip = 0;
+        for (const auto& rt : e.project().tracks()) {
+            for (const auto& rc : rt.clips) {
+                if (rc.name == "Clip A") {
+                    reloaded_track = rt.id;
+                    reloaded_clip = rc.id;
+                }
+            }
+        }
+        check(reloaded_clip != 0, "curve: animated clip came back after reload");
+        check(e.keyframe_count(reloaded_track, reloaded_clip, 0) == 3,
+              "curve: keys survive a reload with no phantom key");
+        check(e.keyframe_at(reloaded_track, reloaded_clip, 0, 0, nullptr, nullptr, &ki) && ki == 5,
+              "curve: interpolation survives a reload");
+        check(e.clear_keyframes(reloaded_track, reloaded_clip, 0), "curve: channel cleared");
+        check(e.keyframe_count(reloaded_track, reloaded_clip, 0) == 0,
+              "curve: clear removed every key");
+    }
+
     // Tracks
     const TrackId audio = e.add_track("A1", 1);
     check(audio != 0, "audio track added");

@@ -394,6 +394,34 @@ int ms_keyframe_add(int track_id, int clip_id, int prop, double time, double val
 int ms_keyframe_clear(int track_id, int clip_id, int prop) {
     return ms::Engine::instance().clear_keyframes(track_id, clip_id, prop) ? 0 : -1;
 }
+int ms_keyframe_count(int track_id, int clip_id, int prop) {
+    return ms::Engine::instance().keyframe_count(track_id, clip_id, prop);
+}
+int ms_keyframe_get(int track_id, int clip_id, int prop, int index, double* out_time,
+                    double* out_value, int* out_interp) {
+    return ms::Engine::instance().keyframe_at(track_id, clip_id, prop, index, out_time,
+                                              out_value, out_interp)
+               ? 0
+               : -1;
+}
+int ms_keyframe_set(int track_id, int clip_id, int prop, int index, double time, double value,
+                    int interp) {
+    return ms::Engine::instance().set_keyframe(track_id, clip_id, prop, index, time, value,
+                                               interp)
+               ? 0
+               : -1;
+}
+int ms_keyframe_set_interp(int track_id, int clip_id, int prop, int index, int interp) {
+    return ms::Engine::instance().set_keyframe_interp(track_id, clip_id, prop, index, interp)
+               ? 0
+               : -1;
+}
+int ms_keyframe_sample(int track_id, int clip_id, int prop, double t0, double t1, float* out,
+                       int bins) {
+    return ms::Engine::instance().sample_keyframe(track_id, clip_id, prop, t0, t1, out, bins)
+               ? 0
+               : -1;
+}
 int ms_clip_remove(int track_id, int clip_id) {
     return ms::Engine::instance().remove_clip(track_id, clip_id) ? 0 : -1;
 }

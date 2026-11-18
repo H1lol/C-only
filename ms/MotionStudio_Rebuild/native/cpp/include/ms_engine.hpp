@@ -170,6 +170,18 @@ public:
     bool add_keyframe(TrackId track, ClipId clip, int prop, TimeSec time, double value);
     bool clear_keyframes(TrackId track, ClipId clip, int prop);
 
+    // ---- Keyframe curves (prop: 0 opacity, 1 scale, 2 pos_x, 3 pos_y) ----
+    // Index is the key's position in time order. Values are clip-local seconds.
+    int keyframe_count(TrackId track, ClipId clip, int prop);
+    bool keyframe_at(TrackId track, ClipId clip, int prop, int index, double* time,
+                     double* value, int* interp);
+    bool set_keyframe(TrackId track, ClipId clip, int prop, int index, double time,
+                      double value, int interp);
+    bool set_keyframe_interp(TrackId track, ClipId clip, int prop, int index, int interp);
+    /** Fills `out` with `bins` samples of the curve between t0 and t1 (clip-local). */
+    bool sample_keyframe(TrackId track, ClipId clip, int prop, double t0, double t1,
+                         float* out, int bins);
+
     // Text / titles. A text clip renders through stb_truetype instead of a decoder.
     ClipId add_text_clip(TrackId track, TimeSec start, TimeSec duration,
                          const std::string& text, const TextStyle& style);

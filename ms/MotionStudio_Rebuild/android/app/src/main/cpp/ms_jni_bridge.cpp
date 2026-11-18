@@ -4,6 +4,7 @@
 #include <android/bitmap.h>
 #include <android/log.h>
 #include <string>
+#include <vector>
 #include "bridge/ms_bridge.h"
 
 #define LOG_TAG "MotionStudioJNI"
@@ -625,6 +626,57 @@ Java_com_motionstudio_app_native_NativeEngine_nativeKeyframeAdd(JNIEnv*, jobject
 JNIEXPORT jboolean JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeKeyframeClear(JNIEnv*, jobject, jint track, jint clip, jint prop) {
     return ms_keyframe_clear(track, clip, prop) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeKeyframeCount(JNIEnv*, jobject, jint track,
+                                                                 jint clip, jint prop) {
+    return ms_keyframe_count(track, clip, prop);
+}
+
+// out = [time, value, interp]
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeKeyframeGet(JNIEnv* env, jobject, jint track,
+                                                              jint clip, jint prop, jint index,
+                                                              jdoubleArray out) {
+    if (!out || env->GetArrayLength(out) < 3) return JNI_FALSE;
+    double time = 0.0, value = 0.0;
+    int interp = 0;
+    if (ms_keyframe_get(track, clip, prop, index, &time, &value, &interp) != 0) return JNI_FALSE;
+    const jdouble values[3] = {time, value, static_cast<jdouble>(interp)};
+    env->SetDoubleArrayRegion(out, 0, 3, values);
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeKeyframeSet(JNIEnv*, jobject, jint track,
+                                                              jint clip, jint prop, jint index,
+                                                              jdouble time, jdouble value,
+                                                              jint interp) {
+    return ms_keyframe_set(track, clip, prop, index, time, value, interp) == 0 ? JNI_TRUE
+                                                                              : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeKeyframeSetInterp(JNIEnv*, jobject,
+                                                                    jint track, jint clip,
+                                                                    jint prop, jint index,
+                                                                    jint interp) {
+    return ms_keyframe_set_interp(track, clip, prop, index, interp) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeKeyframeSample(JNIEnv* env, jobject,
+                                                                 jint track, jint clip,
+                                                                 jint prop, jdouble t0,
+                                                                 jdouble t1, jfloatArray out,
+                                                                 jint bins) {
+    if (!out || bins < 2 || env->GetArrayLength(out) < bins) return JNI_FALSE;
+    std::vector<float> scratch(static_cast<size_t>(bins), 0.f);
+    if (ms_keyframe_sample(track, clip, prop, t0, t1, scratch.data(), bins) != 0)
+        return JNI_FALSE;
+    env->SetFloatArrayRegion(out, 0, bins, scratch.data());
+    return JNI_TRUE;
 }
 
 JNIEXPORT jboolean JNICALL

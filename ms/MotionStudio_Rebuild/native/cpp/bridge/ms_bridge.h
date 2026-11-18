@@ -217,6 +217,15 @@ int ms_transition_remove(int track_id, int id);
 // ---- Keyframes (prop: 0 opacity, 1 scale, 2 pos_x, 3 pos_y; time clip-local) ----
 int ms_keyframe_add(int track_id, int clip_id, int prop, double time, double value);
 int ms_keyframe_clear(int track_id, int clip_id, int prop);
+/* Curve editing: keys are addressed by their index in time order. */
+int ms_keyframe_count(int track_id, int clip_id, int prop);
+int ms_keyframe_get(int track_id, int clip_id, int prop, int index, double* out_time,
+                    double* out_value, int* out_interp);
+int ms_keyframe_set(int track_id, int clip_id, int prop, int index, double time, double value,
+                    int interp);
+int ms_keyframe_set_interp(int track_id, int clip_id, int prop, int index, int interp);
+int ms_keyframe_sample(int track_id, int clip_id, int prop, double t0, double t1, float* out,
+                       int bins);
 
 // ---- Clip effect stack ----
 // Returns the new effect's stack index, or -1 on failure.

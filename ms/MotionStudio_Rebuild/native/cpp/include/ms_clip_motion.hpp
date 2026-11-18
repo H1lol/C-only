@@ -27,10 +27,22 @@ struct ClipMotion {
   std::vector<EffectOp> effects;
 
   void ensure_defaults() {
-    if (opacity.empty()) opacity.add(0, 1.0);
-    if (scale.empty()) scale.add(0, 1.0);
-    if (pos_x.empty()) pos_x.add(0, 0.0);
-    if (pos_y.empty()) pos_y.add(0, 0.0);
+    if (opacity.empty()) {
+      opacity.add(0, 1.0);
+      opacity.set_seeded(true);
+    }
+    if (scale.empty()) {
+      scale.add(0, 1.0);
+      scale.set_seeded(true);
+    }
+    if (pos_x.empty()) {
+      pos_x.add(0, 0.0);
+      pos_x.set_seeded(true);
+    }
+    if (pos_y.empty()) {
+      pos_y.add(0, 0.0);
+      pos_y.set_seeded(true);
+    }
   }
 
   double opacity_at(TimeSec t) const {

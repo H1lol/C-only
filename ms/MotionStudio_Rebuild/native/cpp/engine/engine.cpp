@@ -495,15 +495,118 @@ bool Engine::add_keyframe(TrackId track, ClipId clip, int prop, TimeSec time, do
                            : prop == 1 ? &c.motion.scale
                            : prop == 2 ? &c.motion.pos_x
                                        : &c.motion.pos_y;
-        // The defaults seed a single static key; the first authored key replaces it
-        // so the curve actually animates instead of holding a constant.
-        if (curve->keys().size() == 1) curve->clear();
+        // The defaults seed a single static key; the first authored key replaces
+        // it so the curve animates instead of holding a constant. Only the first:
+        // the old `size() == 1` test also fired on a curve holding the one key you
+        // had just made, so every second keyframe deleted the first.
+        if (curve->seeded()) curve->clear();
         curve->add(std::max<TimeSec>(0.0, time), value);
         project_->mark_dirty();
         invalidate_frames();
         return true;
     }
     return false;
+}
+
+namespace {
+
+AnimCurve* curve_for(ClipInfo& c, int prop) {
+  switch (prop) {
+    case 0: return &c.motion.opacity;
+    case 1: return &c.motion.scale;
+    case 2: return &c.motion.pos_x;
+    case 3: return &c.motion.pos_y;
+    default: return nullptr;
+  }
+}
+
+} // namespace
+
+int Engine::keyframe_count(TrackId track, ClipId clip, int prop) {
+  if (!project_ || prop < 0 || prop > 3) return 0;
+  TrackInfo* t = project_->find_track(track);
+  if (!t) return 0;
+  for (auto& c : t->clips) {
+    if (c.id != clip) continue;
+    AnimCurve* curve = curve_for(c, prop);
+    return curve ? static_cast<int>(curve->keys().size()) : 0;
+  }
+  return 0;
+}
+
+bool Engine::keyframe_at(TrackId track, ClipId clip, int prop, int index, double* time,
+                         double* value, int* interp) {
+  if (!project_ || prop < 0 || prop > 3 || index < 0) return false;
+  TrackInfo* t = project_->find_track(track);
+  if (!t) return false;
+  for (auto& c : t->clips) {
+    if (c.id != clip) continue;
+    AnimCurve* curve = curve_for(c, prop);
+    if (!curve) return false;
+    const AnimKeyframe* key = curve->at(static_cast<size_t>(index));
+    if (!key) return false;
+    if (time) *time = key->time;
+    if (value) *value = key->value;
+    if (interp) *interp = static_cast<int>(key->interp);
+    return true;
+  }
+  return false;
+}
+
+bool Engine::set_keyframe(TrackId track, ClipId clip, int prop, int index, double time,
+                          double value, int interp) {
+  if (!project_ || prop < 0 || prop > 3 || index < 0 || interp < 0 || interp > 5) return false;
+  TrackInfo* t = project_->find_track(track);
+  if (!t) return false;
+  for (auto& c : t->clips) {
+    if (c.id != clip) continue;
+    AnimCurve* curve = curve_for(c, prop);
+    if (!curve) return false;
+    project_->push_undo();
+    if (!curve->set_key(static_cast<size_t>(index), time, value)) return false;
+    curve->set_interp(static_cast<size_t>(index), static_cast<CurveInterp>(interp));
+    project_->mark_dirty();
+    invalidate_frames();
+    return true;
+  }
+  return false;
+}
+
+bool Engine::set_keyframe_interp(TrackId track, ClipId clip, int prop, int index, int interp) {
+  if (!project_ || prop < 0 || prop > 3 || index < 0 || interp < 0 || interp > 5) return false;
+  TrackInfo* t = project_->find_track(track);
+  if (!t) return false;
+  for (auto& c : t->clips) {
+    if (c.id != clip) continue;
+    AnimCurve* curve = curve_for(c, prop);
+    if (!curve) return false;
+    project_->push_undo();
+    if (!curve->set_interp(static_cast<size_t>(index), static_cast<CurveInterp>(interp)))
+      return false;
+    project_->mark_dirty();
+    invalidate_frames();
+    return true;
+  }
+  return false;
+}
+
+bool Engine::sample_keyframe(TrackId track, ClipId clip, int prop, double t0, double t1,
+                             float* out, int bins) {
+  if (!project_ || prop < 0 || prop > 3 || !out || bins < 2) return false;
+  TrackInfo* t = project_->find_track(track);
+  if (!t) return false;
+  for (auto& c : t->clips) {
+    if (c.id != clip) continue;
+    AnimCurve* curve = curve_for(c, prop);
+    if (!curve) return false;
+    const double span = (t1 > t0) ? (t1 - t0) : 1e-6;
+    for (int i = 0; i < bins; ++i) {
+      const double tt = t0 + span * static_cast<double>(i) / static_cast<double>(bins - 1);
+      out[i] = static_cast<float>(curve->eval(tt));
+    }
+    return true;
+  }
+  return false;
 }
 
 bool Engine::clear_keyframes(TrackId track, ClipId clip, int prop) {

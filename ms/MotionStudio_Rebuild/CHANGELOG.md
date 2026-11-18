@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — keyframe curves
+
+### Added
+- The KEYS tab is a curve editor. It used to count keys; it now draws the channel's
+  curve from samples the engine returns (`ms_keyframe_sample`), so the shape on screen
+  is the shape that renders, with keys as dots and the playhead as a line
+- Per-key interpolation: linear, hold, ease in, ease out, ease in-out and smooth. The
+  selected key can be retimed and retargeted with steppers
+- `ms_keyframe_count/get/set/set_interp/sample` and their JNI mirrors. Keys serialise as
+  `[time, value, interp]`; a two-element key from an older file still loads as linear
+- Smooth interpolation actually smooths: cubic Hermite through the neighbouring keys
+  (Catmull-Rom tangents). The enum value existed, but evaluation fell through to linear
+
+### Fixed
+- **A second keyframe deleted the first.** "Replace the seeded default" was tested with
+  `keys().size() == 1`, which is also true of a curve holding the single key you just
+  authored, so every add after the first cleared the curve
+- **Opening a project added a phantom key to every clip** and left the curves flagged as
+  seeded, so the next keyframe added to a reopened project wiped the animation that had
+  just been loaded. The loader seeds after parsing, and a seeded placeholder is no longer
+  written to the file at all
+
 ## Unreleased — streaming decode and an off-thread preview
 
 ### Changed

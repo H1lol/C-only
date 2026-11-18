@@ -44,8 +44,12 @@ void parse_motion_curve(const std::string& obj, const std::string& key, AnimCurv
     const size_t close = body.find(']', i);
     if (close == std::string::npos) break;
     double t = 0.0, v = 0.0;
-    if (std::sscanf(body.substr(i + 1, close - i - 1).c_str(), "%lf , %lf", &t, &v) == 2) {
-      curve.add(t, v);
+    int interp = 0;
+    const int fields =
+        std::sscanf(body.substr(i + 1, close - i - 1).c_str(), "%lf , %lf , %d", &t, &v, &interp);
+    if (fields >= 2) {
+      curve.add(t, v, fields >= 3 ? static_cast<CurveInterp>(std::clamp(interp, 0, 5))
+                                  : CurveInterp::Linear);
     }
     i = close + 1;
   }
@@ -383,9 +387,19 @@ std::string ProjectSession::to_json() const {
       ss << ", \"motion\": {";
       auto write_curve = [&](const char* name, const AnimCurve& curve, bool last) {
         ss << "\"" << name << "\": [";
+        // A curve that only holds the static placeholder is written empty: the
+        // placeholder is a UI default, not user data, and saving it turned into a
+        // phantom key on every clip after a reload.
+        if (curve.seeded()) {
+          ss << "]" << (last ? "" : ", ");
+          return;
+        }
         const auto& ks = curve.keys();
         for (size_t ki = 0; ki < ks.size(); ++ki) {
-          ss << "[" << ks[ki].time << ", " << ks[ki].value << "]";
+          // [time, value, interp]; a two-element key from an older file reads
+          // back as Linear.
+          ss << "[" << ks[ki].time << ", " << ks[ki].value << ", "
+             << static_cast<int>(ks[ki].interp) << "]";
           if (ki + 1 < ks.size()) ss << ", ";
         }
         ss << "]" << (last ? "" : ", ");
@@ -475,7 +489,7 @@ Error ProjectSession::load_from_json(const std::string& json) {
     for (const auto& co : array_objects(obj, "clips")) {
       ClipInfo c; c.id=(ClipId)extract_number(co,"id"); c.media_id=(MediaId)extract_number(co,"media_id"); c.name=extract_string(co,"name");
       c.start=extract_number(co,"start"); c.duration=extract_number(co,"duration"); c.source_in=extract_number(co,"source_in"); c.source_out=extract_number(co,"source_out");
-      c.speed=(float)extract_number(co,"speed",1); c.opacity=(float)extract_number(co,"opacity",1); c.gain=(float)extract_number(co,"gain",1); c.pan=(float)extract_number(co,"pan",0);       c.mute=co.find("\"mute\": true")!=std::string::npos; c.motion.ensure_defaults();
+      c.speed=(float)extract_number(co,"speed",1); c.opacity=(float)extract_number(co,"opacity",1); c.gain=(float)extract_number(co,"gain",1); c.pan=(float)extract_number(co,"pan",0);       c.mute=co.find("\"mute\": true")!=std::string::npos;
       c.mask_enabled = co.find("\"mask_enabled\": true") != std::string::npos;
       c.mask.shape = static_cast<MaskShape>(static_cast<int>(extract_number(co, "mk_shape", 0)));
       c.mask.mode = static_cast<MaskMode>(static_cast<int>(extract_number(co, "mk_mode", 1)));
@@ -544,6 +558,10 @@ Error ProjectSession::load_from_json(const std::string& json) {
       parse_motion_curve(co, "keys_scale", c.motion.scale);
       parse_motion_curve(co, "keys_pos_x", c.motion.pos_x);
       parse_motion_curve(co, "keys_pos_y", c.motion.pos_y);
+      // After the curves, not before: seeding first added a phantom key to every
+      // loaded curve and left it flagged as "seeded", so the next key authored on
+      // an opened project cleared the animation that had just been loaded.
+      c.motion.ensure_defaults();
       if(!c.id)c.id=impl_->next_clip++; else impl_->next_clip=std::max(impl_->next_clip,c.id+1); t.clips.push_back(std::move(c));
     }
     for (const auto& xo : array_objects(obj, "transitions")) {
