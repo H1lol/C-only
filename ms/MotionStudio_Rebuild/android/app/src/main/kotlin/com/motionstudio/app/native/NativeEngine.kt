@@ -1,6 +1,8 @@
 package com.motionstudio.app.native
 
 import android.graphics.Bitmap
+import android.os.Build
+import com.motionstudio.app.diag.Diagnostics
 
 /**
  * Direct binding to the Motion Studio C++ engine (`libmotionstudio_jni.so`).
@@ -11,9 +13,45 @@ import android.graphics.Bitmap
  */
 object NativeEngine {
 
+    /**
+     * False when `libmotionstudio_jni.so` could not be loaded: a 32-bit device,
+     * a missing dependent library or a stripped build. Every `external fun`
+     * throws once this is false, so the UI checks it before calling anything
+     * rather than letting an `UnsatisfiedLinkError` escape from a gesture.
+     */
+    val available: Boolean
+
+    /** Why loading failed, when it did. */
+    val loadError: String?
+
     init {
-        System.loadLibrary("motionstudio_jni")
+        var ok = false
+        var error: String? = null
+        try {
+            System.loadLibrary("motionstudio_jni")
+            ok = true
+        } catch (t: Throwable) {
+            error = buildString {
+                append(t.javaClass.simpleName)
+                append(": ")
+                append(t.message ?: "no message")
+                append(" · supported ABIs: ")
+                append(Build.SUPPORTED_ABIS.joinToString(", "))
+            }
+            android.util.Log.e("MotionStudio", "native library failed to load", t)
+        }
+        available = ok
+        loadError = error
+        Diagnostics.nativeLoaded = ok
+        Diagnostics.nativeError = error
     }
+
+    /**
+     * Installs the native signal handler. A segfault in the engine kills the
+     * process before the Java handler can run, so it writes its own report into
+     * [dir] (`native-crash.txt`).
+     */
+    external fun nativeInstallCrashHandler(dir: String): Boolean
 
     // Lifecycle
     external fun nativeInit(width: Int, height: Int): Boolean

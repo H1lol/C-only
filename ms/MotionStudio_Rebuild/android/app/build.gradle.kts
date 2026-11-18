@@ -37,6 +37,8 @@ android {
 
     buildFeatures {
         compose = true
+        // Diagnostics reports the installed version, so BuildConfig must exist.
+        buildConfig = true
     }
 
     compileOptions {

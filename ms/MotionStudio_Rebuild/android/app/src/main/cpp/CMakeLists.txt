@@ -15,7 +15,7 @@ endif()
 set(MS_BUILD_TESTS OFF CACHE BOOL "Skip desktop test executables on Android" FORCE)
 add_subdirectory(${MS_CORE_DIR} ${CMAKE_BINARY_DIR}/ms_core EXCLUDE_FROM_ALL)
 
-add_library(motionstudio_jni SHARED ms_jni_bridge.cpp)
+add_library(motionstudio_jni SHARED ms_jni_bridge.cpp ms_crash.cpp)
 
 target_include_directories(motionstudio_jni PRIVATE
   ${MS_CORE_DIR}

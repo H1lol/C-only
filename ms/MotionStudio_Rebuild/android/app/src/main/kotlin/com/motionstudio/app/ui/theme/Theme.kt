@@ -39,6 +39,7 @@ object MsColors {
 
     val success = Color(0xFF63D6A2)
     val warning = Color(0xFFF0B429)
+    val danger = Color(0xFFE87979)
     val error = Color(0xFFFF6B8A)
     val info = Color(0xFF6FA8F5)
 

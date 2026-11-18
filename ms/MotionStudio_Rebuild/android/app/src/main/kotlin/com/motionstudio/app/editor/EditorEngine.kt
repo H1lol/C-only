@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.motionstudio.app.audio.NativeAudioPlayer
 import com.motionstudio.app.data.ProjectStore
+import com.motionstudio.app.diag.Diagnostics
 import com.motionstudio.app.model.ProjectDoc
 import com.motionstudio.app.native.NativeEngine
 import java.io.File
@@ -226,6 +227,7 @@ class EditorEngine(
         selectedClipId = -1
         dirty = false
         status = "Opened ${file.nameWithoutExtension}"
+        Diagnostics.note("openFile ${file.name} (${doc.tracks.size} tracks)")
         return true
     }
 
@@ -370,6 +372,8 @@ class EditorEngine(
 
     fun note(message: String) {
         status = message
+        // The same trail a crash report carries: whatever the UI last said it did.
+        Diagnostics.note(message)
     }
 
     fun reload() {

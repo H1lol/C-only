@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased — crash-proofing and diagnostics
+
+### Added
+- `Diagnostics` records an uncaught-exception report (`last-crash.txt`) and a bounded
+  breadcrumb trail (`session.log`) in `filesDir/diagnostics`, installed from a new
+  `MsApplication` so it exists before the native library loads or the first activity inflates
+- Native signal handler (`android/app/src/main/cpp/ms_crash.cpp`): SIGSEGV/SIGBUS/SIGILL/
+  SIGFPE/SIGABRT write signal, fault address and a 24-frame return-address backtrace to
+  `native-crash.txt` on an alternate stack, then re-raise so the system still reports it
+  normally. A segfault used to leave nothing behind at all
+- Settings → Diagnostics: engine state, decoder backend, last crash, COPY REPORT /
+  REFRESH / CLEAR CRASHES
+
+### Fixed
+- A missing `libmotionstudio_jni.so` no longer crashes the app on launch. `NativeEngine`
+  captures the load failure instead of letting `ExceptionInInitializerError` escape from
+  `MainActivity.onCreate`, and the UI shows an ENGINE NOT LOADED screen with the ABI and
+  the loader error
+- Font unpacking and the crash-handler install are wrapped: a full disk or a rejected
+  font asset can no longer stop the editor from opening
+- `EditorEngine` construction is guarded, so an engine that refuses to start produces a
+  message instead of a crash
+
 ## Unreleased — purple interface pass
 
 ### Changed
