@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -132,6 +133,14 @@ fun KeyframePane(engine: EditorEngine, modifier: Modifier = Modifier) {
             playhead = local,
             selected = selected,
             onSelect = { selected = it },
+            onMove = { index, time, value ->
+                // Keep the existing interpolation: a drag changes where and how
+                // high the key is, not how the segment eases.
+                val interp = keys.getOrNull(index)?.interp ?: 0
+                engine.setKeyframe(prop, index, time, value, interp)
+                selected = index
+                revision++
+            },
         )
 
         Column(
@@ -217,7 +226,8 @@ fun KeyframePane(engine: EditorEngine, modifier: Modifier = Modifier) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "Adds a key at the playhead with the clip's current value.",
+                    "Adds a key at the playhead. Tap a key to select it, drag it to retime " +
+                        "and reshape the curve.",
                     color = MsColors.textMuted,
                     fontSize = 9.sp,
                     modifier = Modifier.weight(1f),
@@ -258,10 +268,16 @@ private fun CurveCanvas(
     playhead: Double,
     selected: Int,
     onSelect: (Int) -> Unit,
+    onMove: (Int, Double, Double) -> Unit,
 ) {
     // Size comes from layout, never from inside the draw pass: writing state
     // while drawing schedules another frame and loops.
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+
+    // The key being dragged, drawn from these values until the gesture ends.
+    var dragIndex by remember { mutableIntStateOf(-1) }
+    var dragTime by remember { mutableStateOf(0.0) }
+    var dragValue by remember { mutableStateOf(0.0) }
 
     // A stable value range across the samples and keys, with a little air.
     var lo = Float.MAX_VALUE
@@ -297,6 +313,53 @@ private fun CurveCanvas(
             .padding(horizontal = 12.dp)
             .border(1.dp, MsColors.border, RoundedCornerShape(3.dp))
             .onSizeChanged { canvasSize = it }
+            .pointerInput(keys, span, canvasSize) {
+                // Drag a key to retime it and change its value.
+                //
+                // The drag is drawn locally and committed on release: writing the
+                // engine on every move recomposes the pane, which re-keys this
+                // gesture and cancels it under the finger. Time is clamped between
+                // the neighbouring keys for the same reason the index is used —
+                // keys are addressed in time order, so crossing a neighbour would
+                // retarget whichever key took its place.
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        var bestIndex = -1
+                        var bestDistance = Float.MAX_VALUE
+                        keys.forEach { k ->
+                            val d = abs(xAt(k.time) - offset.x) + abs(yAt(k.value.toFloat()) - offset.y)
+                            if (d < bestDistance) {
+                                bestDistance = d
+                                bestIndex = k.index
+                            }
+                        }
+                        if (bestIndex >= 0 && bestDistance <= 56f) {
+                            dragIndex = bestIndex
+                            dragTime = keys.first { it.index == bestIndex }.time
+                            dragValue = keys.first { it.index == bestIndex }.value
+                            onSelect(bestIndex)
+                        }
+                    },
+                    onDrag = { change, _ ->
+                        if (dragIndex < 0) return@detectDragGestures
+                        val position = keys.indexOfFirst { it.index == dragIndex }
+                        val minTime = if (position > 0) keys[position - 1].time + 0.02 else 0.0
+                        val maxTime =
+                            if (position >= 0 && position < keys.size - 1) keys[position + 1].time - 0.02
+                            else span
+                        dragTime = (change.position.x / canvasSize.width * span)
+                            .coerceIn(minTime, maxTime)
+                        dragValue = (lo + (1f - change.position.y / canvasSize.height) * range)
+                            .toDouble()
+                        change.consume()
+                    },
+                    onDragEnd = {
+                        if (dragIndex >= 0) onMove(dragIndex, dragTime, dragValue)
+                        dragIndex = -1
+                    },
+                    onDragCancel = { dragIndex = -1 },
+                )
+            }
             .pointerInput(keys, span, canvasSize) {
                 detectTapGestures { offset ->
                     if (keys.isEmpty()) return@detectTapGestures
@@ -341,10 +404,22 @@ private fun CurveCanvas(
             drawPath(path, MsColors.accent, style = Stroke(width = 2f))
         }
 
-        // Keys.
+        // Keys. The one under the finger follows it before the commit.
         keys.forEach { k ->
             val isSelected = k.index == selected
-            val center = Offset(xAt(k.time), yAt(k.value.toFloat()))
+            val dragging = k.index == dragIndex
+            val center = Offset(
+                xAt(if (dragging) dragTime else k.time),
+                yAt(if (dragging) dragValue.toFloat() else k.value.toFloat()),
+            )
+            if (dragging) {
+                drawLine(
+                    MsColors.accentSoft,
+                    Offset(center.x, 0f),
+                    Offset(center.x, size.height),
+                    strokeWidth = 1f,
+                )
+            }
             drawCircle(
                 color = if (isSelected) Color.White else MsColors.accentSoft,
                 radius = if (isSelected) 6f else 4.5f,

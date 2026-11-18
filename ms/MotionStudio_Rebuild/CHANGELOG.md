@@ -35,6 +35,10 @@
 ## Unreleased — keyframe curves
 
 ### Added
+- Keys can be dragged on the curve: horizontal retimes, vertical changes the value, time
+  clamped between the neighbouring keys so the key under the finger cannot swap places
+  with a neighbour mid-drag. The drag is drawn locally and committed on release, because
+  writing the engine on every move re-keys the gesture and cancels it
 - The KEYS tab is a curve editor. It used to count keys; it now draws the channel's
   curve from samples the engine returns (`ms_keyframe_sample`), so the shape on screen
   is the shape that renders, with keys as dots and the playhead as a line

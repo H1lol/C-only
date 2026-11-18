@@ -59,9 +59,11 @@ Closed since this list was written: the KEYS tab draws the real curve from engin
 every key carries its own interpolation (linear, hold, ease in/out/in-out, smooth), and theselected key can be retimed and retargeted. Six interpolation modes and smooth
 (Catmull-Rom Hermite) evaluation are covered by `ms_edit_test`.
 
-Still missing: dragging a key directly on the curve (the steppers are exact but not
-fluid), editing in/out tangents by hand, easing presets shared between keys, and
-automation curves on effect parameters, audio and the grade.
+Keys can also be dragged on the curve now: horizontally to retime, vertically to change the
+value, clamped between neighbouring keys so the index under the finger stays put.
+
+Still missing: editing in/out tangents by hand, easing presets shared between keys, curve
+zoom/pan, and automation curves on effect parameters, audio and the grade.
 
 ### 4. Mask depth
 Shapes are there (rectangle, ellipse, full frame, feather, invert). Missing: more than one mask per clip, bezier/roto shapes, mask tracking to follow motion, and mask keyframes.
