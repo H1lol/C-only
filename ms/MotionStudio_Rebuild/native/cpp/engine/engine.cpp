@@ -234,6 +234,9 @@ bool Engine::render_frame() {
         g.lift = grade_[4];
         g.gamma = grade_[5];
         g.gain = grade_[6];
+        g.shadows = grade_[7];
+        g.highlights = grade_[8];
+        g.vibrance = grade_[9];
         apply_finishing_grade(*last_frame_, g);
     }
     if (look_ && look_strength_ > 0.f) {
@@ -445,6 +448,16 @@ void Engine::set_grade(float exposure, float contrast, float saturation, float t
     grade_[6] = gain < 0.f ? 0.f : gain;
     grade_active_ = true;
     // Persisted with the document, but not undoable per slider frame.
+    sync_master_state();
+    project_->mark_dirty();
+}
+
+void Engine::set_grade_tonal(float shadows, float highlights, float vibrance) {
+    grade_[7] = std::clamp(shadows, -1.f, 1.f);
+    grade_[8] = std::clamp(highlights, -1.f, 1.f);
+    grade_[9] = std::clamp(vibrance, -1.f, 1.f);
+    // A tonal move alone still has to run the grade pass, so keep it active.
+    grade_active_ = true;
     sync_master_state();
     project_->mark_dirty();
 }
@@ -884,6 +897,24 @@ bool Engine::set_clip_grade(TrackId track, ClipId clip, float exposure, float co
     return false;
 }
 
+bool Engine::set_clip_grade_tonal(TrackId track, ClipId clip, float shadows, float highlights,
+                                  float vibrance) {
+    TrackInfo* t = project_->find_track(track);
+    if (!t) return false;
+    for (auto& c : t->clips) {
+        if (c.id != clip) continue;
+        project_->push_undo();
+        c.grade_enabled = true;
+        c.grade[7] = std::clamp(shadows, -1.f, 1.f);
+        c.grade[8] = std::clamp(highlights, -1.f, 1.f);
+        c.grade[9] = std::clamp(vibrance, -1.f, 1.f);
+        project_->mark_dirty();
+        invalidate_frames();
+        return true;
+    }
+    return false;
+}
+
 bool Engine::clear_clip_grade(TrackId track, ClipId clip) {
     TrackInfo* t = project_->find_track(track);
     if (!t) return false;
@@ -898,15 +929,15 @@ bool Engine::clear_clip_grade(TrackId track, ClipId clip) {
     return false;
 }
 
-bool Engine::clip_grade(TrackId track, ClipId clip, float* out7) const {
-    if (!out7) return false;
+bool Engine::clip_grade(TrackId track, ClipId clip, float* out10) const {
+    if (!out10) return false;
     const TrackInfo* t = nullptr;
     for (const auto& x : project_->tracks()) if (x.id == track) t = &x;
     if (!t) return false;
     for (const auto& c : t->clips) {
         if (c.id != clip) continue;
         if (!c.grade_enabled) return false;
-        std::memcpy(out7, c.grade, sizeof(float) * 7);
+        std::memcpy(out10, c.grade, sizeof(float) * 10);
         return true;
     }
     return false;

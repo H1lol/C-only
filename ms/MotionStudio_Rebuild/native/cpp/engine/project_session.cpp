@@ -367,7 +367,8 @@ std::string ProjectSession::to_json() const {
          << ", \"grade_enabled\": " << (c.grade_enabled ? "true" : "false")
          << ", \"grade\": [" << c.grade[0] << ", " << c.grade[1] << ", " << c.grade[2]
          << ", " << c.grade[3] << ", " << c.grade[4] << ", " << c.grade[5]
-         << ", " << c.grade[6] << "]"
+         << ", " << c.grade[6] << ", " << c.grade[7] << ", " << c.grade[8]
+         << ", " << c.grade[9] << "]"
          << ", \"effects\": [";
       if (c.is_text) {
         const TextStyle& ts = c.text_style;
@@ -448,9 +449,9 @@ std::string ProjectSession::to_json() const {
   {
     const MasterState& m = impl_->master;
     ss << "\"grade_enabled\": " << (m.grade_enabled ? "true" : "false") << ", \"grade\": [";
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 10; ++i) {
       ss << m.grade[i];
-      if (i < 6) ss << ", ";
+      if (i < 9) ss << ", ";
     }
     ss << "],\n    \"audio\": [";
     for (size_t i = 0; i < m.audio.size(); ++i) {
@@ -558,7 +559,7 @@ Error ProjectSession::load_from_json(const std::string& json) {
           nums += ',';
           for (char ch : nums) {
             if (ch == ',') {
-              if (slot < 7) c.grade[slot++] = static_cast<float>(std::atof(cur.c_str()));
+              if (slot < 10) c.grade[slot++] = static_cast<float>(std::atof(cur.c_str()));
               cur.clear();
             } else if (ch != ' ') {
               cur.push_back(ch);
@@ -631,7 +632,7 @@ Error ProjectSession::load_from_json(const std::string& json) {
     const std::string mobj = extract_object(json, "master");
     if (!mobj.empty()) {
       impl_->master.grade_enabled = mobj.find("\"grade_enabled\": true") != std::string::npos;
-      parse_float_array(mobj, "grade", impl_->master.grade, 7);
+      parse_float_array(mobj, "grade", impl_->master.grade, 10);
       for (const auto& ao : array_objects(mobj, "audio")) {
         AudioFxParams p;
         const int kind = static_cast<int>(extract_number(ao, "kind", 0));

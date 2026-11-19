@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — tonal grade split
+
+### Added
+- **Shadows, highlights and vibrance** on the master grade and on every clip grade. Shadows and
+  highlights move the dark and bright ends of the curve independently, weighted so mid grey is the
+  pivot and is left alone: that is what makes them different from contrast, which rotates the whole
+  curve. Vibrance boosts a pixel's distance from its own luma in proportion to how *muted* it is, so
+  a grey stays grey and an already-saturated colour barely moves, unlike the saturation slider
+- `GradeSettings` gained the three fields, the grade arrays grew from 7 to 10 values, and the extra
+  three are persisted for clips and for the master block. Documents written before this load with
+  their seven values and the new three defaulted to neutral, so old projects grade identically
+- `Engine::set_grade_tonal` / `Engine::set_clip_grade_tonal`, bridged as `ms_grade_tonal_set` and
+  `ms_clip_grade_tonal_set`, so the existing seven-argument setters did not have to change. The
+  grade *getters* now fill 10 floats
+- GRADE sheet: three new sliders in both the Sequence and Selected clip modes
+
+### Tests
+- `ms_grade_test`: a neutral grade is a no-op, shadows lift a dark pixel while leaving a bright one
+  alone, highlights do the reverse, mid grey does not move, vibrance moves a muted colour more than
+  a saturated one and leaves grey untouched, and both the clip and master tonal values survive a
+  save/load
+
 ## Unreleased — multi-mask
 
 ### Added

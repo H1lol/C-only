@@ -137,11 +137,13 @@ public:
     // Master grade (applied to the preview before the look) and scopes.
     void set_grade(float exposure, float contrast, float saturation, float temperature,
                    float lift, float gamma, float gain);
+    /** Shadow / highlight split and vibrance, on top of the seven base moves. */
+    void set_grade_tonal(float shadows, float highlights, float vibrance);
     void clear_grade();
     bool has_grade() const { return grade_active_; }
-    /** Fills 7 floats (exposure, contrast, saturation, temperature, lift, gamma,
-     *  gain) and reports whether a master grade is active. */
-    bool get_grade(float* out7) const;
+    /** Fills 10 floats (exposure, contrast, saturation, temperature, lift, gamma,
+     *  gain, shadows, highlights, vibrance) and reports whether one is active. */
+    bool get_grade(float* out10) const;
     /** Fills 4*bins ints: R, G, B, luma. bins <= 256. */
     bool scopes_histogram(int* out, int bins) const;
 
@@ -178,6 +180,9 @@ public:
     bool set_clip_grade(TrackId track, ClipId clip, float exposure, float contrast,
                         float saturation, float temperature, float lift, float gamma,
                         float gain);
+    /** Per-clip shadow / highlight split and vibrance. */
+    bool set_clip_grade_tonal(TrackId track, ClipId clip, float shadows, float highlights,
+                              float vibrance);
     bool clear_clip_grade(TrackId track, ClipId clip);
 
     // ---- Comp network ------------------------------------------------------
@@ -198,7 +203,7 @@ public:
     Error read_comp_source(const GraphNode& node, double time_sec, int w, int h,
                            ImageBuffer& out);
     /** Reads the selected clip's grade; false when it has none. */
-    bool clip_grade(TrackId track, ClipId clip, float* out7) const;
+    bool clip_grade(TrackId track, ClipId clip, float* out10) const;
 
     /** Peak envelope for a clip's audio, `bins` floats in 0..1. */
     bool clip_peaks(TrackId track, ClipId clip, int bins, float* out);
@@ -259,7 +264,7 @@ private:
     float look_strength_ = 1.f;
     NodeGraph comp_;
     bool comp_active_ = false;
-    float grade_[7] = {0.f, 1.f, 1.f, 0.f, 0.f, 1.f, 1.f};
+    float grade_[10] = {0.f, 1.f, 1.f, 0.f, 0.f, 1.f, 1.f, 0.f, 0.f, 0.f};
     bool grade_active_ = false;
     PerformanceMonitor perf_;
     AutosaveController autosave_;

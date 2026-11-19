@@ -133,6 +133,9 @@ fun ColorSheet(engine: EditorEngine, onDismiss: () -> Unit) {
                 GradeSlider("Lift", g[4], -0.5f, 0.5f) { engine.applyClipGrade(lift = it) }
                 GradeSlider("Gamma", g[5], 0.4f, 2.5f) { engine.applyClipGrade(gamma = it) }
                 GradeSlider("Gain", g[6], 0.2f, 2f) { engine.applyClipGrade(gain = it) }
+                GradeSlider("Shadows", g[7], -1f, 1f) { engine.applyClipGradeTonal(shadows = it) }
+                GradeSlider("Highlights", g[8], -1f, 1f) { engine.applyClipGradeTonal(highlights = it) }
+                GradeSlider("Vibrance", g[9], -1f, 1f) { engine.applyClipGradeTonal(vibrance = it) }
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "Per-clip grades apply before compositing, so one shot can be matched " +
@@ -148,6 +151,13 @@ fun ColorSheet(engine: EditorEngine, onDismiss: () -> Unit) {
                 GradeSlider("Lift", engine.gradeLift, -0.5f, 0.5f) { engine.applyGrade(lift = it) }
                 GradeSlider("Gamma", engine.gradeGamma, 0.4f, 2.5f) { engine.applyGrade(gamma = it) }
                 GradeSlider("Gain", engine.gradeGain, 0.2f, 2f) { engine.applyGrade(gain = it) }
+                GradeSlider("Shadows", engine.gradeShadows, -1f, 1f) { engine.applyGradeTonal(shadows = it) }
+                GradeSlider("Highlights", engine.gradeHighlights, -1f, 1f) {
+                    engine.applyGradeTonal(highlights = it)
+                }
+                GradeSlider("Vibrance", engine.gradeVibrance, -1f, 1f) {
+                    engine.applyGradeTonal(vibrance = it)
+                }
             }
             Spacer(Modifier.height(20.dp))
         }

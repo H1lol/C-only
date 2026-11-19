@@ -177,6 +177,9 @@ static void apply_clip_look(const ClipInfo& clip, ImageBuffer& buf, ImageBuffer&
     g.lift = clip.grade[4];
     g.gamma = clip.grade[5];
     g.gain = clip.grade[6];
+    g.shadows = clip.grade[7];
+    g.highlights = clip.grade[8];
+    g.vibrance = clip.grade[9];
     apply_finishing_grade(buf, g);
   }
 }

@@ -123,8 +123,11 @@ void ms_grade_set(float exposure, float contrast, float saturation, float temper
                   float lift, float gamma, float gain);
 void ms_grade_clear();
 /** Fills 7 floats (exposure, contrast, saturation, temperature, lift, gamma,
- *  gain). Returns 1 when a master grade is active, 0 otherwise. */
-int ms_grade_get(float* out7);
+ *  gain, shadows, highlights, vibrance). Returns 1 when a master grade is
+ *  active, 0 otherwise. */
+int ms_grade_get(float* out10);
+/** Shadow / highlight split and vibrance, on top of the seven base moves. */
+void ms_grade_tonal_set(float shadows, float highlights, float vibrance);
 // Fills 4*bins ints (R, G, B, luma). Returns 0 on success.
 int ms_scopes_histogram(int* out, int bins);
 
@@ -210,8 +213,11 @@ int ms_clip_grade_set(int track_id, int clip_id, float exposure, float contrast,
                       float saturation, float temperature, float lift, float gamma,
                       float gain);
 int ms_clip_grade_clear(int track_id, int clip_id);
-/** Reads a clip's grade; writes 7 floats and returns 0, or -1 when ungraded. */
-int ms_clip_grade_get(int track_id, int clip_id, float* out7);
+/** Reads a clip's grade; writes 10 floats and returns 0, or -1 when ungraded. */
+int ms_clip_grade_get(int track_id, int clip_id, float* out10);
+/** Per-clip shadow / highlight split and vibrance. 0 on success. */
+int ms_clip_grade_tonal_set(int track_id, int clip_id, float shadows, float highlights,
+                            float vibrance);
 
 // Peak envelope for a clip's audio: writes `bins` floats in 0..1. Returns 0 on
 // success, -1 when the clip has no decodable audio (text clips, silent media).

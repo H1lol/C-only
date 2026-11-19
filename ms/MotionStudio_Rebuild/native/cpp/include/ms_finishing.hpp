@@ -20,6 +20,11 @@ struct GradeSettings {
   float lift = 0.f;        // shadows
   float gamma = 1.f;
   float gain = 1.f;
+  // Tonal split: the bottom and top of the curve move independently, and
+  // vibrance pushes muted colours harder than already-saturated ones.
+  float shadows = 0.f;     // -1..1, lifts or lowers the dark end
+  float highlights = 0.f;  // -1..1, lifts or lowers the bright end
+  float vibrance = 0.f;    // -1..1, saturation weighted by how muted a pixel is
 };
 
 Error apply_finishing_grade(ImageBuffer& img, const GradeSettings& g);

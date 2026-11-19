@@ -275,7 +275,11 @@ void ms_grade_set(float exposure, float contrast, float saturation, float temper
     ms::Engine::instance().set_grade(exposure, contrast, saturation, temperature, lift, gamma, gain);
 }
 void ms_grade_clear() { ms::Engine::instance().clear_grade(); }
-int ms_grade_get(float* out7) { return ms::Engine::instance().get_grade(out7) ? 1 : 0; }
+int ms_grade_get(float* out10) { return ms::Engine::instance().get_grade(out10) ? 1 : 0; }
+
+void ms_grade_tonal_set(float shadows, float highlights, float vibrance) {
+    ms::Engine::instance().set_grade_tonal(shadows, highlights, vibrance);
+}
 int ms_scopes_histogram(int* out, int bins) {
     return ms::Engine::instance().scopes_histogram(out, bins) ? 0 : -1;
 }
@@ -387,8 +391,14 @@ int ms_clip_grade_set(int track_id, int clip_id, float exposure, float contrast,
 int ms_clip_grade_clear(int track_id, int clip_id) {
     return ms::Engine::instance().clear_clip_grade(track_id, clip_id) ? 0 : -1;
 }
-int ms_clip_grade_get(int track_id, int clip_id, float* out7) {
-    return ms::Engine::instance().clip_grade(track_id, clip_id, out7) ? 0 : -1;
+int ms_clip_grade_tonal_set(int track_id, int clip_id, float shadows, float highlights,
+                            float vibrance) {
+    return ms::Engine::instance().set_clip_grade_tonal(track_id, clip_id, shadows, highlights,
+                                                       vibrance) ? 0 : -1;
+}
+
+int ms_clip_grade_get(int track_id, int clip_id, float* out10) {
+    return ms::Engine::instance().clip_grade(track_id, clip_id, out10) ? 0 : -1;
 }
 
 int ms_clip_peaks(int track_id, int clip_id, float* out, int bins) {

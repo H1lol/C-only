@@ -66,10 +66,18 @@ Still missing: editing in/out tangents by hand, easing presets shared between ke
 zoom/pan, and automation curves on effect parameters, audio and the grade.
 
 ### 4. Mask depth
-Shapes are there (rectangle, ellipse, full frame, feather, invert). Missing: more than one mask per clip, bezier/roto shapes, mask tracking to follow motion, and mask keyframes.
+Shapes are there (rectangle, ellipse, full frame, feather, invert), and a clip now carries up to
+eight masks, each Add (union) or Subtract (cut out of that union); a list of only Subtract masks
+starts from a full frame. Closed since this list was written: multi-mask, and the bug where mask
+strength was written into RGB while `MaskMode::Alpha` read alpha, which made an ordinary mask a
+no-op and an inverted one hide the whole clip. Missing: bezier/roto shapes, mask tracking to follow
+motion, and mask keyframes.
 
 ### 5. Grade controls
-Both the master grade and per-clip grades work, each with seven parameters and a live histogram. Missing: curves, colour wheels, a highlight/shadow split, and per-clip LUTs (the `.cube` look is still display-wide).
+Both the master grade and per-clip grades work, each with ten parameters and a live histogram.
+Closed since this list was written: the highlight/shadow split (both pivot on mid grey, so midtones
+stay put) and vibrance (weighted by how muted a pixel already is). Missing: curves, colour wheels,
+and per-clip LUTs (the `.cube` look is still display-wide).
 
 ### 6. Audio depth
 Export carries AAC audio, and audio clips now draw a real waveform from decoded PCM. The master insert chain is now editable from the app (Gain, 3-band EQ, compressor, delay, reverb, limiter) with a MIX sheet carrying per-track faders, mute and solo; clip gain and pan are honoured by the mix. The master grade and the master insert chain are saved with the project document (a `master` block holding the seven grade values and every insert parameter), and insert structure edits — add, remove, clear, bypass — are on the undo stack; knob values and the grade are persisted without one undo entry per slider frame. Still missing: insert chains per track (only the master bus has one), audio automation curves, sample-rate choice, and loudness metering.

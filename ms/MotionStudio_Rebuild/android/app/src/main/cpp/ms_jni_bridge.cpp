@@ -296,16 +296,22 @@ Java_com_motionstudio_app_native_NativeEngine_nativeGradeSet(JNIEnv*, jobject, j
 }
 
 JNIEXPORT void JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeGradeTonalSet(JNIEnv*, jobject, jfloat shadows,
+    jfloat highlights, jfloat vibrance) {
+    ms_grade_tonal_set(shadows, highlights, vibrance);
+}
+
+JNIEXPORT void JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeGradeClear(JNIEnv*, jobject) {
     ms_grade_clear();
 }
 
 JNIEXPORT jboolean JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeGradeGet(JNIEnv* env, jobject, jfloatArray out) {
-    if (!out || env->GetArrayLength(out) < 7) return JNI_FALSE;
-    float tmp[7] = {};
+    if (!out || env->GetArrayLength(out) < 10) return JNI_FALSE;
+    float tmp[10] = {};
     const int active = ms_grade_get(tmp);
-    env->SetFloatArrayRegion(out, 0, 7, tmp);
+    env->SetFloatArrayRegion(out, 0, 10, tmp);
     return active ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -648,6 +654,13 @@ Java_com_motionstudio_app_native_NativeEngine_nativeClipGradeSet(JNIEnv*, jobjec
 }
 
 JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeClipGradeTonalSet(JNIEnv*, jobject, jint track,
+        jint clip, jfloat shadows, jfloat highlights, jfloat vibrance) {
+    return ms_clip_grade_tonal_set(track, clip, shadows, highlights, vibrance) == 0
+               ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeClipGradeClear(JNIEnv*, jobject, jint track,
         jint clip) {
     return ms_clip_grade_clear(track, clip) == 0 ? JNI_TRUE : JNI_FALSE;
@@ -656,10 +669,10 @@ Java_com_motionstudio_app_native_NativeEngine_nativeClipGradeClear(JNIEnv*, jobj
 JNIEXPORT jboolean JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeClipGradeGet(JNIEnv* env, jobject, jint track,
         jint clip, jfloatArray out) {
-    if (!out || env->GetArrayLength(out) < 7) return JNI_FALSE;
-    float tmp[7];
+    if (!out || env->GetArrayLength(out) < 10) return JNI_FALSE;
+    float tmp[10] = {};
     if (ms_clip_grade_get(track, clip, tmp) != 0) return JNI_FALSE;
-    env->SetFloatArrayRegion(out, 0, 7, tmp);
+    env->SetFloatArrayRegion(out, 0, 10, tmp);
     return JNI_TRUE;
 }
 

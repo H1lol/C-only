@@ -42,9 +42,10 @@ struct ClipInfo {
   bool mute = false;
   ClipMotion motion;
   // Per-clip grade: exposure, contrast, saturation, temperature, lift, gamma,
-  // gain. Applied per clip before compositing, so shots can be matched.
+  // gain, shadows, highlights, vibrance. Applied per clip before compositing,
+  // so shots can be matched.
   bool grade_enabled = false;
-  float grade[7] = {0.f, 1.f, 1.f, 0.f, 0.f, 1.f, 1.f};
+  float grade[10] = {0.f, 1.f, 1.f, 0.f, 0.f, 1.f, 1.f, 0.f, 0.f, 0.f};
   // Shape masks applied to the clip before its transform is composited. Add
   // masks union together, Subtract masks are cut out of that union, so a clip
   // can be matted to several shapes at once. `mask_enabled` is the clip-level
@@ -109,7 +110,7 @@ struct ProjectMeta {
  */
 struct MasterState {
   bool grade_enabled = false;
-  float grade[7] = {0.f, 1.f, 1.f, 0.f, 0.f, 1.f, 1.f};
+  float grade[10] = {0.f, 1.f, 1.f, 0.f, 0.f, 1.f, 1.f, 0.f, 0.f, 0.f};
   std::vector<AudioFxParams> audio;
 };
 

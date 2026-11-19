@@ -187,6 +187,12 @@ class EditorEngine(
         private set
     var gradeGain by mutableFloatStateOf(1f)
         private set
+    var gradeShadows by mutableFloatStateOf(0f)
+        private set
+    var gradeHighlights by mutableFloatStateOf(0f)
+        private set
+    var gradeVibrance by mutableFloatStateOf(0f)
+        private set
     var gradeActive by mutableStateOf(false)
         private set
 
@@ -583,7 +589,24 @@ class EditorEngine(
         gradeActive = true
     }
 
-    private val gradeScratch = FloatArray(7)
+    /**
+     * Shadows and highlights move the dark and bright ends of the curve without
+     * pivoting the midtones the way contrast does. Vibrance pushes muted colours
+     * harder than saturated ones.
+     */
+    fun applyGradeTonal(
+        shadows: Float = gradeShadows,
+        highlights: Float = gradeHighlights,
+        vibrance: Float = gradeVibrance,
+    ) {
+        gradeShadows = shadows
+        gradeHighlights = highlights
+        gradeVibrance = vibrance
+        NativeEngine.nativeGradeTonalSet(shadows, highlights, vibrance)
+        gradeActive = true
+    }
+
+    private val gradeScratch = FloatArray(10)
 
     /**
      * Pulls the master grade back from the engine. The document owns it now, so a
@@ -600,6 +623,9 @@ class EditorEngine(
         gradeLift = gradeScratch[4]
         gradeGamma = gradeScratch[5]
         gradeGain = gradeScratch[6]
+        gradeShadows = gradeScratch[7]
+        gradeHighlights = gradeScratch[8]
+        gradeVibrance = gradeScratch[9]
         return true
     }
 
@@ -611,6 +637,9 @@ class EditorEngine(
         gradeLift = 0f
         gradeGamma = 1f
         gradeGain = 1f
+        gradeShadows = 0f
+        gradeHighlights = 0f
+        gradeVibrance = 0f
         NativeEngine.nativeGradeClear()
         gradeActive = false
         status = "Grade reset"
@@ -952,7 +981,9 @@ class EditorEngine(
 
     // ---- Per-clip grade ----------------------------------------------------
 
-    var clipGrade by mutableStateOf(floatArrayOf(0f, 1f, 1f, 0f, 0f, 1f, 1f))
+    var clipGrade by mutableStateOf(
+        floatArrayOf(0f, 1f, 1f, 0f, 0f, 1f, 1f, 0f, 0f, 0f),
+    )
         private set
     var clipGradeActive by mutableStateOf(false)
         private set
@@ -963,7 +994,7 @@ class EditorEngine(
             clipGradeActive = false
             return
         }
-        val out = FloatArray(7)
+        val out = FloatArray(10)
         if (NativeEngine.nativeClipGradeGet(t, c, out)) {
             clipGrade = out
             clipGradeActive = true
@@ -989,7 +1020,39 @@ class EditorEngine(
                 t, c, exposure, contrast, saturation, temperature, lift, gamma, gain,
             )
         ) return false
-        clipGrade = floatArrayOf(exposure, contrast, saturation, temperature, lift, gamma, gain)
+        // Keep the tonal slots: widening the grade must not drop a shadow
+        // setting just because an exposure slider moved.
+        val next = clipGrade.copyOf(10)
+        next[0] = exposure
+        next[1] = contrast
+        next[2] = saturation
+        next[3] = temperature
+        next[4] = lift
+        next[5] = gamma
+        next[6] = gain
+        clipGrade = next
+        clipGradeActive = true
+        markDirty()
+        status = "Clip grade applied"
+        return true
+    }
+
+    /** Per-clip shadow / highlight split and vibrance. */
+    fun applyClipGradeTonal(
+        shadows: Float = clipGrade.getOrElse(7) { 0f },
+        highlights: Float = clipGrade.getOrElse(8) { 0f },
+        vibrance: Float = clipGrade.getOrElse(9) { 0f },
+    ): Boolean {
+        val (t, c) = selection() ?: run {
+            status = "Select a clip first"
+            return false
+        }
+        if (!NativeEngine.nativeClipGradeTonalSet(t, c, shadows, highlights, vibrance)) return false
+        val next = clipGrade.copyOf(10)
+        next[7] = shadows
+        next[8] = highlights
+        next[9] = vibrance
+        clipGrade = next
         clipGradeActive = true
         markDirty()
         status = "Clip grade applied"
@@ -999,7 +1062,7 @@ class EditorEngine(
     fun clearClipGrade(): Boolean {
         val (t, c) = selection() ?: return false
         if (!NativeEngine.nativeClipGradeClear(t, c)) return false
-        clipGrade = floatArrayOf(0f, 1f, 1f, 0f, 0f, 1f, 1f)
+        clipGrade = floatArrayOf(0f, 1f, 1f, 0f, 0f, 1f, 1f, 0f, 0f, 0f)
         clipGradeActive = false
         markDirty()
         status = "Clip grade cleared"

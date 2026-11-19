@@ -128,7 +128,9 @@ object NativeEngine {
         gain: Float,
     )
     external fun nativeGradeClear()
-    /** Fills 7 floats with the persisted master grade; true when one is active. */
+    /** Shadow / highlight split and vibrance, on top of the seven base moves. */
+    external fun nativeGradeTonalSet(shadows: Float, highlights: Float, vibrance: Float)
+    /** Fills 10 floats with the persisted master grade; true when one is active. */
     external fun nativeGradeGet(out: FloatArray): Boolean
     external fun nativeScopesHistogram(out: IntArray, bins: Int): Boolean
 
@@ -188,6 +190,9 @@ object NativeEngine {
     ): Boolean
     external fun nativeClipGradeClear(track: Int, clip: Int): Boolean
     external fun nativeClipGradeGet(track: Int, clip: Int, out: FloatArray): Boolean
+    external fun nativeClipGradeTonalSet(
+        track: Int, clip: Int, shadows: Float, highlights: Float, vibrance: Float,
+    ): Boolean
 
     // Timeline waveform: fills `out` with `bins` peaks in 0..1.
     external fun nativeClipPeaks(track: Int, clip: Int, out: FloatArray, bins: Int): Boolean
