@@ -109,6 +109,15 @@ void ms_look_clear();
 void ms_look_set_strength(float strength);
 float ms_look_strength();
 
+// Per-clip look (3D .cube LUT) graded over one clip after its grade. Returns 0
+// on success, -1 if the file is missing, malformed or the clip was not found.
+int ms_clip_look_set(int track_id, int clip_id, const char* path);
+int ms_clip_look_set_strength(int track_id, int clip_id, float strength);
+int ms_clip_look_clear(int track_id, int clip_id);
+// Returns 0 and fills buf (NUL-terminated) plus the strength, -1 when the clip
+// carries no look.
+int ms_clip_look_get(int track_id, int clip_id, char* buf, int size, float* strength);
+
 // ---- Timeline editing (each edit is undoable) ----
 int ms_clip_remove(int track_id, int clip_id);
 int ms_clip_move(int track_id, int clip_id, double start);

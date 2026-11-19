@@ -270,6 +270,33 @@ int ms_look_load(const char* path) {
 void ms_look_clear() { ms::Engine::instance().clear_look(); }
 void ms_look_set_strength(float strength) { ms::Engine::instance().set_look_strength(strength); }
 float ms_look_strength() { return ms::Engine::instance().look_strength(); }
+
+int ms_clip_look_set(int track_id, int clip_id, const char* path) {
+    if (!path || !*path) return -1;
+    return ms::Engine::instance().set_clip_look(track_id, clip_id, path, 1.f) ? 0 : -1;
+}
+
+int ms_clip_look_set_strength(int track_id, int clip_id, float strength) {
+    return ms::Engine::instance().set_clip_look_strength(track_id, clip_id, strength) ? 0 : -1;
+}
+
+int ms_clip_look_clear(int track_id, int clip_id) {
+    return ms::Engine::instance().clear_clip_look(track_id, clip_id) ? 0 : -1;
+}
+
+int ms_clip_look_get(int track_id, int clip_id, char* buf, int size, float* strength) {
+    std::string path;
+    float s = 0.f;
+    if (!ms::Engine::instance().clip_look(track_id, clip_id, &path, &s)) return -1;
+    if (buf && size > 0) {
+        const int need = static_cast<int>(path.size());
+        const int copy = need < size - 1 ? need : size - 1;
+        std::memcpy(buf, path.data(), static_cast<size_t>(copy));
+        buf[copy] = '\0';
+    }
+    if (strength) *strength = s;
+    return 0;
+}
 void ms_grade_set(float exposure, float contrast, float saturation, float temperature,
                   float lift, float gamma, float gain) {
     ms::Engine::instance().set_grade(exposure, contrast, saturation, temperature, lift, gamma, gain);

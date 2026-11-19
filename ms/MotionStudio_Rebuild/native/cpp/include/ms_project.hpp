@@ -52,6 +52,11 @@ struct ClipInfo {
   // switch; empty or all-disabled masks leave the clip untouched.
   std::vector<Mask> masks;
   bool mask_enabled = false;
+  // Per-clip LUT look: a resolved `.cube` path plus its blend strength. Applied
+  // after the clip's grade and before its transform, so one shot can carry a
+  // look the rest of the sequence does not. Empty path or 0 strength = no look.
+  std::string look_path;
+  float look_strength = 0.f;
   // Adjustment layer: has no source of its own. Its effect stack and grade are
   // applied to everything the tracks below have already composited.
   bool is_adjustment = false;

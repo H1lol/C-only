@@ -766,7 +766,12 @@ bool Engine::clip_mask(TrackId track, ClipId clip, float* out6, bool* inverted) 
 static Mask make_mask(const ClipInfo& c, int shape, float x, float y, float w, float h,
                       float feather, bool inverted, int op) {
     Mask m;
-    m.id = c.masks.size() + 1;
+    // Ids come from the largest id already on the clip, not the list length:
+    // removing a mask and adding another made the new one share an id with the
+    // mask that followed the removed one.
+    uint64_t next_id = 1;
+    for (const auto& existing : c.masks) next_id = std::max(next_id, existing.id + 1);
+    m.id = next_id;
     m.name = "Mask " + std::to_string(c.masks.size() + 1);
     m.shape = mask_shape_from_index(shape);
     m.mode = MaskMode::Alpha;
@@ -868,6 +873,72 @@ bool Engine::clip_mask_at(TrackId track, ClipId clip, int index, float* out6, bo
             }
             if (inverted) *inverted = m.inverted;
             if (op) *op = m.op == MaskOp::Subtract ? 1 : 0;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Engine::set_clip_look(TrackId track, ClipId clip, const std::string& path,
+                           float strength) {
+    if (path.empty()) return false;
+    // Parse here so a missing or malformed cube is reported when it is picked,
+    // instead of silently grading nothing on every frame afterwards.
+    Lut3D probe;
+    if (!load_cube_lut(path, probe)) return false;
+    TrackInfo* t = project_->find_track(track);
+    if (!t) return false;
+    for (auto& c : t->clips) {
+        if (c.id != clip) continue;
+        project_->push_undo();
+        c.look_path = path;
+        c.look_strength = std::clamp(strength <= 0.f ? 1.f : strength, 0.f, 1.f);
+        project_->mark_dirty();
+        invalidate_frames();
+        return true;
+    }
+    return false;
+}
+
+bool Engine::set_clip_look_strength(TrackId track, ClipId clip, float strength) {
+    TrackInfo* t = project_->find_track(track);
+    if (!t) return false;
+    for (auto& c : t->clips) {
+        if (c.id != clip) continue;
+        if (c.look_path.empty()) return false;
+        project_->push_undo();
+        c.look_strength = std::clamp(strength, 0.f, 1.f);
+        project_->mark_dirty();
+        invalidate_frames();
+        return true;
+    }
+    return false;
+}
+
+bool Engine::clear_clip_look(TrackId track, ClipId clip) {
+    TrackInfo* t = project_->find_track(track);
+    if (!t) return false;
+    for (auto& c : t->clips) {
+        if (c.id != clip) continue;
+        project_->push_undo();
+        c.look_path.clear();
+        c.look_strength = 0.f;
+        project_->mark_dirty();
+        invalidate_frames();
+        return true;
+    }
+    return false;
+}
+
+bool Engine::clip_look(TrackId track, ClipId clip, std::string* out_path,
+                       float* out_strength) const {
+    for (const auto& t : project_->tracks()) {
+        if (t.id != track) continue;
+        for (const auto& c : t.clips) {
+            if (c.id != clip) continue;
+            if (c.look_path.empty() || c.look_strength <= 0.f) return false;
+            if (out_path) *out_path = c.look_path;
+            if (out_strength) *out_strength = c.look_strength;
             return true;
         }
     }

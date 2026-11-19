@@ -356,6 +356,7 @@ std::string ProjectSession::to_json() const {
         if (mi) ss << ", ";
         ss << "{\"shape\": " << static_cast<int>(mm.shape)
            << ", \"op\": " << static_cast<int>(mm.op)
+           << ", \"mode\": " << static_cast<int>(mm.mode)
            << ", \"x\": " << mm.x << ", \"y\": " << mm.y
            << ", \"w\": " << mm.w << ", \"h\": " << mm.h
            << ", \"feather\": " << mm.feather
@@ -363,7 +364,8 @@ std::string ProjectSession::to_json() const {
            << ", \"on\": " << (mm.enabled ? "true" : "false") << "}";
       }
       ss << "]"
-         << ", \"grade_enabled\": " << (c.grade_enabled ? "true" : "false")
+         << ", \"look_path\": \"" << esc(c.look_path) << "\""
+         << ", \"look_strength\": " << c.look_strength
          << ", \"grade_enabled\": " << (c.grade_enabled ? "true" : "false")
          << ", \"grade\": [" << c.grade[0] << ", " << c.grade[1] << ", " << c.grade[2]
          << ", " << c.grade[3] << ", " << c.grade[4] << ", " << c.grade[5]
@@ -517,7 +519,10 @@ Error ProjectSession::load_from_json(const std::string& json) {
         for (const auto& mo : array_objects(co, "masks")) {
           Mask mm;
           mm.shape = mask_shape_from_index(static_cast<int>(extract_number(mo, "shape", 0)));
-          mm.mode = MaskMode::Alpha;
+          int mode = static_cast<int>(extract_number(mo, "mode", 1));
+          if (mode < 0) mode = 0;
+          if (mode > 4) mode = 4;
+          mm.mode = static_cast<MaskMode>(mode);
           mm.op = static_cast<int>(extract_number(mo, "op", 0)) == 1 ? MaskOp::Subtract
                                                                     : MaskOp::Add;
           mm.x = static_cast<float>(extract_number(mo, "x", 0.1));
@@ -548,6 +553,8 @@ Error ProjectSession::load_from_json(const std::string& json) {
         }
         c.mask_enabled = !c.masks.empty();
       }
+      c.look_path = extract_string(co, "look_path");
+      c.look_strength = static_cast<float>(extract_number(co, "look_strength", 0));
       c.grade_enabled = co.find("\"grade_enabled\": true") != std::string::npos;
       {
         const size_t gp = co.find("\"grade\": [");

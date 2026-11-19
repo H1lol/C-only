@@ -171,6 +171,47 @@ int main() {
           "adding past the cap is refused");
   }
 
+  // 8. A full-frame mask honours invert. The shared fast path used to return a
+  //    white frame for both polarities, so inverting a Full mask did nothing.
+  {
+    ms::Mask m;
+    m.shape = ms::MaskShape::Full;
+    ms::ImageBuffer matte;
+    check(ms::rasterize_mask(m, 64, 64, matte).ok(), "full mask rasterises");
+    check(alpha_at(matte, 32, 32) > 250, "full mask covers the frame");
+    m.inverted = true;
+    check(ms::rasterize_mask(m, 64, 64, matte).ok(), "inverted full mask rasterises");
+    check(alpha_at(matte, 32, 32) < 5, "inverted full mask is black");
+  }
+
+  // 9. The mask *mode* folds into the combine. Before this it was ignored, so an
+  //    InvertedAlpha add mask kept its shape and cleared everything else.
+  {
+    ms::Mask keep;
+    keep.shape = ms::MaskShape::Rect;
+    keep.x = 0.3f; keep.y = 0.3f; keep.w = 0.4f; keep.h = 0.4f;
+    keep.mode = ms::MaskMode::InvertedAlpha;
+    ms::ImageBuffer matte;
+    check(ms::rasterize_masks({keep}, 100, 100, matte).ok(), "inverted-alpha add rasterises");
+    check(alpha_at(matte, 50, 50) < 5, "inverted alpha clears its shape");
+    check(alpha_at(matte, 5, 5) > 250, "inverted alpha keeps the rest");
+  }
+
+  // 10. An inverted Subtract mask cuts everything except its own shape.
+  {
+    ms::Mask full;
+    full.shape = ms::MaskShape::Full;
+    ms::Mask cut;
+    cut.shape = ms::MaskShape::Ellipse;
+    cut.op = ms::MaskOp::Subtract;
+    cut.mode = ms::MaskMode::InvertedAlpha;
+    cut.x = 0.35f; cut.y = 0.35f; cut.w = 0.3f; cut.h = 0.3f;
+    ms::ImageBuffer matte;
+    check(ms::rasterize_masks({full, cut}, 100, 100, matte).ok(), "inverted subtract rasterises");
+    check(alpha_at(matte, 50, 50) > 250, "inverted subtract leaves its own shape");
+    check(alpha_at(matte, 5, 5) < 5, "inverted subtract cuts the rest");
+  }
+
   if (g_failures == 0) {
     std::printf("all mask checks passed\n");
     return 0;

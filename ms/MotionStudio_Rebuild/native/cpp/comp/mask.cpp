@@ -57,8 +57,16 @@ Error rasterize_mask(const Mask& mask, int width, int height, ImageBuffer& out) 
   if (!out.allocate(width, height, PixelFormat::RGBA8))
     return Error::make(ErrorCode::OutOfMemory, "mask buffer");
 
-  if (!mask.enabled || mask.shape == MaskShape::Full) {
+  // A disabled mask leaves the clip untouched. A full-frame mask is a constant,
+  // but it still has to honour invert (a black frame), which the old shared fast
+  // path dropped: only the multi-mask path got that right.
+  if (!mask.enabled) {
     out.clear(1.f, 1.f, 1.f, 1.f);
+    return Error::success();
+  }
+  if (mask.shape == MaskShape::Full) {
+    const float s = mask_strength_at(mask, 0, 0, width, height);
+    out.clear(s, s, s, s);
     return Error::success();
   }
 
@@ -74,6 +82,18 @@ Error rasterize_mask(const Mask& mask, int width, int height, ImageBuffer& out) 
     }
   }
   return Error::success();
+}
+
+// A mask's mode says how its matte is read: Alpha and Luma take the shape's
+// strength as it is, the Inverted variants flip it. The combined matte is then
+// applied as alpha, so the mode has to be folded in while combining.
+static inline float mask_mode_strength(float strength, MaskMode mode) {
+  switch (mode) {
+    case MaskMode::InvertedAlpha:
+    case MaskMode::InvertedLuma:  return 1.f - strength;
+    case MaskMode::None:          return 1.f;
+    default:                      return strength;
+  }
 }
 
 Error rasterize_masks(const std::vector<Mask>& masks, int width, int height,
@@ -102,10 +122,12 @@ Error rasterize_masks(const std::vector<Mask>& masks, int width, int height,
     for (int x = 0; x < width; ++x) {
       float union_strength = base_full ? 1.f : 0.f;
       for (const Mask* m : adds)
-        union_strength = std::max(union_strength, mask_strength_at(*m, x, y, width, height));
+        union_strength = std::max(
+            union_strength, mask_mode_strength(mask_strength_at(*m, x, y, width, height), m->mode));
       float cut = 0.f;
       for (const Mask* m : subs)
-        cut = std::max(cut, mask_strength_at(*m, x, y, width, height));
+        cut = std::max(
+            cut, mask_mode_strength(mask_strength_at(*m, x, y, width, height), m->mode));
 
       const float s = std::clamp(union_strength * (1.f - cut), 0.f, 1.f);
       const uint8_t v = static_cast<uint8_t>(s * 255.f + 0.5f);

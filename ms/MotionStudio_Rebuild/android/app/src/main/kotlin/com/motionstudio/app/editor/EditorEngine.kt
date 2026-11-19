@@ -988,6 +988,60 @@ class EditorEngine(
     var clipGradeActive by mutableStateOf(false)
         private set
 
+    /**
+     * Per-clip LUT look. A look assigned here grades only the selected clip,
+     * after its grade and before its transform; the sequence-wide look in
+     * [applyLook] is separate and still applies on top of the whole preview.
+     */
+    var clipLookPath by mutableStateOf<String?>(null)
+        private set
+    var clipLookStrength by mutableFloatStateOf(1f)
+        private set
+
+    /** Pulls the selected clip's look into Compose state. */
+    fun refreshClipLook() {
+        val (t, c) = selection() ?: run {
+            clipLookPath = null
+            return
+        }
+        val out = FloatArray(1)
+        val path = NativeEngine.nativeClipLookGet(t, c, out)
+        clipLookPath = path.ifEmpty { null }
+        clipLookStrength = if (out[0] > 0f) out[0] else 1f
+    }
+
+    fun applyClipLook(path: String, strength: Float = 1f): Boolean {
+        val (t, c) = selection() ?: run {
+            status = "Select a clip first"
+            return false
+        }
+        if (!NativeEngine.nativeClipLookSet(t, c, path)) {
+            status = "Could not read that look"
+            return false
+        }
+        if (strength < 1f) NativeEngine.nativeClipLookSetStrength(t, c, strength)
+        clipLookPath = path
+        clipLookStrength = strength.coerceIn(0f, 1f)
+        markDirty()
+        status = "Clip look applied"
+        return true
+    }
+
+    fun updateClipLookStrength(value: Float) {
+        val (t, c) = selection() ?: return
+        clipLookStrength = value.coerceIn(0f, 1f)
+        NativeEngine.nativeClipLookSetStrength(t, c, clipLookStrength)
+        markDirty()
+    }
+
+    fun clearClipLook() {
+        val (t, c) = selection() ?: return
+        NativeEngine.nativeClipLookClear(t, c)
+        clipLookPath = null
+        markDirty()
+        status = "Clip look cleared"
+    }
+
     /** Pulls the selected clip's grade into Compose state. */
     fun refreshClipGrade() {
         val (t, c) = selection() ?: run {

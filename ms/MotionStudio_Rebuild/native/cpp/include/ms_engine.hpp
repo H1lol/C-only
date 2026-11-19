@@ -176,6 +176,17 @@ public:
     bool clip_mask_at(TrackId track, ClipId clip, int index, float* out6, bool* inverted,
                       int* op) const;
 
+    // ---- Per-clip LUT look -------------------------------------------------
+    // A `.cube` graded over this clip only, after its grade and before its
+    // transform. The display-wide look is separate and still applies on top.
+    /** Sets the look and turns it on; strength 0 means full. Returns false when
+     *  the file is missing or malformed, so the app can report it now. */
+    bool set_clip_look(TrackId track, ClipId clip, const std::string& path, float strength = 1.f);
+    bool set_clip_look_strength(TrackId track, ClipId clip, float strength);
+    bool clear_clip_look(TrackId track, ClipId clip);
+    /** Fills the path and strength; false when the clip carries no look. */
+    bool clip_look(TrackId track, ClipId clip, std::string* out_path, float* out_strength) const;
+
     /** Per-clip grade (exposure, contrast, saturation, temperature, lift, gamma, gain). */
     bool set_clip_grade(TrackId track, ClipId clip, float exposure, float contrast,
                         float saturation, float temperature, float lift, float gamma,

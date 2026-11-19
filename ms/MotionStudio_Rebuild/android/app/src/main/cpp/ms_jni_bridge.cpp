@@ -591,6 +591,40 @@ Java_com_motionstudio_app_native_NativeEngine_nativeClipMaskCount(JNIEnv*, jobje
 }
 
 JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeClipLookSet(JNIEnv* env, jobject, jint track,
+        jint clip, jstring path) {
+    if (!path) return JNI_FALSE;
+    const char* p = env->GetStringUTFChars(path, nullptr);
+    const int rc = p ? ms_clip_look_set(track, clip, p) : -1;
+    if (p) env->ReleaseStringUTFChars(path, p);
+    return rc == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeClipLookSetStrength(JNIEnv*, jobject,
+        jint track, jint clip, jfloat strength) {
+    return ms_clip_look_set_strength(track, clip, strength) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeClipLookClear(JNIEnv*, jobject, jint track,
+        jint clip) {
+    return ms_clip_look_clear(track, clip) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeClipLookGet(JNIEnv* env, jobject, jint track,
+        jint clip, jfloatArray out) {
+    char buf[1024] = {};
+    float strength = 0.f;
+    if (ms_clip_look_get(track, clip, buf, static_cast<int>(sizeof(buf)), &strength) != 0)
+        return env->NewStringUTF("");
+    if (out && env->GetArrayLength(out) >= 1)
+        env->SetFloatArrayRegion(out, 0, 1, &strength);
+    return env->NewStringUTF(buf);
+}
+
+JNIEXPORT jboolean JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeClipMaskRead(JNIEnv* env, jobject, jint track,
         jint clip, jint index, jfloatArray out, jintArray invertedOut, jintArray opOut) {
     if (!out || env->GetArrayLength(out) < 6) return JNI_FALSE;

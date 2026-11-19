@@ -183,6 +183,13 @@ object NativeEngine {
     ): Boolean
     external fun nativeClipMaskClear(track: Int, clip: Int): Boolean
 
+    // Per-clip LUT look: a `.cube` graded over one clip, after its grade.
+    external fun nativeClipLookSet(track: Int, clip: Int, path: String): Boolean
+    external fun nativeClipLookSetStrength(track: Int, clip: Int, strength: Float): Boolean
+    external fun nativeClipLookClear(track: Int, clip: Int): Boolean
+    /** Path of the clip's look, or "" when it has none; strength lands in out[0]. */
+    external fun nativeClipLookGet(track: Int, clip: Int, out: FloatArray): String
+
     // Per-clip grade
     external fun nativeClipGradeSet(
         track: Int, clip: Int, exposure: Float, contrast: Float, saturation: Float,

@@ -19,8 +19,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -48,6 +54,10 @@ private val Looks = listOf(
 fun LooksSheet(engine: EditorEngine, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // Master look (whole sequence) or only the selected clip's own look.
+    var clipMode by remember { mutableStateOf(false) }
+
+    LaunchedEffect(engine.selectedClipId) { engine.refreshClipLook() }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -55,44 +65,98 @@ fun LooksSheet(engine: EditorEngine, onDismiss: () -> Unit) {
         containerColor = MsColors.surface,
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            Text(
-                "Looks",
-                color = MsColors.textPrimary,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                "3D LUTs applied by the C++ renderer to every preview frame.",
-                color = MsColors.textTertiary,
-                fontSize = 12.sp,
-            )
-            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Looks",
+                        color = MsColors.textPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        when {
+                            clipMode && engine.clipLookPath != null -> "Look on the selected clip"
+                            clipMode -> "This clip has no look"
+                            engine.lookName != null -> "Look on every frame of the sequence"
+                            else -> "No look applied"
+                        },
+                        color = when {
+                            clipMode && engine.clipLookPath != null -> MsColors.success
+                            !clipMode && engine.lookName != null -> MsColors.success
+                            else -> MsColors.textTertiary
+                        },
+                        fontSize = 11.sp,
+                    )
+                }
+                TextButton(onClick = {
+                    if (clipMode) engine.clearClipLook() else engine.clearLook()
+                }) {
+                    Text("None", color = MsColors.textTertiary, fontSize = 12.sp)
+                }
+            }
 
+            Spacer(Modifier.height(4.dp))
+            Row {
+                TextButton(
+                    onClick = { clipMode = false },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (!clipMode) MsColors.accentSoft.copy(alpha = 0.16f) else Color.Transparent),
+                ) {
+                    Text(
+                        "Sequence",
+                        color = if (!clipMode) MsColors.accentSoft else MsColors.textSecondary,
+                        fontSize = 12.sp,
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        clipMode = true
+                        engine.refreshClipLook()
+                    },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (clipMode) MsColors.accentSoft.copy(alpha = 0.16f) else Color.Transparent),
+                ) {
+                    Text(
+                        "Selected clip",
+                        color = if (clipMode) MsColors.accentSoft else MsColors.textSecondary,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+
+            val strength = if (clipMode) engine.clipLookStrength else engine.lookStrength
             Row(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    "Strength  ${(engine.lookStrength * 100).toInt()}%",
+                    "Strength  ${(strength * 100).toInt()}%",
                     color = MsColors.textSecondary,
                     fontSize = 12.sp,
                     fontFamily = MsFonts.mono,
                 )
-                TextButton(onClick = { engine.clearLook() }) {
-                    Text("None", color = MsColors.textTertiary, fontSize = 12.sp)
-                }
             }
             Slider(
-                value = engine.lookStrength,
-                onValueChange = { engine.updateLookStrength(it) },
+                value = strength,
+                onValueChange = {
+                    if (clipMode) engine.updateClipLookStrength(it) else engine.updateLookStrength(it)
+                },
                 valueRange = 0f..1f,
             )
 
             LazyColumn(Modifier.fillMaxWidth().height(320.dp)) {
                 items(Looks) { look ->
-                    val active = engine.lookName == look.name
+                    // The clip look is stored as a resolved path, so match on the
+                    // file name rather than holding on to an asset name in state.
+                    val active = if (clipMode) {
+                        engine.clipLookPath?.endsWith("/${look.asset}.cube") == true
+                    } else {
+                        engine.lookName == look.name
+                    }
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -121,7 +185,13 @@ fun LooksSheet(engine: EditorEngine, onDismiss: () -> Unit) {
                         TextButton(
                             onClick = {
                                 val path = ensureLookAsset(context, look.asset)
-                                if (path != null) engine.applyLook(path.absolutePath, look.name)
+                                if (path != null) {
+                                    if (clipMode) {
+                                        engine.applyClipLook(path.absolutePath, engine.clipLookStrength)
+                                    } else {
+                                        engine.applyLook(path.absolutePath, look.name)
+                                    }
+                                }
                             },
                         ) {
                             Text(

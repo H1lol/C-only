@@ -158,7 +158,7 @@ static void composite_premul(const ImageBuffer& src, ImageBuffer& dst) {
 // already in `buf`, using `tmp` as the effect stack's destination. Called for a
 // single clip's frame, and for an adjustment layer where `buf` is everything the
 // tracks below have composited so far.
-static void apply_clip_look(const ClipInfo& clip, ImageBuffer& buf, ImageBuffer& tmp) {
+void TimelinePlayer::apply_clip_look(const ClipInfo& clip, ImageBuffer& buf, ImageBuffer& tmp) {
   // An empty stack used to copy the whole frame into a fresh buffer for no
   // reason; with no enabled effect there is nothing to do at all.
   if (!clip.motion.effects.empty()) {
@@ -182,6 +182,28 @@ static void apply_clip_look(const ClipInfo& clip, ImageBuffer& buf, ImageBuffer&
     g.vibrance = clip.grade[9];
     apply_finishing_grade(buf, g);
   }
+
+  // A per-clip look runs last, after the grade: one shot can carry a LUT while
+  // the rest of the sequence does not, which a display-wide look cannot express.
+  // The parsed cube is cached by path, so this is a trilinear sample per pixel.
+  if (!clip.look_path.empty() && clip.look_strength > 0.f) {
+    if (const Lut3D* lut = lut_for(clip.look_path))
+      apply_lut(buf, *lut, std::clamp(clip.look_strength, 0.f, 1.f));
+  }
+}
+
+const Lut3D* TimelinePlayer::lut_for(const std::string& path) {
+  auto it = lut_cache_.find(path);
+  if (it != lut_cache_.end()) return it->second.get();
+  auto lut = std::make_shared<Lut3D>();
+  if (!load_cube_lut(path, *lut)) {
+    // Cache the failure too: a clip pointing at a missing file must not retry
+    // the file open on every frame of every render.
+    lut_cache_[path] = nullptr;
+    return nullptr;
+  }
+  lut_cache_[path] = lut;
+  return lut.get();
 }
 
 void TimelinePlayer::render_clip_into(const ClipInfo& clip, TimeSec time, int W, int H,

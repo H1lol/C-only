@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased — per-clip looks and mask correctness
+
+### Added
+- **A look on one clip.** `ClipInfo` gained `look_path` and `look_strength`, so a `.cube` LUT can
+  grade a single clip instead of only the whole sequence. The clip look runs after that clip's grade
+  and before its transform, so it survives into export the same way the grade does
+- `TimelinePlayer::apply_clip_look` (now a member, so it can reach the LUT cache) and a
+  `lut_cache_` keyed by path that also remembers parse failures — a frame never re-reads a cube
+  from disk, and an unreadable file is not retried every frame
+- `Engine::set_clip_look`, `set_clip_look_strength`, `clear_clip_look` and `clip_look`, bridged as
+  `ms_clip_look_set/set_strength/clear/get` and as four `NativeEngine` externals. `look_path` and
+  `look_strength` are written into each clip in the project JSON and restored on load; documents
+  without them load with no clip look
+- LOOKS sheet: a **Sequence / Selected clip** target toggle. In clip mode the strength slider, the
+  clear button and the preset list act on the selected clip's look, and the active preset is matched
+  by file name because the clip stores a resolved path
+
+### Fixed
+- **An inverted full-frame mask did nothing.** `rasterize_mask` took a constant-white fast path for
+  `MaskShape::Full` regardless of polarity; it now goes through the same strength function, so an
+  inverted Full mask is black
+- **Mask mode was ignored when masks combined.** Alpha/Luma and their inverted variants were only
+  honoured by the single-mask apply step, so an InvertedAlpha mask combined as a plain Add kept its
+  shape and cleared everything else. `mask_mode_strength()` now folds the mode into both the Add
+  union and the Subtract cut
+- **Duplicated `"grade_enabled"` key** in the clip JSON (written twice on every save)
+- **Mask ids could collide** after removing a mask and adding another: `make_mask` used
+  `masks.size() + 1`, now the next id above the highest in use
+
+### Tests
+- `ms_clip_look_test`: a look reaches the clip's pixels and not its neighbour's, strength blends
+  toward the slate, the look survives a save/load, a missing cube is refused, and clearing restores
+  the original frame
+- `ms_mask_test`: a full-frame mask covers the frame and its inverted form is black; an
+  InvertedAlpha Add mask keeps only the area outside its shape; an InvertedAlpha Subtract mask cuts
+  everything except its own shape. Suite is **22/22**
+
 ## Unreleased — tonal grade split
 
 ### Added

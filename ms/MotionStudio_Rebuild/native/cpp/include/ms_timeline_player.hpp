@@ -7,6 +7,7 @@
 #include "ms_media.hpp"
 #include "ms_image.hpp"
 #include "ms_error.hpp"
+#include "ms_lut.hpp"
 #include <memory>
 #include <unordered_map>
 #include <string>
@@ -52,6 +53,13 @@ private:
    * Buffers come from [scratch_], never from freshly constructed images.
    */
   void render_clip_into(const ClipInfo& clip, TimeSec time, int w, int h, ImageBuffer& dst);
+
+  /** A clip's effect stack, grade and per-clip LUT, on pixels already in `buf`. */
+  void apply_clip_look(const ClipInfo& clip, ImageBuffer& buf, ImageBuffer& tmp);
+
+  /** Parsed `.cube` cache: a look is read from disk once, not once per frame. */
+  const Lut3D* lut_for(const std::string& path);
+  std::unordered_map<std::string, std::shared_ptr<const Lut3D>> lut_cache_;
 
   /**
    * Frame scratch, reused for the lifetime of the player.
