@@ -90,6 +90,12 @@ object NativeEngine {
     // Editing
     external fun nativeImportMedia(path: String): Int
     external fun nativeAddClip(trackId: Int, mediaId: Int, start: Double, duration: Double): Int
+
+    // Retime + adjustment layers. Speed stretches the clip's timeline length so
+    // the same slice of source plays faster; adjustment layers own no pixels and
+    // run their effect stack over everything the tracks below composited.
+    external fun nativeClipSpeedSet(trackId: Int, clipId: Int, speed: Float): Boolean
+    external fun nativeAdjustmentAdd(trackId: Int, start: Double, duration: Double): Int
     external fun nativeSplitClip(trackId: Int, clipId: Int, at: Double): Boolean
     external fun nativeUndo(): Boolean
     external fun nativeRedo(): Boolean

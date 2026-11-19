@@ -180,6 +180,17 @@ int ms_clip_mask_clear(int track_id, int clip_id);
 /** Writes shape/x/y/w/h/feather to out6 and the invert flag to inverted. */
 int ms_clip_mask_get(int track_id, int clip_id, float* out6, int* inverted);
 
+// Retime. The same slice of source plays at `speed` (0.1..8) and the clip's
+// timeline length follows it. Text and adjustment clips are rejected. 0 on
+// success, -1 when the clip cannot be retimed.
+int ms_clip_speed_set(int track_id, int clip_id, float speed);
+int ms_clip_speed_get(int track_id, int clip_id, float* out);
+
+// Adjustment layer: no media of its own. Its effect stack and grade run over
+// everything the tracks below have already composited. Returns the new clip id
+// or 0.
+int ms_adjustment_add(int track_id, double start, double duration);
+
 // Per-clip grade. Applied to the clip before compositing, independent of the
 // master grade. Returns 0 on success.
 int ms_clip_grade_set(int track_id, int clip_id, float exposure, float contrast,

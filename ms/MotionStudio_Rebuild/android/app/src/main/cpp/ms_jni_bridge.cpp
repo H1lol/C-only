@@ -134,6 +134,18 @@ Java_com_motionstudio_app_native_NativeEngine_nativeAddClip(JNIEnv*, jobject, ji
     return ms_add_clip(trackId, mediaId, start, duration);
 }
 
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeAdjustmentAdd(JNIEnv*, jobject, jint trackId,
+        jdouble start, jdouble duration) {
+    return ms_adjustment_add(trackId, start, duration);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeClipSpeedSet(JNIEnv*, jobject, jint trackId,
+        jint clipId, jfloat speed) {
+    return ms_clip_speed_set(trackId, clipId, speed) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeSplitClip(JNIEnv*, jobject, jint trackId,
                                                               jint clipId, jdouble at) {

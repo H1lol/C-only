@@ -24,6 +24,10 @@ data class NativeClip(
     val duration: Double,
     val opacity: Double,
     val mute: Boolean,
+    /** Play speed; the clip's duration on the timeline already accounts for it. */
+    val speed: Double = 1.0,
+    /** Adjustment layer: no pixels of its own, effects run on the tracks below. */
+    val isAdjustment: Boolean = false,
     val effects: List<NativeEffect> = emptyList(),
     val keyframes: Map<String, Int> = emptyMap(),
     val isText: Boolean = false,
@@ -192,6 +196,8 @@ data class ProjectDoc(
                                                 duration = clip.optDouble("duration", 0.0),
                                                 opacity = clip.optDouble("opacity", 1.0),
                                                 mute = clip.optBoolean("mute", false),
+                                                speed = clip.optDouble("speed", 1.0),
+                                                isAdjustment = clip.optBoolean("adj", false),
                                                 effects = parseEffects(clip),
                                                 keyframes = parseKeyframeCounts(clip),
                                                 isText = clip.optBoolean("is_text", false),

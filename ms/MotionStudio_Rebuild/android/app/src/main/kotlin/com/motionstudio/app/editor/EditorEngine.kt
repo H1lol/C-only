@@ -835,6 +835,64 @@ class EditorEngine(
         return true
     }
 
+    // ---- Retime + adjustment layers ---------------------------------------
+
+    /** Play speed of the selected clip, as the native document reports it. */
+    fun clipSpeed(): Double {
+        val (t, c) = selection() ?: return 1.0
+        return doc.clipById(t, c)?.speed ?: 1.0
+    }
+
+    /**
+     * Retimes the selected clip. The engine keeps the same slice of source and
+     * stretches the clip's timeline length to match, so 2x halves it. Audio
+     * pitches up: the mixer resamples by speed instead of time-stretching.
+     */
+    fun setClipSpeed(speed: Float): Boolean {
+        val (t, c) = selection() ?: run {
+            status = "Select a clip first"
+            return false
+        }
+        val clip = doc.clipById(t, c)
+        if (clip?.isAdjustment == true || clip?.isText == true) {
+            status = "Only media clips can be retimed"
+            return false
+        }
+        if (!NativeEngine.nativeClipSpeedSet(t, c, speed)) {
+            status = "The engine rejected that speed"
+            return false
+        }
+        markDirty()
+        reload()
+        status = "Speed ${"%.2f".format(speed)}× · clip length follows"
+        return true
+    }
+
+    /**
+     * Adds an adjustment layer at the playhead on the overlay (or first video)
+     * track. It carries an effect stack and a grade that read the composite of
+     * every track below it, the way a node compositor's adjustment layer does.
+     */
+    fun addAdjustmentLayer(duration: Double = 3.0): Boolean {
+        val track = doc.tracks.firstOrNull { it.type == 1 }
+            ?: doc.tracks.firstOrNull { it.type == 0 }
+            ?: run {
+                status = "No video or overlay track to hold an adjustment layer"
+                return false
+            }
+        val id = NativeEngine.nativeAdjustmentAdd(track.id, time, duration)
+        if (id <= 0) {
+            status = "Could not add the adjustment layer"
+            return false
+        }
+        selectedTrackId = track.id
+        selectedClipId = id
+        markDirty()
+        reload()
+        status = "Adjustment layer added — its effects run on the tracks below"
+        return true
+    }
+
     // ---- Per-clip grade ----------------------------------------------------
 
     var clipGrade by mutableStateOf(floatArrayOf(0f, 1f, 1f, 0f, 0f, 1f, 1f))

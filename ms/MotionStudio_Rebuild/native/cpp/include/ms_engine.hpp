@@ -100,6 +100,22 @@ public:
     /** Adds a media clip at `start`. Undoable, and drops the frame cache. */
     ClipId add_clip(TrackId track, MediaId media, TimeSec start, TimeSec duration);
 
+    /**
+     * Adds an adjustment layer over [start, start+duration]. It carries no
+     * pixels: its effect stack and grade run over whatever the tracks below it
+     * have composited, the way an adjustment layer works in a node compositor.
+     */
+    ClipId add_adjustment_clip(TrackId track, TimeSec start, TimeSec duration);
+
+    /**
+     * Retimes a clip: the same slice of source plays at `speed` (clamped to
+     * 0.1..8) and the clip's timeline length follows it. Text and adjustment
+     * clips have no source range and are rejected.
+     */
+    bool set_clip_speed(TrackId track, ClipId clip, float speed);
+    /** Reads a clip's play speed into `out`. */
+    bool clip_speed(TrackId track, ClipId clip, float* out) const;
+
     // Timeline editing. Each call is undoable and drops the frame cache.
     bool remove_clip(TrackId track, ClipId clip);
     bool move_clip(TrackId track, ClipId clip, TimeSec start);

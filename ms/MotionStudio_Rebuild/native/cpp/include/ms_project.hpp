@@ -48,6 +48,9 @@ struct ClipInfo {
   // Shape mask applied to the clip before its transform is composited.
   Mask mask;
   bool mask_enabled = false;
+  // Adjustment layer: has no source of its own. Its effect stack and grade are
+  // applied to everything the tracks below have already composited.
+  bool is_adjustment = false;
   // Text / title clip (rendered by ms::render_text instead of a decoder).
   bool is_text = false;
   std::string text;

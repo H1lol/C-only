@@ -104,6 +104,15 @@ fun MoreSheet(
                 TextButton(onClick = { engine.undo() }) { Text("Undo") }
                 TextButton(onClick = { engine.redo() }) { Text("Redo") }
             }
+            TextButton(onClick = { engine.addAdjustmentLayer() }) {
+                Text("Add adjustment layer", color = MsColors.accentSoft, fontSize = 12.sp)
+            }
+            Text(
+                "An adjustment layer has no pixels: its effects and grade run over " +
+                    "every track below it, over the range it covers.",
+                color = MsColors.textMuted,
+                fontSize = 10.sp,
+            )
 
             Spacer(Modifier.height(6.dp))
             SectionLabel("CANVAS RATIO")

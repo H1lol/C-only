@@ -338,6 +338,7 @@ std::string ProjectSession::to_json() const {
          << ", \"gain\": " << c.gain
          << ", \"pan\": " << c.pan
          << ", \"mute\": " << (c.mute ? "true" : "false")
+         << ", \"adj\": " << (c.is_adjustment ? "true" : "false")
          << ", \"mask_enabled\": " << (c.mask_enabled ? "true" : "false")
          << ", \"mk_shape\": " << static_cast<int>(c.mask.shape)
          << ", \"mk_mode\": " << static_cast<int>(c.mask.mode)
@@ -490,6 +491,7 @@ Error ProjectSession::load_from_json(const std::string& json) {
       ClipInfo c; c.id=(ClipId)extract_number(co,"id"); c.media_id=(MediaId)extract_number(co,"media_id"); c.name=extract_string(co,"name");
       c.start=extract_number(co,"start"); c.duration=extract_number(co,"duration"); c.source_in=extract_number(co,"source_in"); c.source_out=extract_number(co,"source_out");
       c.speed=(float)extract_number(co,"speed",1); c.opacity=(float)extract_number(co,"opacity",1); c.gain=(float)extract_number(co,"gain",1); c.pan=(float)extract_number(co,"pan",0);       c.mute=co.find("\"mute\": true")!=std::string::npos;
+      c.is_adjustment = co.find("\"adj\": true") != std::string::npos;
       c.mask_enabled = co.find("\"mask_enabled\": true") != std::string::npos;
       c.mask.shape = static_cast<MaskShape>(static_cast<int>(extract_number(co, "mk_shape", 0)));
       c.mask.mode = static_cast<MaskMode>(static_cast<int>(extract_number(co, "mk_mode", 1)));

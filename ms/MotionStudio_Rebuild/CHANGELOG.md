@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — retime + adjustment layers
+
+### Added
+- **Retime.** `ClipInfo::speed` was already honoured by the player and the audio mixer and
+  already saved with the project, but nothing in the app could change it. `Engine::set_clip_speed`
+  now retimes a clip: the same slice of source plays at 0.1–8× and the clip's timeline length
+  follows it, so 2× halves the clip and 0.5× doubles it. The Motion sheet has a speed slider and
+  0.25/0.5/1/2/4× presets, and the clip inspector shows the current speed. Titles and adjustment
+  layers are rejected because they have no source range. Audio pitches with the change: the
+  mixer resamples by `speed`, it does not time-stretch
+- **Adjustment layers.** A clip can now carry `is_adjustment`: it owns no pixels, and its effect
+  stack + per-clip grade run over the frame the tracks below have already composited, for the
+  range it covers. Added from Session → "Add adjustment layer" on the overlay (or first video)
+  track; it then behaves like any other clip for effects, grade, keyframes and ripples, and the
+  flag round-trips through the project JSON as `"adj"`
+
+### Changed
+- The clip's effect stack and grade moved into `apply_clip_look()` in the timeline player, so an
+  adjustment layer and an ordinary clip run exactly the same look pipeline instead of two
+  copies of it
+
+### Tests
+- `ms_adjustment_test`: retime keeps the source slice and moves the length, a title/adjustment
+  clip cannot be retimed, a neutral adjustment layer renders pixel-identical, a graded one lifts
+  the composite below it, it does not reach outside its range, and `"adj"` survives a save/load
+
 ## Unreleased — smoothness
 
 ### Fixed

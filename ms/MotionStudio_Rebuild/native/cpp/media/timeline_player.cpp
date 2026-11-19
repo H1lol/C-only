@@ -154,6 +154,33 @@ static void composite_premul(const ImageBuffer& src, ImageBuffer& dst) {
   }
 }
 
+// Runs a clip's own effect stack and its per-clip grade on pixels that are
+// already in `buf`, using `tmp` as the effect stack's destination. Called for a
+// single clip's frame, and for an adjustment layer where `buf` is everything the
+// tracks below have composited so far.
+static void apply_clip_look(const ClipInfo& clip, ImageBuffer& buf, ImageBuffer& tmp) {
+  // An empty stack used to copy the whole frame into a fresh buffer for no
+  // reason; with no enabled effect there is nothing to do at all.
+  if (!clip.motion.effects.empty()) {
+    Error fx = EffectStack::apply(clip.motion.effects, buf, tmp);
+    if (fx.ok() && tmp.valid()) buf.swap(tmp);
+  }
+
+  // The grade runs after the clip's own effects, before compositing, so one
+  // shot can be matched to another without touching the master grade.
+  if (clip.grade_enabled) {
+    GradeSettings g;
+    g.exposure = clip.grade[0];
+    g.contrast = clip.grade[1];
+    g.saturation = clip.grade[2];
+    g.temperature = clip.grade[3];
+    g.lift = clip.grade[4];
+    g.gamma = clip.grade[5];
+    g.gain = clip.grade[6];
+    apply_finishing_grade(buf, g);
+  }
+}
+
 void TimelinePlayer::render_clip_into(const ClipInfo& clip, TimeSec time, int W, int H,
                                       ImageBuffer& dst) {
   // Two rotating working images: the clip's own pixels and the destination of
@@ -203,26 +230,7 @@ void TimelinePlayer::render_clip_into(const ClipInfo& clip, TimeSec time, int W,
     }
   }
 
-  // An empty stack used to copy the whole frame into a fresh buffer for no
-  // reason; with no enabled effect there is nothing to do at all.
-  if (!clip.motion.effects.empty()) {
-    Error fx = EffectStack::apply(clip.motion.effects, frame, alt);
-    if (fx.ok() && alt.valid()) frame.swap(alt);
-  }
-
-  // Per-clip grade runs after the clip's own effects, before compositing, so
-  // one shot can be matched to another without touching the master grade.
-  if (clip.grade_enabled) {
-    GradeSettings g;
-    g.exposure = clip.grade[0];
-    g.contrast = clip.grade[1];
-    g.saturation = clip.grade[2];
-    g.temperature = clip.grade[3];
-    g.lift = clip.grade[4];
-    g.gamma = clip.grade[5];
-    g.gain = clip.grade[6];
-    apply_finishing_grade(frame, g);
-  }
+  apply_clip_look(clip, frame, alt);
 
   const float op = static_cast<float>(
       clip.opacity * (clip.motion.opacity.empty() ? 1.0 : clip.motion.opacity_at(local)));
@@ -291,6 +299,14 @@ Error TimelinePlayer::render_frame(TimeSec t, ImageBuffer& out) {
 
     for (const auto& clip : track.clips) {
       if (t < clip.start || t >= clip.start + clip.duration) continue;
+      // An adjustment layer owns no pixels: its effect stack and grade run on
+      // the frame the tracks below have already built, so there is nothing to
+      // blend and it is not composited over `out`. scratch_[4] is free here —
+      // render_clip_into has finished with it by the time this loop advances.
+      if (clip.is_adjustment) {
+        apply_clip_look(clip, out, scratch_[4]);
+        continue;
+      }
       ImageBuffer& clip_buf = scratch_[2];
       render_clip_into(clip, t, W, H, clip_buf);
       composite_premul(clip_buf, out);

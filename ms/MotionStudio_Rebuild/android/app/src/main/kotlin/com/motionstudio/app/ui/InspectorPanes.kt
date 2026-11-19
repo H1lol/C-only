@@ -222,7 +222,17 @@ fun ClipPane(
             InfoRow("LENGTH", "%.3fs".format(clip.duration))
             InfoRow("END", "%.3fs".format(clip.end))
             InfoRow("OPACITY", "%.2f".format(clip.opacity))
-            InfoRow("KIND", if (clip.isText) "title · ${clip.textFont}" else "media #${clip.mediaId}")
+            InfoRow(
+                "KIND",
+                when {
+                    clip.isAdjustment -> "adjustment · tracks below"
+                    clip.isText -> "title · ${clip.textFont}"
+                    else -> "media #${clip.mediaId}"
+                },
+            )
+            if (!clip.isAdjustment && !clip.isText) {
+                InfoRow("SPEED", "%.2f×".format(clip.speed))
+            }
             InfoRow("EFFECTS", clip.effects.size.toString())
             Spacer(Modifier.height(8.dp))
 

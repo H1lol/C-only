@@ -1,5 +1,6 @@
 package com.motionstudio.app.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -162,6 +163,71 @@ fun MotionSheet(engine: EditorEngine, onDismiss: () -> Unit) {
             Text(
                 "Move the playhead, set a value and tap Key. Two keys on the same " +
                     "property animate it; the compositor reads the curve per frame.",
+                color = MsColors.textMuted,
+                fontSize = 11.sp,
+            )
+
+            Spacer(Modifier.height(14.dp))
+            val retimeTarget = clip?.takeIf { !it.isAdjustment && !it.isText }
+            var speed by remember(retimeTarget?.id, retimeTarget?.speed) {
+                mutableFloatStateOf(retimeTarget?.speed?.toFloat() ?: 1f)
+            }
+            Text("Retime", color = MsColors.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                if (retimeTarget == null) {
+                    "Select a media clip to change its speed"
+                } else {
+                    "%.2f× · clip length %s s".format(
+                        speed,
+                        "%.2f".format(
+                            if (speed > 0.01f) retimeTarget.duration * retimeTarget.speed / speed
+                            else retimeTarget.duration,
+                        ),
+                    )
+                },
+                color = MsColors.textMuted,
+                fontSize = 11.sp,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "%.2f×".format(speed),
+                    color = MsColors.textSecondary,
+                    fontSize = 11.sp,
+                    fontFamily = MsFonts.mono,
+                    modifier = Modifier.fillMaxWidth(0.22f),
+                )
+                Slider(
+                    enabled = retimeTarget != null,
+                    value = speed.coerceIn(0.1f, 4f),
+                    onValueChange = { speed = it },
+                    onValueChangeFinished = {
+                        if (retimeTarget != null) engine.setClipSpeed(speed)
+                    },
+                    valueRange = 0.1f..4f,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                listOf(0.25f, 0.5f, 1f, 2f, 4f).forEach { preset ->
+                    TextButton(
+                        enabled = retimeTarget != null,
+                        onClick = {
+                            speed = preset
+                            engine.setClipSpeed(preset)
+                        },
+                    ) {
+                        Text(
+                            if (preset == 1f) "1× reset" else "%.2f×".format(preset),
+                            color = if (retimeTarget != null) MsColors.accentSoft else MsColors.textMuted,
+                            fontSize = 11.sp,
+                        )
+                    }
+                }
+            }
+            Text(
+                "The same slice of source plays faster or slower and the clip's length " +
+                    "follows. Audio pitches with it — the mixer resamples by speed, it does " +
+                    "not time-stretch.",
                 color = MsColors.textMuted,
                 fontSize = 11.sp,
             )

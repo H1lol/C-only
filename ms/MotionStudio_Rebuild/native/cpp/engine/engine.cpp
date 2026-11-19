@@ -894,6 +894,62 @@ ClipId Engine::add_clip(TrackId track, MediaId media, TimeSec start, TimeSec dur
     return id;
 }
 
+ClipId Engine::add_adjustment_clip(TrackId track, TimeSec start, TimeSec duration) {
+    if (!project_) return 0;
+    if (!project_->find_track(track)) return 0;
+    project_->push_undo();
+    ClipInfo c;
+    c.name = "Adjustment";
+    c.start = std::max(0.0, start);
+    c.duration = duration > 0.05 ? duration : 3.0;
+    c.source_out = c.duration;
+    c.is_adjustment = true;
+    c.motion.ensure_defaults();
+    const ClipId id = project_->add_clip(track, c);
+    if (!id) return 0;
+    project_->mark_dirty();
+    invalidate_frames();
+    return id;
+}
+
+bool Engine::set_clip_speed(TrackId track, ClipId clip, float speed) {
+    TrackInfo* t = project_->find_track(track);
+    if (!t) return false;
+    for (auto& c : t->clips) {
+        if (c.id != clip) continue;
+        // A title rasterises to an arbitrary length and an adjustment layer has
+        // no source range at all, so neither has anything to stretch.
+        if (c.is_adjustment || c.is_text) return false;
+        const float s = std::clamp(speed, 0.1f, 8.f);
+        if (std::fabs(s - c.speed) < 1e-4f) return true;
+        project_->push_undo();
+        // Keep the same slice of the source: only how fast it plays changes, so
+        // the clip's length on the timeline has to move with it.
+        const double source_len = (c.source_out > c.source_in)
+                                      ? (c.source_out - c.source_in)
+                                      : c.duration * c.speed;
+        c.speed = s;
+        c.duration = std::max(0.05, source_len / s);
+        c.source_out = c.source_in + c.duration * c.speed;
+        project_->mark_dirty();
+        invalidate_frames();
+        return true;
+    }
+    return false;
+}
+
+bool Engine::clip_speed(TrackId track, ClipId clip, float* out) const {
+    for (const auto& t : project_->tracks()) {
+        if (t.id != track) continue;
+        for (const auto& c : t.clips) {
+            if (c.id != clip) continue;
+            if (out) *out = c.speed;
+            return true;
+        }
+    }
+    return false;
+}
+
 
 namespace {
 
