@@ -781,31 +781,76 @@ class EditorEngine(
     var appendImportsAtEnd by mutableStateOf(false)
 
     // ---- Shape masks -------------------------------------------------------
+    //
+    // A clip can carry several masks. Add masks union together, Subtract masks
+    // are cut out of that union, and only-Subtract clips start from a full
+    // frame, so one subtract mask punches a hole instead of hiding everything.
 
-    var clipMask by mutableStateOf(floatArrayOf(0f, 0.1f, 0.1f, 0.8f, 0.8f, 0f))
-        private set
-    var clipMaskActive by mutableStateOf(false)
-        private set
-    var clipMaskInverted by mutableStateOf(false)
+    /** Masks on the selected clip, in the document's order. */
+    var clipMasks by mutableStateOf<List<com.motionstudio.app.model.ClipMask>>(emptyList())
         private set
 
-    fun refreshClipMask() {
-        val (t, c) = selection() ?: run {
-            clipMaskActive = false
-            return
+    /** Which mask the mask sheet is editing. */
+    var selectedMaskIndex by mutableStateOf(0)
+
+    private fun readClipMasks(track: Int, clip: Int): List<com.motionstudio.app.model.ClipMask> {
+        val count = NativeEngine.nativeClipMaskCount(track, clip)
+        if (count <= 0) return emptyList()
+        val out = ArrayList<com.motionstudio.app.model.ClipMask>(count)
+        for (i in 0 until count) {
+            val values = FloatArray(6)
+            val inverted = IntArray(1)
+            val op = IntArray(1)
+            if (!NativeEngine.nativeClipMaskRead(track, clip, i, values, inverted, op)) continue
+            out += com.motionstudio.app.model.ClipMask(
+                shape = values[0].toInt(),
+                x = values[1],
+                y = values[2],
+                w = values[3],
+                h = values[4],
+                feather = values[5],
+                inverted = inverted[0] != 0,
+                op = op[0],
+            )
         }
-        val out = FloatArray(6)
-        val inv = IntArray(1)
-        if (NativeEngine.nativeClipMaskGet(t, c, out, inv)) {
-            clipMask = out
-            clipMaskInverted = inv[0] != 0
-            clipMaskActive = true
-        } else {
-            clipMaskActive = false
-        }
+        return out
     }
 
-    fun setClipMask(
+    fun refreshClipMasks() {
+        val (t, c) = selection() ?: run {
+            clipMasks = emptyList()
+            return
+        }
+        clipMasks = readClipMasks(t, c)
+    }
+
+    /** Appends a mask to the selected clip and selects it. */
+    fun addClipMask(
+        shape: Int = 0,
+        x: Float = 0.2f,
+        y: Float = 0.2f,
+        w: Float = 0.6f,
+        h: Float = 0.6f,
+        op: Int = 0,
+    ): Boolean {
+        val (t, c) = selection() ?: run {
+            status = "Select a clip first"
+            return false
+        }
+        val count = NativeEngine.nativeClipMaskAdd(t, c, shape, x, y, w, h, 0f, false, op)
+        if (count <= 0) {
+            status = "This clip already has eight masks"
+            return false
+        }
+        clipMasks = readClipMasks(t, c)
+        selectedMaskIndex = count - 1
+        markDirty()
+        status = "Mask $count added"
+        return true
+    }
+
+    fun updateClipMask(
+        index: Int,
         shape: Int,
         x: Float,
         y: Float,
@@ -813,25 +858,37 @@ class EditorEngine(
         h: Float,
         feather: Float,
         inverted: Boolean,
+        op: Int,
     ): Boolean {
         val (t, c) = selection() ?: run {
             status = "Select a clip first"
             return false
         }
-        if (!NativeEngine.nativeClipMaskSet(t, c, shape, x, y, w, h, feather, inverted)) return false
-        clipMask = floatArrayOf(shape.toFloat(), x, y, w, h, feather)
-        clipMaskInverted = inverted
-        clipMaskActive = shape != 3
+        if (!NativeEngine.nativeClipMaskUpdate(t, c, index, shape, x, y, w, h, feather, inverted, op))
+            return false
+        clipMasks = readClipMasks(t, c)
         markDirty()
         return true
     }
 
+    fun removeClipMask(index: Int): Boolean {
+        val (t, c) = selection() ?: return false
+        if (!NativeEngine.nativeClipMaskRemove(t, c, index)) return false
+        clipMasks = readClipMasks(t, c)
+        if (selectedMaskIndex >= clipMasks.size) selectedMaskIndex = (clipMasks.size - 1).coerceAtLeast(0)
+        markDirty()
+        status = if (clipMasks.isEmpty()) "Mask removed" else "Mask removed, ${clipMasks.size} left"
+        return true
+    }
+
+    /** Removes every mask from the selected clip. */
     fun clearClipMask(): Boolean {
         val (t, c) = selection() ?: return false
         if (!NativeEngine.nativeClipMaskClear(t, c)) return false
-        clipMaskActive = false
+        clipMasks = emptyList()
+        selectedMaskIndex = 0
         markDirty()
-        status = "Mask removed"
+        status = "Masks removed"
         return true
     }
 

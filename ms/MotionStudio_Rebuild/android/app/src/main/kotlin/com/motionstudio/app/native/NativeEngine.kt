@@ -164,13 +164,22 @@ object NativeEngine {
     external fun nativeMarkerRemove(id: Int): Boolean
     external fun nativeProjectSettings(width: Int, height: Int, fps: Double): Boolean
 
-    // Shape masks (shape: 0 rect, 1 ellipse, 2 full frame; x/y/w/h normalized)
-    external fun nativeClipMaskSet(
+    // Shape masks (shape: 0 rect, 1 ellipse, 2 full frame; x/y/w/h normalized).
+    // A clip carries a list of them: op 0 unions, 1 subtracts.
+    external fun nativeClipMaskAdd(
         track: Int, clip: Int, shape: Int, x: Float, y: Float, w: Float, h: Float,
-        feather: Float, inverted: Boolean,
+        feather: Float, inverted: Boolean, op: Int,
+    ): Int
+    external fun nativeClipMaskUpdate(
+        track: Int, clip: Int, index: Int, shape: Int, x: Float, y: Float, w: Float, h: Float,
+        feather: Float, inverted: Boolean, op: Int,
+    ): Boolean
+    external fun nativeClipMaskRemove(track: Int, clip: Int, index: Int): Boolean
+    external fun nativeClipMaskCount(track: Int, clip: Int): Int
+    external fun nativeClipMaskRead(
+        track: Int, clip: Int, index: Int, out: FloatArray, invertedOut: IntArray, opOut: IntArray,
     ): Boolean
     external fun nativeClipMaskClear(track: Int, clip: Int): Boolean
-    external fun nativeClipMaskGet(track: Int, clip: Int, out: FloatArray, invertedOut: IntArray): Boolean
 
     // Per-clip grade
     external fun nativeClipGradeSet(

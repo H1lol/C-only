@@ -135,6 +135,11 @@ target_link_libraries(ms_adjustment_test PRIVATE motionstudio_native)
 target_include_directories(ms_adjustment_test PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+add_executable(ms_mask_test tools/ms_mask_test.cpp)
+target_link_libraries(ms_mask_test PRIVATE motionstudio_native)
+target_include_directories(ms_mask_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 add_executable(ms_title_demo tools/ms_title_demo.cpp)
 target_link_libraries(ms_title_demo PRIVATE ms_core)
 
@@ -180,6 +185,7 @@ add_test(NAME ms_lut_test COMMAND ms_lut_test)
 add_test(NAME ms_edit_test COMMAND ms_edit_test)
 add_test(NAME ms_proxy_test COMMAND ms_proxy_test)
 add_test(NAME ms_adjustment_test COMMAND ms_adjustment_test)
+add_test(NAME ms_mask_test COMMAND ms_mask_test)
 set_tests_properties(
   ms_studio_test ms_pass345_deep ms_pass6_test ms_11_16_test ms_17_22_test
   ms_23_30_test ms_audio_fx_test ms_audio_playback_test ms_graph_safety_test ms_export_profile_test

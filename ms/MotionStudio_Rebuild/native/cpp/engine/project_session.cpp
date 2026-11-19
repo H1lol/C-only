@@ -340,12 +340,30 @@ std::string ProjectSession::to_json() const {
          << ", \"mute\": " << (c.mute ? "true" : "false")
          << ", \"adj\": " << (c.is_adjustment ? "true" : "false")
          << ", \"mask_enabled\": " << (c.mask_enabled ? "true" : "false")
-         << ", \"mk_shape\": " << static_cast<int>(c.mask.shape)
-         << ", \"mk_mode\": " << static_cast<int>(c.mask.mode)
-         << ", \"mk_x\": " << c.mask.x << ", \"mk_y\": " << c.mask.y
-         << ", \"mk_w\": " << c.mask.w << ", \"mk_h\": " << c.mask.h
-         << ", \"mk_feather\": " << c.mask.feather
-         << ", \"mk_inv\": " << (c.mask.inverted ? "true" : "false")
+         // Legacy single-mask keys mirror the first mask, so an older build
+         // still shows something after this document is saved by a newer one.
+         << ", \"mk_shape\": " << static_cast<int>(c.masks.empty() ? MaskShape::Rect : c.masks[0].shape)
+         << ", \"mk_mode\": " << static_cast<int>(c.masks.empty() ? MaskMode::Alpha : c.masks[0].mode)
+         << ", \"mk_x\": " << (c.masks.empty() ? 0.1f : c.masks[0].x)
+         << ", \"mk_y\": " << (c.masks.empty() ? 0.1f : c.masks[0].y)
+         << ", \"mk_w\": " << (c.masks.empty() ? 0.8f : c.masks[0].w)
+         << ", \"mk_h\": " << (c.masks.empty() ? 0.8f : c.masks[0].h)
+         << ", \"mk_feather\": " << (c.masks.empty() ? 0.f : c.masks[0].feather)
+         << ", \"mk_inv\": " << ((!c.masks.empty() && c.masks[0].inverted) ? "true" : "false")
+         << ", \"masks\": [";
+      for (size_t mi = 0; mi < c.masks.size(); ++mi) {
+        const Mask& mm = c.masks[mi];
+        if (mi) ss << ", ";
+        ss << "{\"shape\": " << static_cast<int>(mm.shape)
+           << ", \"op\": " << static_cast<int>(mm.op)
+           << ", \"x\": " << mm.x << ", \"y\": " << mm.y
+           << ", \"w\": " << mm.w << ", \"h\": " << mm.h
+           << ", \"feather\": " << mm.feather
+           << ", \"inv\": " << (mm.inverted ? "true" : "false")
+           << ", \"on\": " << (mm.enabled ? "true" : "false") << "}";
+      }
+      ss << "]"
+         << ", \"grade_enabled\": " << (c.grade_enabled ? "true" : "false")
          << ", \"grade_enabled\": " << (c.grade_enabled ? "true" : "false")
          << ", \"grade\": [" << c.grade[0] << ", " << c.grade[1] << ", " << c.grade[2]
          << ", " << c.grade[3] << ", " << c.grade[4] << ", " << c.grade[5]
@@ -493,14 +511,42 @@ Error ProjectSession::load_from_json(const std::string& json) {
       c.speed=(float)extract_number(co,"speed",1); c.opacity=(float)extract_number(co,"opacity",1); c.gain=(float)extract_number(co,"gain",1); c.pan=(float)extract_number(co,"pan",0);       c.mute=co.find("\"mute\": true")!=std::string::npos;
       c.is_adjustment = co.find("\"adj\": true") != std::string::npos;
       c.mask_enabled = co.find("\"mask_enabled\": true") != std::string::npos;
-      c.mask.shape = static_cast<MaskShape>(static_cast<int>(extract_number(co, "mk_shape", 0)));
-      c.mask.mode = static_cast<MaskMode>(static_cast<int>(extract_number(co, "mk_mode", 1)));
-      c.mask.x = static_cast<float>(extract_number(co, "mk_x", 0.1));
-      c.mask.y = static_cast<float>(extract_number(co, "mk_y", 0.1));
-      c.mask.w = static_cast<float>(extract_number(co, "mk_w", 0.8));
-      c.mask.h = static_cast<float>(extract_number(co, "mk_h", 0.8));
-      c.mask.feather = static_cast<float>(extract_number(co, "mk_feather", 0));
-      c.mask.inverted = co.find("\"mk_inv\": true") != std::string::npos;
+      {
+        c.masks.clear();
+        for (const auto& mo : array_objects(co, "masks")) {
+          Mask mm;
+          mm.shape = mask_shape_from_index(static_cast<int>(extract_number(mo, "shape", 0)));
+          mm.mode = MaskMode::Alpha;
+          mm.op = static_cast<int>(extract_number(mo, "op", 0)) == 1 ? MaskOp::Subtract
+                                                                    : MaskOp::Add;
+          mm.x = static_cast<float>(extract_number(mo, "x", 0.1));
+          mm.y = static_cast<float>(extract_number(mo, "y", 0.1));
+          mm.w = static_cast<float>(extract_number(mo, "w", 0.8));
+          mm.h = static_cast<float>(extract_number(mo, "h", 0.8));
+          mm.feather = static_cast<float>(extract_number(mo, "feather", 0));
+          mm.inverted = mo.find("\"inv\": true") != std::string::npos;
+          mm.enabled = mo.find("\"on\": false") == std::string::npos;
+          mm.id = c.masks.size() + 1;
+          mm.name = "Mask " + std::to_string(c.masks.size() + 1);
+          c.masks.push_back(mm);
+        }
+        // Documents written before multi-mask carry one mask in mk_* keys.
+        if (c.masks.empty() && c.mask_enabled) {
+          Mask mm;
+          mm.shape = mask_shape_from_index(static_cast<int>(extract_number(co, "mk_shape", 0)));
+          mm.mode = static_cast<MaskMode>(static_cast<int>(extract_number(co, "mk_mode", 1)));
+          mm.x = static_cast<float>(extract_number(co, "mk_x", 0.1));
+          mm.y = static_cast<float>(extract_number(co, "mk_y", 0.1));
+          mm.w = static_cast<float>(extract_number(co, "mk_w", 0.8));
+          mm.h = static_cast<float>(extract_number(co, "mk_h", 0.8));
+          mm.feather = static_cast<float>(extract_number(co, "mk_feather", 0));
+          mm.inverted = co.find("\"mk_inv\": true") != std::string::npos;
+          mm.id = 1;
+          mm.name = "Mask 1";
+          c.masks.push_back(mm);
+        }
+        c.mask_enabled = !c.masks.empty();
+      }
       c.grade_enabled = co.find("\"grade_enabled\": true") != std::string::npos;
       {
         const size_t gp = co.find("\"grade\": [");

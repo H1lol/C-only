@@ -159,6 +159,21 @@ public:
     /** Fills 6 floats (shape, x, y, w, h, feather) and the invert flag. */
     bool clip_mask(TrackId track, ClipId clip, float* out6, bool* inverted) const;
 
+    // ---- Multi-mask --------------------------------------------------------
+    // A clip can carry several shape masks. `op` is 0 add (union) or 1 subtract
+    // (carved out of the union). At most kMaxClipMasks per clip.
+    /** Appends a mask and returns the new count, or -1 on failure. */
+    int add_clip_mask(TrackId track, ClipId clip, int shape, float x, float y, float w,
+                      float h, float feather, bool inverted, int op);
+    bool update_clip_mask_at(TrackId track, ClipId clip, int index, int shape, float x,
+                             float y, float w, float h, float feather, bool inverted,
+                             int op);
+    bool remove_clip_mask_at(TrackId track, ClipId clip, int index);
+    int clip_mask_count(TrackId track, ClipId clip) const;
+    /** Fills 6 floats plus the invert flag and the op of mask `index`. */
+    bool clip_mask_at(TrackId track, ClipId clip, int index, float* out6, bool* inverted,
+                      int* op) const;
+
     /** Per-clip grade (exposure, contrast, saturation, temperature, lift, gamma, gain). */
     bool set_clip_grade(TrackId track, ClipId clip, float exposure, float contrast,
                         float saturation, float temperature, float lift, float gamma,

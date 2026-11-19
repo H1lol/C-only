@@ -45,8 +45,11 @@ struct ClipInfo {
   // gain. Applied per clip before compositing, so shots can be matched.
   bool grade_enabled = false;
   float grade[7] = {0.f, 1.f, 1.f, 0.f, 0.f, 1.f, 1.f};
-  // Shape mask applied to the clip before its transform is composited.
-  Mask mask;
+  // Shape masks applied to the clip before its transform is composited. Add
+  // masks union together, Subtract masks are cut out of that union, so a clip
+  // can be matted to several shapes at once. `mask_enabled` is the clip-level
+  // switch; empty or all-disabled masks leave the clip untouched.
+  std::vector<Mask> masks;
   bool mask_enabled = false;
   // Adjustment layer: has no source of its own. Its effect stack and grade are
   // applied to everything the tracks below have already composited.

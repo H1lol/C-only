@@ -234,11 +234,27 @@ int main() {
         check(mj.find("\"mask_enabled\": true") != std::string::npos, "mask serialized");
         check(e.load_project_json(mj), "reload with a mask");
         const ms::ClipInfo* mc = e.project().find_clip(track, clip);
-        check(mc && mc->mask_enabled && mc->mask.shape == ms::MaskShape::Ellipse,
+        check(mc && mc->mask_enabled && !mc->masks.empty() &&
+                  mc->masks[0].shape == ms::MaskShape::Ellipse,
               "mask restored");
+
+        // A second, subtractive mask has to survive save + reload too, with its
+        // op intact: that is what makes a hole in the first mask.
+        check(e.add_clip_mask(track, clip, 0, 0.4f, 0.4f, 0.2f, 0.2f, 0.f, false, 1) == 2,
+              "second mask added");
+        const std::string mj2 = e.project_to_json();
+        check(mj2.find("\"masks\": [") != std::string::npos, "mask list serialized");
+        check(e.load_project_json(mj2), "reload with two masks");
+        check(e.clip_mask_count(track, clip) == 2, "both masks restored");
+        float smk[6] = {};
+        int sop = 0;
+        check(e.clip_mask_at(track, clip, 1, smk, &inv, &sop) && sop == 1,
+              "subtract mask keeps its op");
+
         check(e.clear_clip_mask(track, clip), "mask cleared");
         float mk2[6] = {};
         check(!e.clip_mask(track, clip, mk2, &inv), "cleared mask not reported");
+        check(e.clip_mask_count(track, clip) == 0, "cleared mask list is empty");
     }
 
     // Per-clip grade + waveform guards

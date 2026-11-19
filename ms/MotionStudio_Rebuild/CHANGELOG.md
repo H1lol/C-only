@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased — multi-mask
+
+### Added
+- **Several masks per clip (up to 8).** `ClipInfo` now carries a `std::vector<Mask>` instead of one
+  mask. Each mask is *Add* (unions with the clip's other masks) or *Subtract* (cut out of that
+  union), so a matte can be "this box, minus this hole". A clip whose masks are all Subtract starts
+  from a full frame, which makes a single subtract mask a plain cut-out instead of an empty frame.
+  The Mask sheet lists the masks as +/− chips and adds, selects, edits and removes them
+  individually
+- **Multi-mask API.** `Engine::add_clip_mask`, `update_clip_mask_at`, `remove_clip_mask_at`,
+  `clip_mask_count` and `clip_mask_at`, bridged as `ms_clip_mask_add/update/remove/count/read` and
+  as five `NativeEngine` externals. The single-mask functions still work and address mask 0
+- Masks are saved as a `"masks": [...]` array inside each clip. The old `mk_*` keys are still
+  written (mirroring the first mask) and still read, so documents written before this load with
+  their mask intact and older builds still see one mask
+
+### Fixed
+- **Masks did nothing, and inverted masks hid the whole clip.** `rasterize_mask` wrote the mask
+  strength into RGB and left alpha at 255, while `MaskMode::Alpha` reads alpha: a normal mask was
+  a no-op and an inverted one made the clip fully transparent. Strength now goes into alpha as
+  well, and the single- and multi-mask paths share one `mask_strength_at()`
+- Matting is applied in place (`apply_mask_inplace`) instead of copying the whole frame into a
+  second buffer for every clip on every frame
+
+### Tests
+- `ms_mask_test`: strength reaches alpha, two Add masks union with the gap between them clear,
+  Add + Subtract punches a hole, a lone Subtract mask keeps the rest of the frame, disabled masks
+  are skipped, feather ramps down to clear, and the mask list round-trips through the project JSON
+  with its op, geometry, invert flag and eight-mask cap. `ms_edit_test` now saves, reloads and
+  checks two masks including the subtract op
+
 ## Unreleased — retime + adjustment layers
 
 ### Added

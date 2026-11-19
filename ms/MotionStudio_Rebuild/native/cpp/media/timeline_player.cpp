@@ -218,16 +218,14 @@ void TimelinePlayer::render_clip_into(const ClipInfo& clip, TimeSec time, int W,
     frame.clear(0.3f, 0.15f, 0.15f, 1.f);
   }
 
-  // Shape mask: rasterise at output size and multiply the clip's alpha, so the
-  // transform (and transitions) see the matted image.
-  if (clip.mask_enabled) {
-    Mask m = clip.mask;
-    m.mode = m.inverted ? MaskMode::InvertedAlpha : MaskMode::Alpha;
+  // Shape masks: rasterise the clip's mask list at output size and multiply the
+  // clip's alpha, so the transform (and transitions) see the matted image. The
+  // matte is applied in place: this used to copy the whole frame into a second
+  // buffer per clip per frame for a multiplication of one channel.
+  if (clip.mask_enabled && !clip.masks.empty()) {
     ImageBuffer& mask_img = scratch_[4];
-    if (rasterize_mask(m, W, H, mask_img).ok() && mask_img.valid()) {
-      if (apply_mask_to_image(frame, mask_img, m.mode, alt).ok() && alt.valid())
-        frame.swap(alt);
-    }
+    if (rasterize_masks(clip.masks, W, H, mask_img).ok() && mask_img.valid())
+      apply_mask_inplace(frame, mask_img, MaskMode::Alpha);
   }
 
   apply_clip_look(clip, frame, alt);

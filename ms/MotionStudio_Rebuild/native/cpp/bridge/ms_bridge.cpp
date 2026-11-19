@@ -339,6 +339,37 @@ int ms_clip_mask_set(int track_id, int clip_id, int shape, float x, float y, flo
 int ms_clip_mask_clear(int track_id, int clip_id) {
     return ms::Engine::instance().clear_clip_mask(track_id, clip_id) ? 0 : -1;
 }
+int ms_clip_mask_add(int track_id, int clip_id, int shape, float x, float y, float w,
+                     float h, float feather, int inverted, int op) {
+    return ms::Engine::instance().add_clip_mask(track_id, clip_id, shape, x, y, w, h, feather,
+                                                inverted != 0, op);
+}
+
+int ms_clip_mask_update(int track_id, int clip_id, int index, int shape, float x, float y,
+                        float w, float h, float feather, int inverted, int op) {
+    return ms::Engine::instance().update_clip_mask_at(track_id, clip_id, index, shape, x, y, w,
+                                                      h, feather, inverted != 0, op)
+               ? 0 : -1;
+}
+
+int ms_clip_mask_remove(int track_id, int clip_id, int index) {
+    return ms::Engine::instance().remove_clip_mask_at(track_id, clip_id, index) ? 0 : -1;
+}
+
+int ms_clip_mask_count(int track_id, int clip_id) {
+    return ms::Engine::instance().clip_mask_count(track_id, clip_id);
+}
+
+int ms_clip_mask_read(int track_id, int clip_id, int index, float* out6, int* inverted,
+                      int* op) {
+    bool inv = false;
+    int o = 0;
+    if (!ms::Engine::instance().clip_mask_at(track_id, clip_id, index, out6, &inv, &o)) return -1;
+    if (inverted) *inverted = inv ? 1 : 0;
+    if (op) *op = o;
+    return 0;
+}
+
 int ms_clip_mask_get(int track_id, int clip_id, float* out6, int* inverted) {
     bool inv = false;
     const bool ok = ms::Engine::instance().clip_mask(track_id, clip_id, out6, &inv);

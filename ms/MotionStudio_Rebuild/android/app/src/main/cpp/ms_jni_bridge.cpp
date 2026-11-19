@@ -571,6 +571,48 @@ Java_com_motionstudio_app_native_NativeEngine_nativeProjectSettings(JNIEnv*, job
     return ms_project_settings(width, height, fps) == 0 ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeClipMaskAdd(JNIEnv*, jobject, jint track,
+        jint clip, jint shape, jfloat x, jfloat y, jfloat w, jfloat h, jfloat feather,
+        jboolean inverted, jint op) {
+    return ms_clip_mask_add(track, clip, shape, x, y, w, h, feather, inverted ? 1 : 0, op);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeClipMaskCount(JNIEnv*, jobject, jint track,
+        jint clip) {
+    return ms_clip_mask_count(track, clip);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeClipMaskRead(JNIEnv* env, jobject, jint track,
+        jint clip, jint index, jfloatArray out, jintArray invertedOut, jintArray opOut) {
+    if (!out || env->GetArrayLength(out) < 6) return JNI_FALSE;
+    float tmp[6] = {};
+    int inv = 0, op = 0;
+    if (ms_clip_mask_read(track, clip, index, tmp, &inv, &op) != 0) return JNI_FALSE;
+    env->SetFloatArrayRegion(out, 0, 6, tmp);
+    if (invertedOut && env->GetArrayLength(invertedOut) >= 1)
+        env->SetIntArrayRegion(invertedOut, 0, 1, &inv);
+    if (opOut && env->GetArrayLength(opOut) >= 1)
+        env->SetIntArrayRegion(opOut, 0, 1, &op);
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeClipMaskUpdate(JNIEnv*, jobject, jint track,
+        jint clip, jint index, jint shape, jfloat x, jfloat y, jfloat w, jfloat h,
+        jfloat feather, jboolean inverted, jint op) {
+    return ms_clip_mask_update(track, clip, index, shape, x, y, w, h, feather,
+                               inverted ? 1 : 0, op) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeClipMaskRemove(JNIEnv*, jobject, jint track,
+        jint clip, jint index) {
+    return ms_clip_mask_remove(track, clip, index) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeClipMaskSet(JNIEnv*, jobject, jint track,
         jint clip, jint shape, jfloat x, jfloat y, jfloat w, jfloat h, jfloat feather,

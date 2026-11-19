@@ -37,39 +37,45 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.motionstudio.app.editor.EditorEngine
+import com.motionstudio.app.model.ClipMask
 import com.motionstudio.app.ui.theme.MsColors
 import com.motionstudio.app.ui.theme.MsFonts
 
-/** Shape masks: rectangle, ellipse or full frame, with feather and invert. */
+/**
+ * Shape masks, up to eight per clip.
+ *
+ * Add masks union together and Subtract masks are cut out of that union, so a
+ * matte can be "this box, minus this hole". A clip whose masks are all Subtract
+ * starts from a full frame, which makes one subtract mask a simple cut-out.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MaskSheet(engine: EditorEngine, onDismiss: () -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    var shape by remember { mutableIntStateOf(0) }
-    var x by remember { mutableFloatStateOf(0.1f) }
-    var y by remember { mutableFloatStateOf(0.1f) }
-    var w by remember { mutableFloatStateOf(0.8f) }
-    var h by remember { mutableFloatStateOf(0.8f) }
-    var feather by remember { mutableFloatStateOf(0f) }
-    var inverted by remember { mutableStateOf(false) }
+    val masks = engine.clipMasks
+    var index by remember { mutableIntStateOf(0) }
+    val current: ClipMask? = masks.getOrNull(index)
 
-    LaunchedEffect(engine.selectedClipId) {
-        engine.refreshClipMask()
-        val m = engine.clipMask
-        shape = m[0].toInt().coerceIn(0, 2)
-        x = m[1]
-        y = m[2]
-        w = m[3]
-        h = m[4]
-        feather = m[5]
-        inverted = engine.clipMaskInverted
+    LaunchedEffect(engine.selectedClipId) { engine.refreshClipMasks() }
+    LaunchedEffect(masks.size) {
+        if (index >= masks.size) index = (masks.size - 1).coerceAtLeast(0)
     }
 
-    fun push(nextShape: Int = shape) {
-        if (engine.clipMaskActive || nextShape != 3) {
-            engine.setClipMask(nextShape, x, y, w, h, feather, inverted)
-        }
+    // Local edits while the sliders move; reseeded when a different mask is
+    // selected (ClipMask is a data class, so an unchanged mask does not reset).
+    var shape by remember(current) { mutableIntStateOf(current?.shape ?: 0) }
+    var x by remember(current) { mutableFloatStateOf(current?.x ?: 0.2f) }
+    var y by remember(current) { mutableFloatStateOf(current?.y ?: 0.2f) }
+    var w by remember(current) { mutableFloatStateOf(current?.w ?: 0.6f) }
+    var h by remember(current) { mutableFloatStateOf(current?.h ?: 0.6f) }
+    var feather by remember(current) { mutableFloatStateOf(current?.feather ?: 0f) }
+    var inverted by remember(current) { mutableStateOf(current?.inverted ?: false) }
+    var op by remember(current) { mutableIntStateOf(current?.op ?: 0) }
+
+    fun push() {
+        if (current == null) return
+        engine.updateClipMask(index, shape, x, y, w, h, feather, inverted, op)
     }
 
     ModalBottomSheet(
@@ -84,72 +90,97 @@ fun MaskSheet(engine: EditorEngine, onDismiss: () -> Unit) {
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 24.dp),
         ) {
-            Text("Mask", color = MsColors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text("Masks", color = MsColors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                if (engine.selectedClipId < 0) "Select a clip to shape it"
-                else if (engine.clipMaskActive) "Mask active on the selected clip"
-                else "No mask on the selected clip",
-                color = if (engine.clipMaskActive) MsColors.success else MsColors.textTertiary,
+                when {
+                    engine.selectedClipId < 0 -> "Select a clip to mask it"
+                    masks.isEmpty() -> "No masks on the selected clip"
+                    masks.size == 1 -> "1 mask on the selected clip"
+                    else -> "${masks.size} masks on the selected clip"
+                },
+                color = if (masks.isEmpty()) MsColors.textTertiary else MsColors.success,
                 fontSize = 11.sp,
             )
 
             Spacer(Modifier.height(10.dp))
+
+            // Mask list. Each chip selects a mask; the glyph says whether it
+            // adds to or subtracts from the matte.
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("Rect" to 0, "Ellipse" to 1, "Full" to 2).forEach { (label, value) ->
-                    val selected = shape == value
-                    Box(
-                        Modifier
-                            .background(
-                                if (selected) MsColors.accentSoft.copy(alpha = 0.16f) else MsColors.surfaceHigh,
-                                RoundedCornerShape(8.dp),
-                            )
-                            .border(
-                                1.dp,
-                                if (selected) MsColors.accentSoft else Color.Transparent,
-                                RoundedCornerShape(8.dp),
-                            )
-                            .clickable {
-                                shape = value
-                                push(value)
-                            }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                    ) {
-                        Text(
-                            label,
-                            color = if (selected) MsColors.accentSoft else MsColors.textSecondary,
-                            fontSize = 12.sp,
-                        )
-                    }
+                masks.forEachIndexed { i, m ->
+                    val selected = i == index
+                    MaskChip(
+                        label = "${if (m.op == 1) "−" else "+"} ${i + 1}",
+                        selected = selected,
+                        onClick = { index = i },
+                    )
+                }
+                if (masks.isNotEmpty()) {
+                    MaskChip(
+                        label = "＋",
+                        selected = false,
+                        enabled = masks.size < 8,
+                        onClick = { engine.addClipMask(op = 0) },
+                    )
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
-            MaskSlider("Centre X", x, 0f, 1f) { x = it; push() }
-            MaskSlider("Centre Y", y, 0f, 1f) { y = it; push() }
-            MaskSlider("Width", w, 0.02f, 1f) { w = it; push() }
-            MaskSlider("Height", h, 0.02f, 1f) { h = it; push() }
-            MaskSlider("Feather (px)", feather, 0f, 200f) { feather = it; push() }
+            if (masks.isEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { engine.addClipMask(op = 0) }) {
+                    Text(
+                        "Add a mask",
+                        color = if (engine.selectedClipId >= 0) MsColors.accentSoft else MsColors.textMuted,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "Invert",
-                    color = MsColors.textSecondary,
-                    fontSize = 12.sp,
-                    modifier = Modifier.weight(1f),
-                )
-                Switch(
-                    checked = inverted,
-                    onCheckedChange = {
-                        inverted = it
-                        push()
-                    },
-                )
+            if (current != null) {
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MaskChip("Add", op == 0, onClick = { op = 0; push() })
+                    MaskChip("Subtract", op == 1, onClick = { op = 1; push() })
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Rect" to 0, "Ellipse" to 1, "Full" to 2).forEach { (label, value) ->
+                        MaskChip(label, shape == value, onClick = { shape = value; push() })
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                MaskSlider("Centre X", x, 0f, 1f) { x = it; push() }
+                MaskSlider("Centre Y", y, 0f, 1f) { y = it; push() }
+                MaskSlider("Width", w, 0.02f, 1f) { w = it; push() }
+                MaskSlider("Height", h, 0.02f, 1f) { h = it; push() }
+                MaskSlider("Feather (px)", feather, 0f, 200f) { feather = it; push() }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Invert this mask",
+                        color = MsColors.textSecondary,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = inverted,
+                        onCheckedChange = {
+                            inverted = it
+                            push()
+                        },
+                    )
+                }
             }
 
             Spacer(Modifier.height(10.dp))
             Text(
-                "The mask multiplies the clip's alpha before its transform is composited, " +
-                    "so keyframed scale and position still apply to the matted image.",
+                "Add masks union together; subtract masks are cut out of that union. " +
+                    "With only subtract masks the clip starts from a full frame. " +
+                    "The matte multiplies the clip's alpha before its transform, so " +
+                    "keyframed scale and position still apply to the matted image.",
                 color = MsColors.textTertiary,
                 fontSize = 11.sp,
             )
@@ -160,20 +191,65 @@ fun MaskSheet(engine: EditorEngine, onDismiss: () -> Unit) {
                     Text("Apply", color = MsColors.accentSoft, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
                 TextButton(
-                    enabled = engine.clipMaskActive,
+                    enabled = current != null,
+                    onClick = {
+                        if (current != null) engine.removeClipMask(index)
+                    },
+                ) {
+                    Text(
+                        "Remove this mask",
+                        color = if (current != null) MsColors.textSecondary else MsColors.textMuted,
+                        fontSize = 13.sp,
+                    )
+                }
+                TextButton(
+                    enabled = masks.isNotEmpty(),
                     onClick = {
                         engine.clearClipMask()
                         onDismiss()
                     },
                 ) {
                     Text(
-                        "Remove mask",
-                        color = if (engine.clipMaskActive) MsColors.textSecondary else MsColors.textMuted,
+                        "Remove all",
+                        color = if (masks.isNotEmpty()) MsColors.error else MsColors.textMuted,
                         fontSize = 13.sp,
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MaskChip(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .background(
+                if (selected) MsColors.accentSoft.copy(alpha = 0.16f) else MsColors.surfaceHigh,
+                RoundedCornerShape(8.dp),
+            )
+            .border(
+                1.dp,
+                if (selected) MsColors.accentSoft else Color.Transparent,
+                RoundedCornerShape(8.dp),
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Text(
+            label,
+            color = when {
+                !enabled -> MsColors.textMuted
+                selected -> MsColors.accentSoft
+                else -> MsColors.textSecondary
+            },
+            fontSize = 12.sp,
+        )
     }
 }
 

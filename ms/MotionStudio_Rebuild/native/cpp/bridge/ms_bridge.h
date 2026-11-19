@@ -180,6 +180,19 @@ int ms_clip_mask_clear(int track_id, int clip_id);
 /** Writes shape/x/y/w/h/feather to out6 and the invert flag to inverted. */
 int ms_clip_mask_get(int track_id, int clip_id, float* out6, int* inverted);
 
+// Multi-mask: a clip can carry several shape masks. op is 0 add (union) or 1
+// subtract (cut out of the union). At most 8 per clip.
+/** Appends a mask; returns the new mask count, or -1 on failure. */
+int ms_clip_mask_add(int track_id, int clip_id, int shape, float x, float y, float w,
+                     float h, float feather, int inverted, int op);
+int ms_clip_mask_update(int track_id, int clip_id, int index, int shape, float x, float y,
+                        float w, float h, float feather, int inverted, int op);
+int ms_clip_mask_remove(int track_id, int clip_id, int index);
+int ms_clip_mask_count(int track_id, int clip_id);
+/** Writes shape/x/y/w/h/feather to out6, plus inverted and op. 0 on success. */
+int ms_clip_mask_read(int track_id, int clip_id, int index, float* out6, int* inverted,
+                      int* op);
+
 // Retime. The same slice of source plays at `speed` (0.1..8) and the clip's
 // timeline length follows it. Text and adjustment clips are rejected. 0 on
 // success, -1 when the clip cannot be retimed.

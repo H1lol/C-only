@@ -695,14 +695,17 @@ bool Engine::set_clip_mask(TrackId track, ClipId clip, int shape, float x, float
         if (c.id != clip) continue;
         project_->push_undo();
         c.mask_enabled = true;
-        c.mask.shape = shape <= 0 ? MaskShape::Rect
-                        : shape == 1 ? MaskShape::Ellipse : MaskShape::Full;
-        c.mask.x = std::clamp(x, 0.f, 1.f);
-        c.mask.y = std::clamp(y, 0.f, 1.f);
-        c.mask.w = std::clamp(w, 0.01f, 1.f);
-        c.mask.h = std::clamp(h, 0.01f, 1.f);
-        c.mask.feather = std::max(0.f, feather);
-        c.mask.inverted = inverted;
+        // Single-mask entry point: keeps the first mask's slot, leaves any
+        // extra masks the clip already carries alone.
+        if (c.masks.empty()) c.masks.emplace_back();
+        Mask& m = c.masks.front();
+        m.shape = mask_shape_from_index(shape);
+        m.x = std::clamp(x, 0.f, 1.f);
+        m.y = std::clamp(y, 0.f, 1.f);
+        m.w = std::clamp(w, 0.01f, 1.f);
+        m.h = std::clamp(h, 0.01f, 1.f);
+        m.feather = std::max(0.f, feather);
+        m.inverted = inverted;
         project_->mark_dirty();
         invalidate_frames();
         return true;
@@ -716,6 +719,7 @@ bool Engine::clear_clip_mask(TrackId track, ClipId clip) {
     for (auto& c : t->clips) {
         if (c.id != clip) continue;
         project_->push_undo();
+        c.masks.clear();
         c.mask_enabled = false;
         project_->mark_dirty();
         invalidate_frames();
@@ -729,16 +733,128 @@ bool Engine::clip_mask(TrackId track, ClipId clip, float* out6, bool* inverted) 
         if (t.id != track) continue;
         for (const auto& c : t.clips) {
             if (c.id != clip) continue;
-            if (!c.mask_enabled) return false;
+            if (!c.mask_enabled || c.masks.empty()) return false;
+            const Mask& m = c.masks.front();
             if (out6) {
-                out6[0] = static_cast<float>(static_cast<int>(c.mask.shape));
-                out6[1] = c.mask.x;
-                out6[2] = c.mask.y;
-                out6[3] = c.mask.w;
-                out6[4] = c.mask.h;
-                out6[5] = c.mask.feather;
+                out6[0] = static_cast<float>(static_cast<int>(m.shape));
+                out6[1] = m.x;
+                out6[2] = m.y;
+                out6[3] = m.w;
+                out6[4] = m.h;
+                out6[5] = m.feather;
             }
-            if (inverted) *inverted = c.mask.inverted;
+            if (inverted) *inverted = m.inverted;
+            return true;
+        }
+    }
+    return false;
+}
+
+static Mask make_mask(const ClipInfo& c, int shape, float x, float y, float w, float h,
+                      float feather, bool inverted, int op) {
+    Mask m;
+    m.id = c.masks.size() + 1;
+    m.name = "Mask " + std::to_string(c.masks.size() + 1);
+    m.shape = mask_shape_from_index(shape);
+    m.mode = MaskMode::Alpha;
+    m.op = op == 1 ? MaskOp::Subtract : MaskOp::Add;
+    m.x = std::clamp(x, 0.f, 1.f);
+    m.y = std::clamp(y, 0.f, 1.f);
+    m.w = std::clamp(w, 0.01f, 1.f);
+    m.h = std::clamp(h, 0.01f, 1.f);
+    m.feather = std::max(0.f, feather);
+    m.inverted = inverted;
+    m.enabled = true;
+    return m;
+}
+
+int Engine::add_clip_mask(TrackId track, ClipId clip, int shape, float x, float y, float w,
+                          float h, float feather, bool inverted, int op) {
+    TrackInfo* t = project_->find_track(track);
+    if (!t) return -1;
+    for (auto& c : t->clips) {
+        if (c.id != clip) continue;
+        if (c.masks.size() >= kMaxClipMasks) return -1;
+        project_->push_undo();
+        c.masks.push_back(make_mask(c, shape, x, y, w, h, feather, inverted, op));
+        c.mask_enabled = true;
+        project_->mark_dirty();
+        invalidate_frames();
+        return static_cast<int>(c.masks.size());
+    }
+    return -1;
+}
+
+bool Engine::update_clip_mask_at(TrackId track, ClipId clip, int index, int shape, float x,
+                                 float y, float w, float h, float feather, bool inverted,
+                                 int op) {
+    TrackInfo* t = project_->find_track(track);
+    if (!t || index < 0) return false;
+    for (auto& c : t->clips) {
+        if (c.id != clip) continue;
+        if (index >= static_cast<int>(c.masks.size())) return false;
+        project_->push_undo();
+        Mask& m = c.masks[static_cast<size_t>(index)];
+        m.shape = mask_shape_from_index(shape);
+        m.op = op == 1 ? MaskOp::Subtract : MaskOp::Add;
+        m.x = std::clamp(x, 0.f, 1.f);
+        m.y = std::clamp(y, 0.f, 1.f);
+        m.w = std::clamp(w, 0.01f, 1.f);
+        m.h = std::clamp(h, 0.01f, 1.f);
+        m.feather = std::max(0.f, feather);
+        m.inverted = inverted;
+        c.mask_enabled = true;
+        project_->mark_dirty();
+        invalidate_frames();
+        return true;
+    }
+    return false;
+}
+
+bool Engine::remove_clip_mask_at(TrackId track, ClipId clip, int index) {
+    TrackInfo* t = project_->find_track(track);
+    if (!t || index < 0) return false;
+    for (auto& c : t->clips) {
+        if (c.id != clip) continue;
+        if (index >= static_cast<int>(c.masks.size())) return false;
+        project_->push_undo();
+        c.masks.erase(c.masks.begin() + index);
+        c.mask_enabled = !c.masks.empty();
+        project_->mark_dirty();
+        invalidate_frames();
+        return true;
+    }
+    return false;
+}
+
+int Engine::clip_mask_count(TrackId track, ClipId clip) const {
+    for (const auto& t : project_->tracks()) {
+        if (t.id != track) continue;
+        for (const auto& c : t.clips)
+            if (c.id == clip) return static_cast<int>(c.masks.size());
+    }
+    return 0;
+}
+
+bool Engine::clip_mask_at(TrackId track, ClipId clip, int index, float* out6, bool* inverted,
+                          int* op) const {
+    if (index < 0) return false;
+    for (const auto& t : project_->tracks()) {
+        if (t.id != track) continue;
+        for (const auto& c : t.clips) {
+            if (c.id != clip) continue;
+            if (index >= static_cast<int>(c.masks.size())) return false;
+            const Mask& m = c.masks[static_cast<size_t>(index)];
+            if (out6) {
+                out6[0] = static_cast<float>(static_cast<int>(m.shape));
+                out6[1] = m.x;
+                out6[2] = m.y;
+                out6[3] = m.w;
+                out6[4] = m.h;
+                out6[5] = m.feather;
+            }
+            if (inverted) *inverted = m.inverted;
+            if (op) *op = m.op == MaskOp::Subtract ? 1 : 0;
             return true;
         }
     }
