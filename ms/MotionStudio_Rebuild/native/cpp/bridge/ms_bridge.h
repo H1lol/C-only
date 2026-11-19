@@ -46,6 +46,10 @@ unsigned long long ms_perf_cache_misses();
 void ms_free_string(char* p);
 size_t ms_frame_bytes();
 int ms_copy_frame_rgba(void* rgba, size_t bytes);
+
+// Fingerprint of the preview state. Unchanged between polls means the next
+// render would produce exactly the pixels already on screen.
+unsigned long long ms_render_signature();
 int ms_import_media(const char* path);
 int ms_add_clip(int track_id, int media_id, double start, double duration);
 int ms_split_clip(int track_id, int clip_id, double at);

@@ -22,10 +22,13 @@ import com.motionstudio.app.native.NativeEngine
  *
  * Rendering runs on its own thread. It used to be a `post`ed Runnable on the UI
  * thread, which meant a slow composite — a 4K clip, a blur, a few effects —
- * blocked input and could trip the ANR watchdog. The worker renders into a
- * bitmap the draw pass also reads, so both sides take the same lock; that is
- * far cheaper than a second full-frame copy per frame and it keeps the preview
- * and the UI independent.
+ * blocked input and could trip the ANR watchdog.
+ *
+ * Two frames of buffering keep that worker off the UI thread entirely: it
+ * writes the back bitmap and swaps references, so [onDraw] never waits for a
+ * full-frame copy. The worker also asks the engine for a state signature first
+ * and does nothing when it has not moved, which is what keeps a paused editor
+ * from compositing and repainting twenty times a second for no reason.
  *
  * [EditorEngine.previewRatio] adds a delivery-aspect guide: the composite is
  * kept whole inside the guide and everything outside it is shaded, so you can
@@ -36,13 +39,27 @@ class PreviewView(context: Context) : View(context) {
     private var engine: EditorEngine? = null
 
     private val lock = Any()
-    private var frame: Bitmap? = null
+
+    /** Bitmap [onDraw] reads; only ever replaced by the worker, under [lock]. */
+    private var front: Bitmap? = null
+
+    /** Bitmap the worker copies into; swapped with [front] when it is complete. */
+    private var back: Bitmap? = null
+
     private var frameWidth = 0
     private var frameHeight = 0
     private var lastRatio: PreviewRatio = PreviewRatio.Project
 
+    /** Engine fingerprint of the last frame copied out, and its transport state. */
+    private var lastSignature = Long.MIN_VALUE
+    private var lastPlaying = false
+
     @Volatile
     private var looping = false
+
+    @Volatile
+    private var visible = true
+
     private var worker: Thread? = null
 
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
@@ -93,6 +110,12 @@ class PreviewView(context: Context) : View(context) {
         super.onDetachedFromWindow()
     }
 
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        // A hidden preview (another screen on top) has no reason to composite.
+        visible = visibility == VISIBLE
+    }
+
     private fun startWorker() {
         if (worker != null) return
         looping = true
@@ -107,8 +130,9 @@ class PreviewView(context: Context) : View(context) {
                 }
                 if (produced) postInvalidateOnAnimation()
                 // Playback wants every frame the renderer can manage; a paused
-                // playhead only needs to notice edits.
-                val delay = if (engine?.playing == true) 16L else 50L
+                // playhead only needs to notice edits, and that poll is a single
+                // native call that usually returns "nothing changed".
+                val delay = if (lastPlaying) 16L else 60L
                 try {
                     Thread.sleep(delay)
                 } catch (_: InterruptedException) {
@@ -130,6 +154,15 @@ class PreviewView(context: Context) : View(context) {
     /** Renders one frame. Runs on the preview thread. Returns true when new pixels landed. */
     private fun renderOnce(): Boolean {
         val editor = engine ?: return false
+        if (!visible) return false
+
+        // Nothing that affects the picture has moved: do not composite, do not
+        // copy pixels and do not invalidate the view. This is the whole reason a
+        // paused editor stays cool; the previous version re-rendered on a timer
+        // whether or not anything had changed.
+        val signature = NativeEngine.nativeRenderSignature()
+        if (signature == lastSignature && !lastPlaying) return false
+
         val state = NativeEngine.nativePreviewState()
         if (state.size < 4) return false
         val w = state[1].toInt().coerceAtLeast(1)
@@ -138,21 +171,29 @@ class PreviewView(context: Context) : View(context) {
         if (!NativeEngine.nativeRenderFrame()) return false
 
         val ready = synchronized(lock) {
-            if (frame == null || w != frameWidth || h != frameHeight) {
-                frame?.recycle()
-                frame = runCatching { Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888) }.getOrNull()
+            if (w != frameWidth || h != frameHeight) {
+                // Both buffers are stale; the next draw shows the background
+                // until the new size has been copied.
+                front?.recycle()
+                front = null
+                back?.recycle()
+                back = null
                 frameWidth = w
                 frameHeight = h
-                val expected = NativeEngine.nativeFrameBytes()
-                if (frame == null) return@synchronized false
-                if (expected > 0 && expected != w.toLong() * h * 4) {
-                    // Stride mismatch: skip drawing rather than show corrupt pixels.
-                    frame?.eraseColor(Color.BLACK)
-                    return@synchronized false
-                }
             }
-            val bitmap = frame ?: return@synchronized false
-            NativeEngine.nativeCopyFrame(bitmap)
+            val expected = NativeEngine.nativeFrameBytes()
+            if (expected > 0 && expected != w.toLong() * h * 4) return@synchronized false
+            val target = back ?: runCatching {
+                Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            }.getOrNull() ?: return@synchronized false
+            // The UI thread only reads `front`, so this copy no longer blocks a
+            // draw frame; the swap below is the only contested work.
+            if (!NativeEngine.nativeCopyFrame(target)) return@synchronized false
+            back = front
+            front = target
+            lastSignature = signature
+            lastPlaying = state[3] == 1.0
+            true
         }
 
         if (ready) {
@@ -178,7 +219,7 @@ class PreviewView(context: Context) : View(context) {
         // The worker may be writing into the bitmap on another thread; hold the
         // same lock for the whole draw so a frame is never half-copied.
         synchronized(lock) {
-            val bitmap = frame ?: return
+            val bitmap = front ?: return
 
             // 1. Guide = the chosen delivery aspect, contained in the view.
             val guideAspect = ratio.aspect ?: (bitmap.width.toFloat() / bitmap.height.toFloat())
@@ -257,10 +298,13 @@ class PreviewView(context: Context) : View(context) {
     fun releaseFrame() {
         stopWorker()
         synchronized(lock) {
-            frame?.recycle()
-            frame = null
+            front?.recycle()
+            front = null
+            back?.recycle()
+            back = null
             frameWidth = 0
             frameHeight = 0
+            lastSignature = Long.MIN_VALUE
         }
     }
 }

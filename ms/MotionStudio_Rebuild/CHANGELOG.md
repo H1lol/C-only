@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased — smoothness
+
+### Fixed
+- The preview loop composited and copied a whole frame on a timer whether or not anything
+  had changed, so a paused editor kept a core busy and the view invalidated 20 times a
+  second. The engine now exposes `render_signature()` (playhead, edit revision, clip and
+  track counts, grade, look, comp sink) and the preview thread does nothing until it moves
+- `engine.time` was read inside the header, the transport, the viewport badges and the
+  whole timeline body, so every delivered frame recomposed all of them. Playhead readouts
+  are leaf composables now and the lane playhead moves through a placement lambda, so a
+  playing frame invalidates one Text and one offset instead of the whole editor
+- The preview worker held the bitmap lock across the full-frame `ms_copy_frame_rgba`
+  memcpy, so the UI thread waited behind a multi-megabyte copy whenever it drew. Two
+  bitmaps are swapped under a short lock instead
+- The compositor built four to six full-size `ImageBuffer`s per clip per frame, each
+  allocating and zeroing its own pixel store, and an empty effect stack copied the whole
+  frame for nothing. Clip images now come from a per-player scratch pool and are rotated
+  with `ImageBuffer::swap()`. Measured on a 720p, four-clip masked project with effects:
+  59.7 → 48.6 ms/frame (16.7 → 20.5 fps)
+- The viewport called `nativeDecoderBackend()` — a JNI call returning a String — on every
+  recomposition; the backend name is remembered once
+
+### Removed
+- `third_party/curated_sources/`: 292 MB and 19,611 files of complete upstream archives
+  (Blender, OpenShot, LMMS, Natron, Gaffer, appleseed, Kdenlive, Enzo, LuxCore, Styk,
+  Sprocket, EffectCraft). No CMake target, Gradle source set, engine file or app file
+  reads them, and `THIRD_PARTY.md` already documented them as not included; the selected
+  excerpts in `third_party/upstream_reference_sources/` are untouched
+
 ## Unreleased — editor chrome
 
 ### Changed

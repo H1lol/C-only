@@ -72,6 +72,8 @@ object NativeEngine {
 
     // Rendering
     external fun nativeRenderFrame(): Boolean
+    /** Changes whenever the next render would differ from the last one. */
+    external fun nativeRenderSignature(): Long
     external fun nativeFrameBytes(): Long
     external fun nativeCopyFrame(bitmap: Bitmap): Boolean
 

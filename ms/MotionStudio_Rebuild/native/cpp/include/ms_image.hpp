@@ -77,6 +77,23 @@ public:
     // Simple copy (same format assumed)
     bool copy_from(const ImageBuffer& src);
 
+    /**
+     * Exchanges two buffers without touching a single pixel.
+     *
+     * The compositor rotates scratch images (decode -> mask -> effects) many
+     * times per frame. Moving a buffer out (`frame = std::move(x)`) leaves an
+     * empty vector behind, so the next frame allocated and zero-filled its own
+     * pixel store again; a swap keeps both sides' storage alive and reusable.
+     */
+    void swap(ImageBuffer& other) noexcept {
+        std::swap(width_, other.width_);
+        std::swap(height_, other.height_);
+        std::swap(format_, other.format_);
+        std::swap(color_space_, other.color_space_);
+        std::swap(stride_, other.stride_);
+        data_.swap(other.data_);
+    }
+
 private:
     int         width_  = 0;
     int         height_ = 0;

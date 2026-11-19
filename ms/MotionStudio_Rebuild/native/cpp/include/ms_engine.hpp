@@ -82,6 +82,16 @@ public:
     Error autosave_project(const std::string& path);
     PerformanceStats performance() const;
 
+    /**
+     * Fingerprint of everything that changes the preview image: playhead, edit
+     * revision, clip/track counts, master grade, LUT and comp sink state.
+     *
+     * The host compares it between polls and skips rendering when it has not
+     * moved. Without it a paused editor still composited and copied a full
+     * frame twenty times a second and recomposed the UI on every one of them.
+     */
+    unsigned long long render_signature() const;
+
     // Undo/redo. These drop the frame cache, so a moved clip cannot leave a
     // stale preview behind.
     bool undo();

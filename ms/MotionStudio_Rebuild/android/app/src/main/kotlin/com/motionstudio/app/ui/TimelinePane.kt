@@ -42,6 +42,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +55,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.motionstudio.app.editor.EditorEngine
@@ -123,15 +125,20 @@ fun TimelinePane(
         // Page-style: once the playhead crosses the right margin, jump it back to
         // the left margin. Scrolling every frame would fight the user's own drags
         // for the scroll state.
-        LaunchedEffect(engine.time, engine.playing, follow, zoom) {
-            if (!follow || !engine.playing || laneViewportPx <= 0f) return@LaunchedEffect
-            val playX = (engine.time / span).toFloat() * contentWidthPx
+        // One collector rather than a LaunchedEffect keyed on the playhead: a
+        // time-keyed effect was cancelled and restarted once per rendered frame.
+        LaunchedEffect(follow, zoom, span, laneViewportPx, contentWidthPx) {
+            if (!follow) return@LaunchedEffect
             val margin = laneViewportPx * 0.12f
-            when {
-                playX > hScroll.value + laneViewportPx - margin ->
-                    hScroll.scrollTo((playX - laneViewportPx + margin * 2f).roundToInt())
-                playX < hScroll.value + margin * 0.4f ->
-                    hScroll.scrollTo((playX - margin).roundToInt().coerceAtLeast(0))
+            snapshotFlow { engine.time to engine.playing }.collect { (t, isPlaying) ->
+                if (!isPlaying || laneViewportPx <= 0f) return@collect
+                val playX = (t / span).toFloat() * contentWidthPx
+                when {
+                    playX > hScroll.value + laneViewportPx - margin ->
+                        hScroll.scrollTo((playX - laneViewportPx + margin * 2f).roundToInt())
+                    playX < hScroll.value + margin * 0.4f ->
+                        hScroll.scrollTo((playX - margin).roundToInt().coerceAtLeast(0))
+                }
             }
         }
 
@@ -165,21 +172,7 @@ fun TimelinePane(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(
-                    EditorEngine.formatTimecode(engine.time, engine.fps),
-                    color = MsColors.accent,
-                    fontSize = 12.sp,
-                    fontFamily = MsFonts.mono,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    "/ ${EditorEngine.formatTimecode(span, engine.fps)}",
-                    color = MsColors.textMuted,
-                    fontSize = 10.sp,
-                    fontFamily = MsFonts.mono,
-                )
-                Text("F${(engine.time * engine.fps).roundToInt()}",
-                    color = MsColors.textMuted, fontSize = 9.sp, fontFamily = MsFonts.mono)
+                HeadUpClock(engine = engine, span = span)
                 Spacer(Modifier.weight(1f))
                 Chip(
                     label = if (snapping) "SNAP" else "FREE",
@@ -220,9 +213,9 @@ fun TimelinePane(
                         .background(MsColors.surfaceHigh)
                 ) {
                     Ruler(
+                        engine = engine,
                         span = span,
                         contentWidth = contentWidth,
-                        time = engine.time,
                         fps = engine.fps,
                         markers = doc.markers.map { it.time },
                         onSeek = { x -> engine.seek(timeAt(x)) },
@@ -333,13 +326,7 @@ fun TimelinePane(
                         }
 
                         // Playhead last so it sits above clips and the snap guide.
-                        Box(
-                            Modifier
-                                .offset(x = xOf(engine.time) - 0.5.dp)
-                                .width(1.dp)
-                                .fillMaxHeight()
-                                .background(MsColors.accent)
-                        )
+                        PlayheadLine(engine = engine, span = span, contentWidth = contentWidth)
                     }
                 }
             }
@@ -349,9 +336,9 @@ fun TimelinePane(
 
 @Composable
 private fun Ruler(
+    engine: EditorEngine,
     span: Double,
     contentWidth: Dp,
-    time: Double,
     fps: Double,
     markers: List<Double>,
     onSeek: (Float) -> Unit,
@@ -420,29 +407,78 @@ private fun Ruler(
             )
         }
 
-        // Playhead tab carrying its own timecode, so the current position is
-        // readable where the eye already is instead of only in a corner readout.
-        val playX = xDp(time, span, contentWidth)
-        Box(
-            Modifier.offset(x = (playX - 28.dp).coerceAtLeast(0.dp), y = 1.dp)
-                .width(56.dp).height(13.dp)
-                .background(MsColors.accent, RoundedCornerShape(3.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                EditorEngine.formatTimecode(time, fps),
-                color = MsColors.background,
-                fontSize = 8.sp,
-                fontFamily = MsFonts.mono,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-            )
-        }
-        Box(
-            Modifier.offset(x = playX - 0.5.dp).width(1.dp).fillMaxHeight()
-                .background(MsColors.accent)
+        // The moving parts live in their own composable so the ruler's ticks and
+        // labels are not recomposed for every frame of playback.
+        RulerPlayhead(engine = engine, span = span, contentWidth = contentWidth, fps = fps)
+    }
+}
+
+/**
+ * Playhead tab carrying its own timecode, so the current position is readable
+ * where the eye already is instead of only in a corner readout.
+ */
+@Composable
+private fun RulerPlayhead(engine: EditorEngine, span: Double, contentWidth: Dp, fps: Double) {
+    val playX = xDp(engine.time, span, contentWidth)
+    Box(
+        Modifier.offset(x = (playX - 28.dp).coerceAtLeast(0.dp), y = 1.dp)
+            .width(56.dp).height(13.dp)
+            .background(MsColors.accent, RoundedCornerShape(3.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            EditorEngine.formatTimecode(engine.time, fps),
+            color = MsColors.background,
+            fontSize = 8.sp,
+            fontFamily = MsFonts.mono,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
         )
     }
+    Box(
+        Modifier.offset(x = playX - 0.5.dp).width(1.dp).fillMaxHeight()
+            .background(MsColors.accent)
+    )
+}
+
+/**
+ * The lane playhead. Its position is read inside the placement lambda, so a
+ * moving playhead re-places one node instead of recomposing the whole timeline.
+ */
+@Composable
+private fun PlayheadLine(engine: EditorEngine, span: Double, contentWidth: Dp) {
+    val widthPx = with(LocalDensity.current) { contentWidth.toPx() }
+    Box(
+        Modifier
+            .offset { IntOffset(((engine.time / span).toFloat() * widthPx).roundToInt(), 0) }
+            .width(1.dp)
+            .fillMaxHeight()
+            .background(MsColors.accent)
+    )
+}
+
+/** Head-up readout of the playhead, split out so the timeline body stays still. */
+@Composable
+private fun HeadUpClock(engine: EditorEngine, span: Double) {
+    Text(
+        EditorEngine.formatTimecode(engine.time, engine.fps),
+        color = MsColors.accent,
+        fontSize = 12.sp,
+        fontFamily = MsFonts.mono,
+        fontWeight = FontWeight.Bold,
+    )
+    Text(
+        "/ ${EditorEngine.formatTimecode(span, engine.fps)}",
+        color = MsColors.textMuted,
+        fontSize = 10.sp,
+        fontFamily = MsFonts.mono,
+    )
+    Text(
+        "F${(engine.time * engine.fps).roundToInt()}",
+        color = MsColors.textMuted,
+        fontSize = 9.sp,
+        fontFamily = MsFonts.mono,
+    )
 }
 
 /**

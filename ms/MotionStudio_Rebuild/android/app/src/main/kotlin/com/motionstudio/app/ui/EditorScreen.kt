@@ -343,14 +343,7 @@ private fun EditorHeader(
                         )
                     )
                 }
-                Text(
-                    EditorEngine.formatTimecode(engine.time, engine.fps) + " / " +
-                        EditorEngine.formatTimecode(engine.duration, engine.fps),
-                    color = MsColors.textTertiary,
-                    fontSize = 11.sp,
-                    fontFamily = MsFonts.mono,
-                    maxLines = 1,
-                )
+                HeaderClock(engine)
             }
             IconButton(onClick = onSettings, modifier = Modifier.size(38.dp)) {
                 Icon(Icons.Filled.Settings, "Settings", tint = MsColors.textSecondary)
@@ -432,8 +425,12 @@ private fun Viewport(engine: EditorEngine, modifier: Modifier = Modifier) {
                     .background(MsColors.background.copy(alpha = 0.72f))
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
+                // A JNI call returning a String on every recomposition of the
+                // viewport (one per rendered frame) is pure waste: the backend
+                // cannot change while the app runs.
+                val backend = remember { NativeEngine.nativeDecoderBackend().uppercase() }
                 Text(
-                    "${NativeEngine.nativeDecoderBackend().uppercase()}  ·  " +
+                    "$backend  ·  " +
                         "${engine.doc.width}×${engine.doc.height}  ·  ${engine.fps.toInt()}P",
                     color = MsColors.textTertiary,
                     fontSize = 9.sp,
@@ -461,12 +458,7 @@ private fun Viewport(engine: EditorEngine, modifier: Modifier = Modifier) {
                     .background(MsColors.background.copy(alpha = 0.72f))
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
-                Text(
-                    "TC " + EditorEngine.formatTimecode(engine.time, engine.fps),
-                    color = MsColors.accentSoft,
-                    fontSize = 10.sp,
-                    fontFamily = MsFonts.mono,
-                )
+                ViewportClock(engine)
             }
             engine.lookName?.let { look ->
                 Box(
@@ -524,13 +516,7 @@ private fun TransportBar(engine: EditorEngine) {
                 Icon(Icons.Filled.SkipNext, "Next keyframe", tint = MsColors.textSecondary)
             }
             Spacer(Modifier.weight(1f))
-            Text(
-                EditorEngine.formatTimecode(engine.time, engine.fps),
-                color = MsColors.accentSoft,
-                fontSize = 12.sp,
-                fontFamily = MsFonts.mono,
-                fontWeight = FontWeight.Bold,
-            )
+            TransportClock(engine)
             Spacer(Modifier.width(10.dp))
             IconButton(onClick = { engine.undo() }, modifier = Modifier.size(38.dp)) {
                 Icon(Icons.AutoMirrored.Filled.Undo, "Undo", tint = MsColors.textSecondary)
@@ -599,6 +585,47 @@ private fun DockButton(icon: ImageVector, label: String, onClick: () -> Unit) {
         Spacer(Modifier.height(5.dp))
         Text(label, color = MsColors.textSecondary, fontSize = 10.sp, maxLines = 1)
     }
+}
+
+/**
+ * Playhead readouts sit in their own composables.
+ *
+ * Reading `engine.time` inside [EditorHeader] or [TransportBar] recomposed that
+ * whole row once per delivered frame. Compose invalidates only the scope that
+ * read the state, so keeping the read in a leaf keeps frame-rate updates to one
+ * Text instead of a header, a transport strip and the viewport badges.
+ */
+@Composable
+private fun HeaderClock(engine: EditorEngine) {
+    Text(
+        EditorEngine.formatTimecode(engine.time, engine.fps) + " / " +
+            EditorEngine.formatTimecode(engine.duration, engine.fps),
+        color = MsColors.textTertiary,
+        fontSize = 11.sp,
+        fontFamily = MsFonts.mono,
+        maxLines = 1,
+    )
+}
+
+@Composable
+private fun TransportClock(engine: EditorEngine) {
+    Text(
+        EditorEngine.formatTimecode(engine.time, engine.fps),
+        color = MsColors.accentSoft,
+        fontSize = 12.sp,
+        fontFamily = MsFonts.mono,
+        fontWeight = FontWeight.Bold,
+    )
+}
+
+@Composable
+private fun ViewportClock(engine: EditorEngine) {
+    Text(
+        "TC " + EditorEngine.formatTimecode(engine.time, engine.fps),
+        color = MsColors.accentSoft,
+        fontSize = 10.sp,
+        fontFamily = MsFonts.mono,
+    )
 }
 
 /** Picks a filename that does not collide with an earlier import. */

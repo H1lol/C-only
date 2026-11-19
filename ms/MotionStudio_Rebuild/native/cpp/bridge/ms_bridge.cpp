@@ -224,6 +224,9 @@ char* ms_project_to_json() {
 }
 void ms_free_string(char* p) { std::free(p); }
 size_t ms_frame_bytes() { return ms::Engine::instance().last_frame_bytes(); }
+unsigned long long ms_render_signature() {
+  return ms::Engine::instance().render_signature();
+}
 int ms_copy_frame_rgba(void* rgba, size_t bytes) { return ms::Engine::instance().copy_last_frame(rgba, bytes) ? 0 : -1; }
 int ms_import_media(const char* path) { return path ? static_cast<int>(ms::Engine::instance().project().import_media(path)) : -1; }
 int ms_add_clip(int track_id, int media_id, double start, double duration) {

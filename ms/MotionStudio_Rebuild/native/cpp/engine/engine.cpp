@@ -283,6 +283,41 @@ Error Engine::autosave_project(const std::string& path) {
 }
 PerformanceStats Engine::performance() const { return perf_.stats(); }
 
+unsigned long long Engine::render_signature() const {
+    // FNV-1a over everything render_frame() reads; cheap enough to run on every
+    // preview poll (a dozen integers, no pixel work).
+    unsigned long long h = 0xcbf29ce484222325ull;
+    auto mix = [&h](unsigned long long v) {
+        h ^= v;
+        h *= 0x100000001b3ull;
+    };
+    auto mix_float = [&mix](float f) {
+        unsigned int bits = 0;
+        std::memcpy(&bits, &f, sizeof(bits));
+        mix(bits);
+    };
+
+    mix(static_cast<unsigned long long>(impl_->frame_index.load()));
+    mix(impl_->revision.load());
+    mix(static_cast<unsigned long long>(project_->clip_count()));
+    mix(static_cast<unsigned long long>(project_->tracks().size()));
+    mix(impl_->playing.load() ? 1ull : 0ull);
+
+    // Grade and look are applied on top of the cached frame, so they are not
+    // part of the frame cache key but they do change the picture.
+    mix(grade_active_ ? 1ull : 0ull);
+    if (grade_active_) {
+        for (float g : grade_) mix_float(g);
+    }
+    mix(reinterpret_cast<unsigned long long>(look_.get()));
+    mix_float(look_strength_);
+
+    // A comp cook depends on the graph, not only on the playhead.
+    mix(comp_rendered() ? 1ull : 0ull);
+    mix(static_cast<unsigned long long>(comp_.sink_id()));
+    return h;
+}
+
 void Engine::resize(int width, int height) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     if (width > 0) impl_->width = width;

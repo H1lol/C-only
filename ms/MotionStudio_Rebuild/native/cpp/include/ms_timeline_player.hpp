@@ -46,6 +46,24 @@ private:
   void reopen_after_proxy_change();
 
   IMediaDecoder* decoder_for(MediaId id);
+
+  /**
+   * Renders one clip (decode -> mask -> effects -> transform) into `dst`.
+   * Buffers come from [scratch_], never from freshly constructed images.
+   */
+  void render_clip_into(const ClipInfo& clip, TimeSec time, int w, int h, ImageBuffer& dst);
+
+  /**
+   * Frame scratch, reused for the lifetime of the player.
+   *
+   * Every clip used to build four to six full-size ImageBuffers per frame, and
+   * each of those allocated and zeroed its own pixel store, so a single 1080p
+   * frame churned through tens of megabytes of heap before it could be shown.
+   * That allocation traffic, not the compositing maths, is what made playback
+   * on a phone stutter.
+   */
+  ImageBuffer scratch_[6];
+
   static void blit_scaled(const ImageBuffer& src, ImageBuffer& dst,
                           float opacity, int dst_x, int dst_y);
 

@@ -95,6 +95,11 @@ Java_com_motionstudio_app_native_NativeEngine_nativeRenderFrame(JNIEnv*, jobject
 }
 
 JNIEXPORT jlong JNICALL
+Java_com_motionstudio_app_native_NativeEngine_nativeRenderSignature(JNIEnv*, jobject) {
+    return static_cast<jlong>(ms_render_signature());
+}
+
+JNIEXPORT jlong JNICALL
 Java_com_motionstudio_app_native_NativeEngine_nativeFrameBytes(JNIEnv*, jobject) {
     return static_cast<jlong>(ms_frame_bytes());
 }

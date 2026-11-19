@@ -29,6 +29,11 @@ Selected upstream source excerpts and their original license files are kept unde
 
 See `docs/UPSTREAM_INTEGRATION_2026-11-04.md` for the file-level selection, implementation notes, and validation scope. Full uploaded upstream archives are not included in the Motion Studio repository.
 
+`third_party/curated_sources/` used to hold complete copies of those archives (~292 MB,
+19,611 files). Nothing built or read them, and they contradicted the paragraph above, so they were
+dropped from the tree; the upstream projects and their licenses remain listed in the table
+here, and the selected excerpts are still in `third_party/upstream_reference_sources/`.
+
 ## Important license boundary
 
 The supplied LMMS 1.2.2 archive is GPL-2.0-only. Its implementation files were deliberately not copied into this GPL-3.0-or-later project. Do not add LMMS implementation source unless a compatible licensing arrangement is obtained or the project licensing strategy is changed after legal review.

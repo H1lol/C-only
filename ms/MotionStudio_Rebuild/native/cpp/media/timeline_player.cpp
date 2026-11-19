@@ -154,6 +154,87 @@ static void composite_premul(const ImageBuffer& src, ImageBuffer& dst) {
   }
 }
 
+void TimelinePlayer::render_clip_into(const ClipInfo& clip, TimeSec time, int W, int H,
+                                      ImageBuffer& dst) {
+  // Two rotating working images: the clip's own pixels and the destination of
+  // whatever stage runs next (mask, effects). Both stay allocated between
+  // frames; nothing here constructs an ImageBuffer.
+  ImageBuffer& frame = scratch_[0];
+  ImageBuffer& alt = scratch_[1];
+
+  if (!dst.allocate(W, H, PixelFormat::RGBA8)) return;
+  dst.clear(0.f, 0.f, 0.f, 0.f);
+
+  const double max_local = std::max(0.0, clip.duration * clip.speed - 1e-3);
+  const double local = std::clamp((time - clip.start) * clip.speed, 0.0, max_local);
+  const double src_t = clip.source_in + local;
+  const int64_t ms = static_cast<int64_t>(src_t * 1000.0);
+
+  IMediaDecoder* dec = decoder_for(clip.media_id);
+  if (clip.is_text) {
+    if (!render_text(alt, W, H, clip.text_style, clip.text).ok() || !alt.valid()) {
+      alt.allocate(W, H);
+      alt.clear(0.f, 0.f, 0.f, 0.f);
+    }
+    frame.swap(alt);
+  } else if (dec) {
+    // Streaming read: a step forward decodes one frame instead of seeking
+    // back to the keyframe and re-decoding the whole GOP.
+    int64_t pts = 0;
+    Error e = dec->read_video_at(ms, frame, pts);
+    if (!e.ok() || !frame.valid()) {
+      frame.allocate(W, H);
+      frame.clear(0.2f, 0.25f, 0.35f, 1.f);
+    }
+  } else {
+    frame.allocate(W, H);
+    frame.clear(0.3f, 0.15f, 0.15f, 1.f);
+  }
+
+  // Shape mask: rasterise at output size and multiply the clip's alpha, so the
+  // transform (and transitions) see the matted image.
+  if (clip.mask_enabled) {
+    Mask m = clip.mask;
+    m.mode = m.inverted ? MaskMode::InvertedAlpha : MaskMode::Alpha;
+    ImageBuffer& mask_img = scratch_[4];
+    if (rasterize_mask(m, W, H, mask_img).ok() && mask_img.valid()) {
+      if (apply_mask_to_image(frame, mask_img, m.mode, alt).ok() && alt.valid())
+        frame.swap(alt);
+    }
+  }
+
+  // An empty stack used to copy the whole frame into a fresh buffer for no
+  // reason; with no enabled effect there is nothing to do at all.
+  if (!clip.motion.effects.empty()) {
+    Error fx = EffectStack::apply(clip.motion.effects, frame, alt);
+    if (fx.ok() && alt.valid()) frame.swap(alt);
+  }
+
+  // Per-clip grade runs after the clip's own effects, before compositing, so
+  // one shot can be matched to another without touching the master grade.
+  if (clip.grade_enabled) {
+    GradeSettings g;
+    g.exposure = clip.grade[0];
+    g.contrast = clip.grade[1];
+    g.saturation = clip.grade[2];
+    g.temperature = clip.grade[3];
+    g.lift = clip.grade[4];
+    g.gamma = clip.grade[5];
+    g.gain = clip.grade[6];
+    apply_finishing_grade(frame, g);
+  }
+
+  const float op = static_cast<float>(
+      clip.opacity * (clip.motion.opacity.empty() ? 1.0 : clip.motion.opacity_at(local)));
+  const float sc = static_cast<float>(
+      clip.motion.scale.empty() ? 1.0 : clip.motion.scale.eval(local));
+  const float px = static_cast<float>(
+      clip.motion.pos_x.empty() ? 0.0 : clip.motion.pos_x.eval(local));
+  const float py = static_cast<float>(
+      clip.motion.pos_y.empty() ? 0.0 : clip.motion.pos_y.eval(local));
+  blit_transformed(frame, dst, op, px, py, sc);
+}
+
 Error TimelinePlayer::render_frame(TimeSec t, ImageBuffer& out) {
   if (!session_) return Error::make(ErrorCode::NotInitialized, "no session");
   reopen_after_proxy_change();
@@ -163,81 +244,7 @@ Error TimelinePlayer::render_frame(TimeSec t, ImageBuffer& out) {
     return Error::make(ErrorCode::OutOfMemory, "frame buffer");
   out.clear(0.08f, 0.08f, 0.10f, 1.f);
 
-  // Renders one clip (decode + effects + keyframed transform) into a transparent
-  // buffer so it can be composited or blended with a transition partner.
-  auto render_clip = [&](const ClipInfo& clip, TimeSec time) -> ImageBuffer {
-    ImageBuffer dst;
-    if (!dst.allocate(W, H, PixelFormat::RGBA8)) return dst;
-    dst.clear(0.f, 0.f, 0.f, 0.f);
-
-    const double max_local = std::max(0.0, clip.duration * clip.speed - 1e-3);
-    const double local = std::clamp((time - clip.start) * clip.speed, 0.0, max_local);
-    const double src_t = clip.source_in + local;
-    const int64_t ms = static_cast<int64_t>(src_t * 1000.0);
-
-    IMediaDecoder* dec = decoder_for(clip.media_id);
-    ImageBuffer frame;
-    if (clip.is_text) {
-      if (!render_text(frame, W, H, clip.text_style, clip.text).ok() || !frame.valid()) {
-        frame.allocate(W, H);
-        frame.clear(0.f, 0.f, 0.f, 0.f);
-      }
-    } else if (dec) {
-      // Streaming read: a step forward decodes one frame instead of seeking
-      // back to the keyframe and re-decoding the whole GOP.
-      int64_t pts = 0;
-      Error e = dec->read_video_at(ms, frame, pts);
-      if (!e.ok() || !frame.valid()) {
-        frame.allocate(W, H);
-        frame.clear(0.2f, 0.25f, 0.35f, 1.f);
-      }
-    } else {
-      frame.allocate(W, H);
-      frame.clear(0.3f, 0.15f, 0.15f, 1.f);
-    }
-
-    // Shape mask: rasterise once per frame at output size and multiply the
-    // clip's alpha, so the transform (and transitions) see the matted image.
-    if (clip.mask_enabled) {
-      Mask m = clip.mask;
-      m.mode = m.inverted ? MaskMode::InvertedAlpha : MaskMode::Alpha;
-      ImageBuffer mask_img;
-      if (rasterize_mask(m, W, H, mask_img).ok() && mask_img.valid()) {
-        ImageBuffer masked;
-        if (apply_mask_to_image(frame, mask_img, m.mode, masked).ok() && masked.valid())
-          frame = std::move(masked);
-      }
-    }
-
-    const float op = static_cast<float>(
-        clip.opacity * (clip.motion.opacity.empty() ? 1.0 : clip.motion.opacity_at(local)));
-    ImageBuffer effected;
-    Error fx = EffectStack::apply(clip.motion.effects, frame, effected);
-    if (fx.ok() && effected.valid()) frame = std::move(effected);
-
-    // Per-clip grade runs after the clip's own effects, before compositing, so
-    // one shot can be matched to another without touching the master grade.
-    if (clip.grade_enabled) {
-      GradeSettings g;
-      g.exposure = clip.grade[0];
-      g.contrast = clip.grade[1];
-      g.saturation = clip.grade[2];
-      g.temperature = clip.grade[3];
-      g.lift = clip.grade[4];
-      g.gamma = clip.grade[5];
-      g.gain = clip.grade[6];
-      apply_finishing_grade(frame, g);
-    }
-
-    const float sc = static_cast<float>(
-        clip.motion.scale.empty() ? 1.0 : clip.motion.scale.eval(local));
-    const float px = static_cast<float>(
-        clip.motion.pos_x.empty() ? 0.0 : clip.motion.pos_x.eval(local));
-    const float py = static_cast<float>(
-        clip.motion.pos_y.empty() ? 0.0 : clip.motion.pos_y.eval(local));
-    blit_transformed(frame, dst, op, px, py, sc);
-    return dst;
-  };
+  // Clip images come from the player's scratch pool: see render_clip_into().
 
   // Bottom track first (video under overlay)
   const auto& tracks = session_->tracks();
@@ -270,9 +277,11 @@ Error TimelinePlayer::render_frame(TimeSec t, ImageBuffer& out) {
       const TimeSec cut = (tr_b->start > tr_a->start) ? tr_b->start : (tr_a->start + tr_a->duration);
       const float u = static_cast<float>(
           std::clamp((t - (cut - tr->duration * 0.5)) / tr->duration, 0.0, 1.0));
-      ImageBuffer a_buf = render_clip(*tr_a, t);
-      ImageBuffer b_buf = render_clip(*tr_b, t);
-      ImageBuffer blended;
+      ImageBuffer& a_buf = scratch_[2];
+      ImageBuffer& b_buf = scratch_[3];
+      ImageBuffer& blended = scratch_[5];
+      render_clip_into(*tr_a, t, W, H, a_buf);
+      render_clip_into(*tr_b, t, W, H, b_buf);
       if (!blended.allocate(W, H, PixelFormat::RGBA8)) continue;
       const Error te = apply_transition(a_buf, b_buf, static_cast<TransitionType>(tr->type),
                                         u, tr->softness, blended);
@@ -282,7 +291,8 @@ Error TimelinePlayer::render_frame(TimeSec t, ImageBuffer& out) {
 
     for (const auto& clip : track.clips) {
       if (t < clip.start || t >= clip.start + clip.duration) continue;
-      ImageBuffer clip_buf = render_clip(clip, t);
+      ImageBuffer& clip_buf = scratch_[2];
+      render_clip_into(clip, t, W, H, clip_buf);
       composite_premul(clip_buf, out);
     }
   }
