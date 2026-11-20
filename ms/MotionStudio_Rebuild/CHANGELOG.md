@@ -1,6 +1,27 @@
 # Changelog
 
-## Unreleased — per-clip looks and mask correctness
+## Unreleased — effects that respect alpha, and a harness that renders pictures
+
+### Fixed
+- **A blur darkened what it touched.** The CPU effects average pixels that hold straight (not
+  premultiplied) colour, and a transparent pixel still carries a colour — black. Averaging straight
+  values dragged that black into every soft edge, and because the compositor then multiplies by
+  alpha again the result was dim as well as soft: a title blurred at radius 14 lost roughly two
+  thirds of its brightness, and a soft matte edge came out muddy. `cpu_gaussian_blur` and
+  `cpu_box_blur` now premultiply, average, and unpremultiply through two new helpers
+  (`premultiply_rgba`, `unpremultiply_rgba` in `ms_cpu_effects.hpp`), so a blur moves coverage
+  without destroying colour. Glow and every `frei0r`/MLT path that maps onto a blur inherit it
+
+### Added
+- `tools/ms_shots.cpp` — a harness, not a test: it builds a small timeline (titles, a matte, blur,
+  tonal grade, an overlay track, an adjustment layer) and renders real frames from `TimelinePlayer`
+  to PPM with a centre-mean printout per shot, so output can be looked at instead of only asserted
+  on. Finding the bug above took one render
+- `ms_effects_alpha_test`: coverage is conserved by a blur, alpha spreads outside the source shape,
+  a partial-alpha pixel keeps the source colour instead of fading towards black, a zero radius is a
+  byte-for-byte passthrough, and glow leaves opaque white white. Suite is **23/23**
+
+## per-clip looks and mask correctness
 
 ### Added
 - **A look on one clip.** `ClipInfo` gained `look_path` and `look_strength`, so a `.cube` LUT can

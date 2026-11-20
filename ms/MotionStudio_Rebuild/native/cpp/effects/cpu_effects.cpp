@@ -76,6 +76,36 @@ Error cpu_brightness_contrast(const ImageBuffer& in, ImageBuffer& out,
   return Error::success();
 }
 
+void premultiply_rgba(const ImageBuffer& in, std::vector<uint8_t>& out) {
+  const size_t n = static_cast<size_t>(std::max(in.width(), 0)) *
+                   static_cast<size_t>(std::max(in.height(), 0));
+  out.resize(n * 4);
+  const uint8_t* s = in.data();
+  for (size_t i = 0; i < n; ++i, s += 4) {
+    const uint32_t a = s[3];
+    out[i * 4 + 0] = static_cast<uint8_t>((s[0] * a + 127) / 255);
+    out[i * 4 + 1] = static_cast<uint8_t>((s[1] * a + 127) / 255);
+    out[i * 4 + 2] = static_cast<uint8_t>((s[2] * a + 127) / 255);
+    out[i * 4 + 3] = s[3];
+  }
+}
+
+void unpremultiply_rgba(uint8_t* data, size_t pixels) {
+  for (size_t i = 0; i < pixels; ++i) {
+    uint8_t* p = data + i * 4;
+    const uint32_t a = p[3];
+    if (a == 0) {
+      p[0] = p[1] = p[2] = 0;
+      continue;
+    }
+    if (a == 255) continue;
+    for (int c = 0; c < 3; ++c) {
+      const uint32_t v = (static_cast<uint32_t>(p[c]) * 255u + a / 2) / a;
+      p[c] = static_cast<uint8_t>(v > 255u ? 255u : v);
+    }
+  }
+}
+
 Error cpu_gaussian_blur(const ImageBuffer& in, ImageBuffer& out, float radius) {
   if (!in.data() || in.width() <= 0) return Error::make(ErrorCode::InvalidArgument, "empty input");
   const int w = in.width();
@@ -89,8 +119,11 @@ Error cpu_gaussian_blur(const ImageBuffer& in, ImageBuffer& out, float radius) {
   }
 
   const int R = std::max(1, static_cast<int>(std::ceil(radius)));
-  // Separable box approximation (fast, good enough for preview)
-  std::vector<uint8_t> tmp(static_cast<size_t>(w) * h * 4);
+  // Separable box approximation (fast, good enough for preview). The average
+  // runs on premultiplied colour: a transparent neighbour contributes nothing
+  // instead of contributing black.
+  std::vector<uint8_t> pre, tmp(static_cast<size_t>(w) * h * 4);
+  premultiply_rgba(in, pre);
 
   auto blur_axis = [&](const uint8_t* src, uint8_t* dst, bool horizontal) {
     for (int y = 0; y < h; ++y) {
@@ -116,8 +149,9 @@ Error cpu_gaussian_blur(const ImageBuffer& in, ImageBuffer& out, float radius) {
     }
   };
 
-  blur_axis(in.data(), tmp.data(), true);
+  blur_axis(pre.data(), tmp.data(), true);
   blur_axis(tmp.data(), out.data(), false);
+  unpremultiply_rgba(out.data(), static_cast<size_t>(w) * h);
   return Error::success();
 }
 

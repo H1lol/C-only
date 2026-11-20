@@ -3,8 +3,21 @@
 #include "ms_image.hpp"
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace ms {
+
+/**
+ * Alpha helpers for effects that average pixels across neighbours.
+ *
+ * Buffers reaching an effect hold straight (not premultiplied) colour, and a
+ * pixel with alpha 0 can still carry a colour. Averaging straight values lets a
+ * transparent black neighbour drag a glyph's edge down, so a blur on a title
+ * came out both soft and dark. These two convert around such an average.
+ */
+void premultiply_rgba(const ImageBuffer& in, std::vector<uint8_t>& out);
+/** Converts `pixels` premultiplied RGBA8 values back to straight, in place. */
+void unpremultiply_rgba(uint8_t* data, size_t pixels);
 
 /** CPU reference implementations — real pixel work, no GPU required */
 Error cpu_effect_apply(const std::string& effect_id,

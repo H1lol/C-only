@@ -153,6 +153,12 @@ target_include_directories(ms_clip_look_test PRIVATE
 add_executable(ms_title_demo tools/ms_title_demo.cpp)
 target_link_libraries(ms_title_demo PRIVATE ms_core)
 
+# Visual harness (not a test): renders real frames to PPM for inspection.
+add_executable(ms_shots tools/ms_shots.cpp)
+target_link_libraries(ms_shots PRIVATE motionstudio_native)
+target_include_directories(ms_shots PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 add_executable(ms_effects_catalogue_test tools/ms_effects_catalogue_test.cpp)
 target_link_libraries(ms_effects_catalogue_test PRIVATE ms_core)
 
@@ -165,6 +171,9 @@ target_link_libraries(ms_engine_load_test PRIVATE motionstudio_native)
 
 add_executable(ms_lut_test tools/ms_lut_test.cpp)
 target_link_libraries(ms_lut_test PRIVATE ms_core)
+
+add_executable(ms_effects_alpha_test tools/ms_effects_alpha_test.cpp)
+target_link_libraries(ms_effects_alpha_test PRIVATE ms_core)
 
 add_executable(ms_engine_audio_test tools/ms_engine_audio_test.cpp)
 target_link_libraries(ms_engine_audio_test PRIVATE motionstudio_native)
@@ -198,6 +207,7 @@ add_test(NAME ms_adjustment_test COMMAND ms_adjustment_test)
 add_test(NAME ms_mask_test COMMAND ms_mask_test)
 add_test(NAME ms_grade_test COMMAND ms_grade_test)
 add_test(NAME ms_clip_look_test COMMAND ms_clip_look_test)
+add_test(NAME ms_effects_alpha_test COMMAND ms_effects_alpha_test)
 set_tests_properties(
   ms_studio_test ms_pass345_deep ms_pass6_test ms_11_16_test ms_17_22_test
   ms_23_30_test ms_audio_fx_test ms_audio_playback_test ms_graph_safety_test ms_export_profile_test

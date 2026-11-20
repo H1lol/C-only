@@ -278,40 +278,49 @@ Error cpu_box_blur(const ImageBuffer& in, ImageBuffer& out, int radius) {
     std::memcpy(out.data(), in.data(), static_cast<size_t>(w) * h * 4);
     return Error::success();
   }
-  ImageBuffer tmp;
-  tmp.allocate(w, h, PixelFormat::RGBA8);
-  if (!tmp.data()) return Error::make(ErrorCode::OutOfMemory, "box blur temp");
+  // The average runs on premultiplied colour, like the gaussian blur: on a
+  // straight-alpha buffer a transparent neighbour would average in as black and
+  // darken every soft edge.
+  std::vector<uint8_t> pre;
+  premultiply_rgba(in, pre);
+  std::vector<uint8_t> tmp(static_cast<size_t>(w) * h * 4, 0);
+  auto at = [&](const std::vector<uint8_t>& buf, int x, int y) {
+    x = std::clamp(x, 0, w - 1);
+    y = std::clamp(y, 0, h - 1);
+    return buf.data() + (static_cast<size_t>(y) * w + x) * 4;
+  };
   // Horizontal pass: running sum keeps this O(n) instead of O(n·r).
   const int span = radius * 2 + 1;
   for (int y = 0; y < h; ++y) {
-    int sum[4] = {0, 0, 0, 0};
+    long sum[4] = {0, 0, 0, 0};
     for (int k = -radius; k <= radius; ++k) {
-      const uint8_t* p = px(in, k, y);
+      const uint8_t* p = at(pre, k, y);
       for (int c = 0; c < 4; ++c) sum[c] += p[c];
     }
     for (int x = 0; x < w; ++x) {
       uint8_t* o = tmp.data() + (static_cast<size_t>(y) * w + x) * 4;
       for (int c = 0; c < 4; ++c) o[c] = static_cast<uint8_t>(sum[c] / span);
-      const uint8_t* add = px(in, x + radius + 1, y);
-      const uint8_t* sub = px(in, x - radius, y);
+      const uint8_t* add = at(pre, x + radius + 1, y);
+      const uint8_t* sub = at(pre, x - radius, y);
       for (int c = 0; c < 4; ++c) sum[c] += add[c] - sub[c];
     }
   }
   // Vertical pass over the horizontal result.
   for (int x = 0; x < w; ++x) {
-    int sum[4] = {0, 0, 0, 0};
+    long sum[4] = {0, 0, 0, 0};
     for (int k = -radius; k <= radius; ++k) {
-      const uint8_t* p = px(tmp, x, k);
+      const uint8_t* p = at(tmp, x, k);
       for (int c = 0; c < 4; ++c) sum[c] += p[c];
     }
     for (int y = 0; y < h; ++y) {
       uint8_t* o = out.data() + (static_cast<size_t>(y) * w + x) * 4;
       for (int c = 0; c < 4; ++c) o[c] = static_cast<uint8_t>(sum[c] / span);
-      const uint8_t* add = px(tmp, x, y + radius + 1);
-      const uint8_t* sub = px(tmp, x, y - radius);
+      const uint8_t* add = at(tmp, x, y + radius + 1);
+      const uint8_t* sub = at(tmp, x, y - radius);
       for (int c = 0; c < 4; ++c) sum[c] += add[c] - sub[c];
     }
   }
+  unpremultiply_rgba(out.data(), static_cast<size_t>(w) * h);
   return Error::success();
 }
 

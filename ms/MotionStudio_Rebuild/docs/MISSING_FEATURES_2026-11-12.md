@@ -46,6 +46,13 @@ Legend: ✅ done in this pass · ❌ still missing · ⚠️ partial / untested 
 Titles are real now: `native/cpp/text/text_render.cpp` rasterises glyphs with stb_truetype, six OFL display faces ship in `assets/text/`, the C ABI has `ms_text_*`, and `TextSheet` edits text, family, size, tracking, line spacing, outline, shadow, wrap width, fill/outline colour, align, anchor and uppercase. A title is an ordinary clip, so keyframed transform, effects, grade and transitions all apply.
 What is still *not* there: per-character or per-word styling (one style per clip), animation presets (type-on, word-by-word), text on a path, curved/warped text, right-to-left shaping and complex-script shaping (stb_truetype has no HarfBuzz, so Arabic/Devanagari will not join correctly), and importing a user font — a SAF picker plus the licence rule that user fonts must never be redistributed.
 
+### 1b. Nobody has looked at a frame
+`tools/ms_shots.cpp` renders real frames to PPM so the compositor output can be inspected without a
+phone (it found the straight-alpha blur bug). It is a harness, not a test, and it is not in `ctest`.
+What it shows today: everything is 8-bit, the transform samples nearest-neighbour so a scaled clip
+aliases, and there is no thread pool — one core renders a 1080p frame. None of that has been timed
+on a device.
+
 ### 2. User-supplied effect packages
 The `.msp` format is specified (`docs/plugins/MSP_FORMAT.md`: zip + `manifest.json` + shaders + `icon.png`), and `MspRegistry` can scan/parse it — but:
 - `install_msp` shells out to the system `unzip` binary, which does not exist on Android;
@@ -125,7 +132,7 @@ Size presets and 24/30/60 fps are editable in the session sheet. Missing: arbitr
 
 ## Test coverage now
 
-- `ctest` **22/22**: existing suites plus `ms_lut_test` (cube parsing, blend, rejection), `ms_edit_test` (move, trim, ripple, tracks, effect add/param/enable, JSON round-trip, undo, delete, transition add/persist/remove, font resolution, title rasterisation, word wrap, title persistence, keyframe curves) and `ms_proxy_test` (proxy resolution, enable/disable, no-op registration, generation counter).
+- `ctest` **23/23**: existing suites plus `ms_effects_alpha_test` (a blur conserves coverage, spreads, keeps colour under partial alpha, and is a passthrough at radius 0) and `ms_lut_test` (cube parsing, blend, rejection), `ms_edit_test` (move, trim, ripple, tracks, effect add/param/enable, JSON round-trip, undo, delete, transition add/persist/remove, font resolution, title rasterisation, word wrap, title persistence, keyframe curves) and `ms_proxy_test` (proxy resolution, enable/disable, no-op registration, generation counter).
 - `:app:testDebugUnitTest` **6/6**: native JSON contract, timeline end, malformed JSON, aspect ratio, timecode, clip lookup.
 - Android build: `:app:assembleDebug` green, both ABIs, all assets packaged (6 title fonts, 6 looks, 7 UI fonts).
 - `ms_title_demo <dir>` renders four title cards to PPM for visual inspection without a device — this is how the rasteriser was confirmed, not just unit-tested.
