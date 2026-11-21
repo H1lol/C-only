@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased — eight warp and screen effects
+
+### Added
+- **Lens dispersion.** `chromatic_aberration` pushes red out and blue in around a movable
+  centre, and `rgb_split` offsets the channels along an angle by a distance in pixels
+- **Distortion.** `kaleidoscope` (mirrored wedges, rotation, zoom), `twirl` (swirl inside a
+  radius, centre and reach adjustable) and `wave_warp` (sinusoidal displacement in both axes)
+- **Screens.** `halftone` (rotated dot screen driven by luma, with mix), `scanlines` (CRT line
+  darkening with spacing, strength and phase) and `vhs` (row wobble, chroma bleed, a seeded
+  tracking band and tape noise)
+- `cpu_effects_screen.cpp` holds them behind one premultiplied bilinear sampler, so a warp
+  averages coverage instead of straight colour and cannot drag a transparent neighbour's colour
+  into a glyph edge. Every zero setting (amount, distance, angle, amplitude, mix, strength) is a
+  byte-for-byte passthrough rather than a lossy premultiply/unpremultiply round trip
+- `EffectsSheet` lists them under **Warp** and **Screen** with sliders and defaults that match
+  the dispatcher; the catalogue is 32 effects
+
+### Provenance
+- Nova Editor's published decompile was used only as a checklist of which looks matter on a
+  phone. No shader, source file, parameter text or asset from it was copied; these are original
+  implementations of standard operations.
+
+### Verified
+- `ms_effects_screen_test` (new): chroma split leaves alpha untouched, a warp keeps fully
+  transparent areas colour-free, the zero settings are exact identities, and kaleidoscope and
+  VHS render deterministically. Suite is **24/24**
+- `ms_shots` gained six shots (`12_chromatic` … `17_twirl`) and they were rendered and looked at:
+  fringing, folded wedges, halftone dots (the first pass left solid white text solid, so the dot
+  radius was cut from 0.72 to 0.5 of a cell), VHS wobble, wave displacement, swirl
+
 ## Unreleased — effects that respect alpha, and a harness that renders pictures
 
 ### Fixed

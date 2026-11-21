@@ -66,6 +66,14 @@ int main() {
       {"crop", true, P{{"left", 0.25}}},
       {"threshold", true, P{{"level", 0.45}}},
       {"chromakey_simple", true, P{}},
+      {"chromatic_aberration", true, P{{"amount", 0.8}}},
+      {"rgb_split", true, P{{"distance", 6.0}}},
+      {"kaleidoscope", true, P{{"segments", 6.0}}},
+      {"twirl", true, P{{"angle", 200.0}}},
+      {"wave_warp", true, P{{"amplitude", 0.04}}},
+      {"halftone", true, P{{"cell", 6.0}}},
+      {"scanlines", true, P{{"strength", 0.6}}},
+      {"vhs", true, P{{"amount", 0.7}}},
   };
 
   for (const auto& c : cases) {

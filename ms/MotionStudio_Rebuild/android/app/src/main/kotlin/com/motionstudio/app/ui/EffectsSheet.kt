@@ -107,6 +107,55 @@ val MsEffects = listOf(
     EffectDef("vignette", "Vignette", "Edge falloff",
         listOf(p("strength", "Strength", 0f, 1f, 0.6f), p("radius", "Radius", 0.1f, 1.5f, 1f)), "Stylise"),
 
+    // ---- Warp ----
+    EffectDef("chromatic_aberration", "Chromatic Aberration", "Radial RGB split, red out / blue in",
+        listOf(
+            p("amount", "Amount", 0f, 1f, 0.6f),
+            p("center_x", "Centre X", 0f, 1f, 0.5f),
+            p("center_y", "Centre Y", 0f, 1f, 0.5f),
+        ), "Warp"),
+    EffectDef("rgb_split", "RGB Split", "Directional channel offset",
+        listOf(p("distance", "Distance", 0f, 40f, 6f), p("angle", "Angle", -180f, 180f, 0f)), "Warp"),
+    EffectDef("kaleidoscope", "Kaleidoscope", "Mirrored wedges around the centre",
+        listOf(
+            p("segments", "Segments", 2f, 24f, 6f),
+            p("rotation", "Rotation", -180f, 180f, 0f),
+            p("zoom", "Zoom", 0.25f, 3f, 1f),
+        ), "Warp"),
+    EffectDef("twirl", "Twirl", "Swirl inside a radius",
+        listOf(
+            p("angle", "Angle", -720f, 720f, 180f),
+            p("radius", "Radius", 0.05f, 2f, 0.8f),
+            p("center_x", "Centre X", 0f, 1f, 0.5f),
+            p("center_y", "Centre Y", 0f, 1f, 0.5f),
+        ), "Warp"),
+    EffectDef("wave_warp", "Wave Warp", "Sinusoidal displacement",
+        listOf(
+            p("amplitude", "Amplitude", 0f, 0.15f, 0.02f),
+            p("frequency", "Frequency", 0.1f, 32f, 6f),
+            p("phase", "Phase", -360f, 360f, 0f),
+        ), "Warp"),
+
+    // ---- Screen ----
+    EffectDef("halftone", "Halftone", "Rotated dot screen from luma",
+        listOf(
+            p("cell", "Cell", 2f, 40f, 6f),
+            p("angle", "Angle", -90f, 90f, 45f),
+            p("mix", "Mix", 0f, 1f, 1f),
+        ), "Screen"),
+    EffectDef("scanlines", "Scanlines", "CRT line darkening",
+        listOf(
+            p("spacing", "Spacing", 2f, 24f, 4f),
+            p("strength", "Strength", 0f, 1f, 0.45f),
+            p("phase", "Phase", -360f, 360f, 0f),
+        ), "Screen"),
+    EffectDef("vhs", "VHS Tape", "Wobble, chroma bleed, tracking band",
+        listOf(
+            p("amount", "Amount", 0f, 1f, 0.6f),
+            p("tracking", "Tracking", 0f, 1f, 0.35f),
+            p("seed", "Seed", 1f, 16f, 3f),
+        ), "Screen"),
+
     // ---- Framing ----
     EffectDef("mirror", "Mirror", "Flip horizontally or vertically",
         listOf(p("horizontal", "Horizontal", 0f, 1f, 1f)), "Framing"),

@@ -12,7 +12,7 @@ Legend: ✅ done in this pass · ❌ still missing · ⚠️ partial / untested 
 |---|---|
 | ✅ Clip editing | `remove_clip`, `move_clip`, `trim_clip`, `ripple_delete` bridged; timeline drag moves, edge-drag trims, long-press deletes, drag snapping to playhead and clip edges. |
 | ✅ Track management | `add_track`, `remove_track`, `set_track_flags` bridged; `+` adds a track, tap toggles mute, long-press removes, mute affects colour and label. |
-| ✅ Effect stack UI | `add_effect` / `remove_effect` / `set_effect_param` / `set_effect_enabled` bridged; `EffectsSheet` lists eight CPU effects with live parameter sliders, per-effect enable switch and remove. Clip chips show `FX n`. |
+| ✅ Effect stack UI | `add_effect` / `remove_effect` / `set_effect_param` / `set_effect_enabled` bridged; `EffectsSheet` lists the CPU catalogue (now 32 effects, grouped Basic / Colour / Stylise / Warp / Screen / Framing) with live parameter sliders, per-effect enable switch and remove. Clip chips show `FX n`. |
 | ✅ Effect persistence | Clip effects are now serialized in `.msproj` (`"effects": [{id, enabled, params:[{name,value}]}]`) and restored on load; previously they were memory-only and silently lost on save. |
 | ✅ Frame-cache invalidation | Every edit and effect change clears the frame cache; before this, retimed or re-effected clips could show stale pixels. |
 | ✅ Video export | `VideoExporter` renders frames from the engine and encodes them with `MediaCodec` + `MediaMuxer` into an MP4 in `filesDir/exports`, muxing the engine's mixed audio as AAC. No ffmpeg. ⚠️ Compiled only — never executed, because there is no device or emulator here. |
@@ -94,7 +94,7 @@ several LUTs on one clip.
 Export carries AAC audio, and audio clips now draw a real waveform from decoded PCM. The master insert chain is now editable from the app (Gain, 3-band EQ, compressor, delay, reverb, limiter) with a MIX sheet carrying per-track faders, mute and solo; clip gain and pan are honoured by the mix. The master grade and the master insert chain are saved with the project document (a `master` block holding the seven grade values and every insert parameter), and insert structure edits — add, remove, clear, bypass — are on the undo stack; knob values and the grade are persisted without one undo entry per slider frame. Still missing: insert chains per track (only the master bus has one), audio automation curves, sample-rate choice, and loudness metering.
 
 ### 6b. Effect catalogue size
-23 CPU effects against Kdenlive's roughly 84 hand-written effect definitions plus 145 MLT avfilter and 118 frei0r entries. Most of that gap is provided by third-party GPL plugins we cannot link; adding them would relicense the app. Audio effects are still the thinnest area: the master bus has six inserts, but tracks cannot host their own chain and there is no audio keyframing.
+32 CPU effects against Kdenlive's roughly 84 hand-written effect definitions plus 145 MLT avfilter and 118 frei0r entries. Most of that gap is provided by third-party GPL plugins we cannot link; adding them would relicense the app. Audio effects are still the thinnest area: the master bus has six inserts, but tracks cannot host their own chain and there is no audio keyframing.
 
 ### 7. Playback performance
 Closed since this list was written: decode is no longer seek-per-frame (`IMediaDecoder::read_video_at`
@@ -132,7 +132,7 @@ Size presets and 24/30/60 fps are editable in the session sheet. Missing: arbitr
 
 ## Test coverage now
 
-- `ctest` **23/23**: existing suites plus `ms_effects_alpha_test` (a blur conserves coverage, spreads, keeps colour under partial alpha, and is a passthrough at radius 0) and `ms_lut_test` (cube parsing, blend, rejection), `ms_edit_test` (move, trim, ripple, tracks, effect add/param/enable, JSON round-trip, undo, delete, transition add/persist/remove, font resolution, title rasterisation, word wrap, title persistence, keyframe curves) and `ms_proxy_test` (proxy resolution, enable/disable, no-op registration, generation counter).
+- `ctest` **24/24**: existing suites plus `ms_effects_screen_test` (a chroma split leaves alpha untouched, a warp keeps fully transparent areas colour-free, zero settings are exact identities, kaleidoscope and VHS are deterministic) and `ms_effects_alpha_test` (a blur conserves coverage, spreads, keeps colour under partial alpha, and is a passthrough at radius 0) and `ms_lut_test` (cube parsing, blend, rejection), `ms_edit_test` (move, trim, ripple, tracks, effect add/param/enable, JSON round-trip, undo, delete, transition add/persist/remove, font resolution, title rasterisation, word wrap, title persistence, keyframe curves) and `ms_proxy_test` (proxy resolution, enable/disable, no-op registration, generation counter).
 - `:app:testDebugUnitTest` **6/6**: native JSON contract, timeline end, malformed JSON, aspect ratio, timecode, clip lookup.
 - Android build: `:app:assembleDebug` green, both ABIs, all assets packaged (6 title fonts, 6 looks, 7 UI fonts).
 - `ms_title_demo <dir>` renders four title cards to PPM for visual inspection without a device — this is how the rasteriser was confirmed, not just unit-tested.

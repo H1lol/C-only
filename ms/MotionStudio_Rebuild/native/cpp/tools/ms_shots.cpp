@@ -201,6 +201,65 @@ int main(int argc, char** argv) {
         shots.push_back({"11_highlights_only", 20.5});
     }
 
+    // --- Warp/screen effects: each shot isolates one so a bad one is obvious ---
+    {
+        TextStyle t = style;
+        const ClipId c = e.add_text_clip(base, 22.0, 1.0, "CHROMA", t);
+        const int fx = e.add_effect(base, c, "chromatic_aberration");
+        if (fx >= 0) e.set_effect_param(base, c, fx, "amount", 0.8f);
+        shots.push_back({"12_chromatic", 22.5});
+    }
+    {
+        TextStyle t = style;
+        const ClipId c = e.add_text_clip(base, 24.0, 1.0, "KALEIDO", t);
+        const int fx = e.add_effect(base, c, "kaleidoscope");
+        if (fx >= 0) {
+            e.set_effect_param(base, c, fx, "segments", 6.f);
+            e.set_effect_param(base, c, fx, "zoom", 1.2f);
+        }
+        shots.push_back({"13_kaleidoscope", 24.5});
+    }
+    {
+        TextStyle t = style;
+        const ClipId c = e.add_text_clip(base, 26.0, 1.0, "HALFTONE", t);
+        const int fx = e.add_effect(base, c, "halftone");
+        if (fx >= 0) {
+            e.set_effect_param(base, c, fx, "cell", 5.f);
+            e.set_effect_param(base, c, fx, "angle", 45.f);
+        }
+        shots.push_back({"14_halftone", 26.5});
+    }
+    {
+        TextStyle t = style;
+        const ClipId c = e.add_text_clip(base, 28.0, 1.0, "VHS TAPE", t);
+        const int fx = e.add_effect(base, c, "vhs");
+        if (fx >= 0) {
+            e.set_effect_param(base, c, fx, "amount", 0.8f);
+            e.set_effect_param(base, c, fx, "tracking", 0.6f);
+        }
+        shots.push_back({"15_vhs", 28.5});
+    }
+    {
+        TextStyle t = style;
+        const ClipId c = e.add_text_clip(base, 30.0, 1.0, "WAVE WARP", t);
+        const int fx = e.add_effect(base, c, "wave_warp");
+        if (fx >= 0) {
+            e.set_effect_param(base, c, fx, "amplitude", 0.03f);
+            e.set_effect_param(base, c, fx, "frequency", 8.f);
+        }
+        shots.push_back({"16_wave_warp", 30.5});
+    }
+    {
+        TextStyle t = style;
+        const ClipId c = e.add_text_clip(base, 32.0, 1.0, "TWIRL", t);
+        const int fx = e.add_effect(base, c, "twirl");
+        if (fx >= 0) {
+            e.set_effect_param(base, c, fx, "angle", 260.f);
+            e.set_effect_param(base, c, fx, "radius", 1.1f);
+        }
+        shots.push_back({"17_twirl", 32.5});
+    }
+
     TimelinePlayer player(&e.project());
     if (!player.prepare().ok()) {
         std::printf("ms_shots: prepare failed\n");

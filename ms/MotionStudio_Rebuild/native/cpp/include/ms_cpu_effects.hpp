@@ -57,7 +57,34 @@ Error cpu_box_blur(const ImageBuffer& in, ImageBuffer& out, int radius);
 Error cpu_crop(const ImageBuffer& in, ImageBuffer& out,
                float left, float right, float top, float bottom);
 
+// Implemented in cpu_effects_screen.cpp: warps and screens that read the frame
+// through a displaced coordinate.
+Error cpu_chromatic_aberration(const ImageBuffer& in, ImageBuffer& out,
+                               float amount, float cx, float cy);
+Error cpu_rgb_split(const ImageBuffer& in, ImageBuffer& out,
+                    float distance, float angle_deg);
+Error cpu_kaleidoscope(const ImageBuffer& in, ImageBuffer& out,
+                       int segments, float rotation_deg, float zoom);
+Error cpu_twirl(const ImageBuffer& in, ImageBuffer& out,
+                float angle_deg, float radius, float cx, float cy);
+Error cpu_wave_warp(const ImageBuffer& in, ImageBuffer& out,
+                    float amplitude, float frequency, float phase_deg);
+Error cpu_halftone(const ImageBuffer& in, ImageBuffer& out,
+                   float cell, float angle_deg, float mix);
+Error cpu_scanlines(const ImageBuffer& in, ImageBuffer& out,
+                    float spacing, float strength, float phase_deg);
+Error cpu_vhs(const ImageBuffer& in, ImageBuffer& out,
+              float amount, float tracking, int seed);
+
+/** Tries the warp/screen effects; returns true when it wrote `out`. */
+bool cpu_effect_screen_try(const std::string& effect_id,
+                           const ImageBuffer& in,
+                           ImageBuffer& out,
+                           const std::unordered_map<std::string, double>& params);
+
 /** Tries the catalogue effects; returns true when it wrote `out`. */
+// Defined in cpu_effects_catalogue.cpp; falls through to
+// cpu_effect_screen_try for the warp/screen effects.
 bool cpu_effect_try(const std::string& effect_id,
                     const ImageBuffer& in,
                     ImageBuffer& out,
